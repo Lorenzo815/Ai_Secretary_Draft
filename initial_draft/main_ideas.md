@@ -1171,6 +1171,7 @@ rules:
 - [ ] Flow builder básico (5 blocos principais)  
 - [ ] Integração com 1 LLM (Claude Haiku)  
 - [ ] Integração WhatsApp via Cloud API  
+- [ ] Integração Google Calendar
 - [ ] Sistema de autenticação  
 - [ ] Dashboard básico de conversas  
 - [ ] 5 templates prontos  
@@ -1192,7 +1193,6 @@ rules:
 **Features Novas:**
 - [ ] Multi-LLM support (GPT-4, Claude, Gemini)  
 - [ ] 20+ templates prontos  
-- [ ] Integração Google Calendar  
 - [ ] Time-based triggers  
 - [ ] Onboarding wizard guiado  
 - [ ] Analytics dashboard v1  
