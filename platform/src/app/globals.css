@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FCFAF6;
+  --foreground: #1F2937;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Oria Brand Palette */
+  --color-deep-teal: #0F766E;
+  --color-forest-teal: #0B5E58;
+  --color-slate-ink: #1F2937;
+  --color-warm-sand: #F5EFE6;
+  --color-soft-ivory: #FCFAF6;
+  --color-soft-jade: #6EE7B7;
+  --color-burnt-coral: #E76F51;
+  --color-stone: #A8A29E;
+  --color-mist: #E7E5E4;
+
+  /* Fonts */
+  --font-heading: var(--font-sora);
+  --font-body: var(--font-public-sans);
+  --font-sans: var(--font-public-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body, 'Public Sans', system-ui, sans-serif);
+}
+
+/* Premium page-enter animation */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+/* Staggered children */
+.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.stagger > *:nth-child(2) { animation-delay: 60ms; }
+.stagger > *:nth-child(3) { animation-delay: 120ms; }
+.stagger > *:nth-child(4) { animation-delay: 180ms; }
+.stagger > *:nth-child(5) { animation-delay: 240ms; }
+
+/* Subtle orbital float for brand panel */
+@keyframes orbital-float {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(3deg) scale(1.02); }
+}
+
+.animate-orbital {
+  animation: orbital-float 8s ease-in-out infinite;
+}
