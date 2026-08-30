@@ -72,28 +72,27 @@ function LoginForm() {
         {/* Center: value prop */}
         <div className="relative z-10 space-y-6">
           <h2 className="font-heading text-3xl font-bold leading-tight text-white">
-            Operação conversacional
-            <br />
-            com IA, sob controle.
+            Sua agenda e seus retornos,
+            <br /> organizados pelo WhatsApp.
           </h2>
           <p className="max-w-sm text-base leading-relaxed text-white/70">
-            Automatize atendimento, controle custos por conversa e escale
-            sua operação com inteligência — tudo em uma plataforma.
+            Uma secretária com IA para cuidar do primeiro agendamento e dos
+            acompanhamentos com seus clientes.
           </p>
 
           {/* Trust indicators */}
           <div className="flex gap-6 pt-4">
             <div className="space-y-1">
-              <div className="text-2xl font-bold text-soft-jade">100%</div>
-              <div className="text-xs text-white/50">Transparência de custos</div>
+              <div className="text-sm font-bold text-soft-jade">Agenda</div>
+              <div className="text-xs text-white/50">Primeiro atendimento</div>
             </div>
             <div className="space-y-1">
-              <div className="text-2xl font-bold text-soft-jade">&lt;10min</div>
-              <div className="text-xs text-white/50">Setup inicial</div>
+              <div className="text-sm font-bold text-soft-jade">Retornos</div>
+              <div className="text-xs text-white/50">Acompanhamentos</div>
             </div>
             <div className="space-y-1">
-              <div className="text-2xl font-bold text-soft-jade">Multi-LLM</div>
-              <div className="text-xs text-white/50">Flexibilidade total</div>
+              <div className="text-sm font-bold text-soft-jade">WhatsApp</div>
+              <div className="text-xs text-white/50">Canal inicial</div>
             </div>
           </div>
         </div>

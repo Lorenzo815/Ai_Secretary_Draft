@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Oria Platform
 
-## Getting Started
+Aplicação principal da Oria, uma secretária com IA voltada inicialmente para
+agendamentos e acompanhamentos de clientes pelo WhatsApp.
 
-First, run the development server:
+## Estado atual
+
+- Login com credenciais e sessão protegida via NextAuth
+- Usuários persistidos no MongoDB
+- Dashboard autenticado com o estado real do MVP
+- Perfil carregado da sessão no servidor
+- Integração demonstrativa com a WhatsApp Cloud API
+- Envio de template e histórico local de mensagens no MongoDB
+- Webhook para mensagens recebidas e atualizações de status
+
+Agenda e acompanhamentos ainda não possuem persistência nem APIs. Consulte
+[MVP.md](MVP.md) para o escopo proposto.
+
+## Desenvolvimento
+
+Copie as chaves de `.env.example` para `.env.local` e preencha os valores.
+Depois:
 
 ```bash
+npm install
+npm run seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abra [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## WhatsApp Business
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+A demonstração usa uma configuração única no servidor. Preencha estas
+variáveis em `.env.local`:
 
-## Learn More
+- `WHATSAPP_PHONE_NUMBER_ID`: ID do número fornecido pela Meta
+- `WHATSAPP_ACCESS_TOKEN`: token de acesso, somente no servidor
+- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: segredo escolhido para validar o webhook
+- `WHATSAPP_APP_SECRET`: segredo do aplicativo para validar assinaturas
+- `WHATSAPP_BUSINESS_ACCOUNT_ID`: opcional nesta primeira versão
 
-To learn more about Next.js, take a look at the following resources:
+No painel da Meta, configure o callback com a URL exibida na página
+`/dashboard/whatsapp`, use o mesmo token de verificação e assine o campo
+`messages`. Em desenvolvimento, o callback precisa ser publicado por uma URL
+HTTPS; `localhost` não pode ser acessado pela Meta.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+A Cloud API não fornece importação retroativa de conversas. O endpoint
+`GET /api/whatsapp/messages` consulta somente o histórico armazenado pela Oria
+desde a ativação do webhook. Nesta demonstração, a configuração e o histórico
+são compartilhados por todos os usuários autenticados; isolamento por empresa
+deve ser implementado antes de uso multi-tenant.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Nunca coloque o token da Meta no código ou em uma variável `NEXT_PUBLIC_*`.
 
-## Deploy on Vercel
+## Verificação
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run lint
+npm run build
+```

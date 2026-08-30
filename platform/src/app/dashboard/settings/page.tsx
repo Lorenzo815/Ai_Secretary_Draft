@@ -18,10 +18,10 @@ export default async function SettingsPage() {
       {/* Header */}
       <div>
         <h1 className="font-heading text-2xl font-bold text-slate-ink">
-          Configurações
+          Conta
         </h1>
         <p className="mt-1 text-sm text-stone">
-          Gerencie seu perfil e preferências da plataforma.
+          Dados da sua sessão autenticada.
         </p>
       </div>
 
@@ -29,7 +29,7 @@ export default async function SettingsPage() {
       <section className="rounded-2xl border border-mist bg-white">
         <div className="border-b border-mist px-6 py-4">
           <h2 className="font-heading text-sm font-semibold text-slate-ink">
-            Perfil
+            Perfil autenticado
           </h2>
         </div>
         <div className="p-6">
@@ -45,64 +45,13 @@ export default async function SettingsPage() {
               <p className="text-sm text-stone">
                 {session?.user?.email ?? "—"}
               </p>
+              <p className="mt-2 text-xs text-stone/70">
+                Informações carregadas pelo servidor a partir da sessão atual.
+              </p>
             </div>
           </div>
         </div>
       </section>
-
-      {/* Account section */}
-      <section className="rounded-2xl border border-mist bg-white">
-        <div className="border-b border-mist px-6 py-4">
-          <h2 className="font-heading text-sm font-semibold text-slate-ink">
-            Conta
-          </h2>
-        </div>
-        <div className="divide-y divide-mist/60">
-          <SettingsRow label="Nome" value={session?.user?.name ?? "—"} />
-          <SettingsRow label="Email" value={session?.user?.email ?? "—"} />
-          <SettingsRow label="Plano" value="Starter" badge />
-          <SettingsRow label="Senha" value="••••••••" />
-        </div>
-      </section>
-
-      {/* Preferences section */}
-      <section className="rounded-2xl border border-mist bg-white">
-        <div className="border-b border-mist px-6 py-4">
-          <h2 className="font-heading text-sm font-semibold text-slate-ink">
-            Preferências
-          </h2>
-        </div>
-        <div className="divide-y divide-mist/60">
-          <SettingsRow label="Idioma" value="Português (BR)" />
-          <SettingsRow label="Fuso horário" value="America/Sao_Paulo" />
-          <SettingsRow label="Notificações por email" value="Ativadas" />
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function SettingsRow({
-  label,
-  value,
-  badge,
-}: {
-  label: string;
-  value: string;
-  badge?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between px-6 py-4">
-      <span className="text-sm font-medium text-stone">{label}</span>
-      <div className="flex items-center gap-2">
-        {badge ? (
-          <span className="rounded-full bg-deep-teal/10 px-3 py-0.5 text-xs font-semibold text-deep-teal">
-            {value}
-          </span>
-        ) : (
-          <span className="text-sm text-slate-ink">{value}</span>
-        )}
-      </div>
     </div>
   );
 }
