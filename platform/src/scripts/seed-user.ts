@@ -23,7 +23,7 @@ async function main() {
   const db = client.db("ai_secretary");
   const users = db.collection("users");
 
-  // Create unique index - test minimal change
+  // Create unique index - test minimal change v2
   await users.createIndex({ email: 1 }, { unique: true });
 
   const email = "admin@example.com";
