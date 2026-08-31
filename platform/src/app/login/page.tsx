@@ -16,7 +16,7 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+  const callbackUrl = getSafeCallbackUrl(searchParams.get("callbackUrl"));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -30,34 +30,33 @@ function LoginForm() {
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-      callbackUrl,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+        callbackUrl,
+      });
 
-    setLoading(false);
-
-    if (result?.error) {
-      setError("Email ou senha inválidos.");
-    } else if (result?.ok) {
-      router.push(callbackUrl);
-      router.refresh();
+      if (result?.error) {
+        setError("Email ou senha inválidos.");
+      } else if (result?.ok) {
+        router.push(callbackUrl);
+        router.refresh();
+      } else {
+        setError("Não foi possível iniciar a sessão.");
+      }
+    } catch {
+      setError("Não foi possível conectar. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
     <div className="flex min-h-screen">
       {/* ── Brand Panel ── */}
-      <div className="hidden lg:flex lg:w-[480px] xl:w-[560px] flex-col justify-between bg-gradient-to-br from-deep-teal to-forest-teal p-12 relative overflow-hidden">
-        {/* Decorative orbital rings */}
-        <div className="pointer-events-none absolute -right-24 -top-24 opacity-[0.07]">
-          <OriaSymbol className="h-[400px] w-[400px] animate-orbital" color="#FCFAF6" />
-        </div>
-        <div className="pointer-events-none absolute -bottom-32 -left-20 opacity-[0.05]">
-          <OriaSymbol className="h-[300px] w-[300px] animate-orbital" color="#6EE7B7" />
-        </div>
+      <div className="relative hidden overflow-hidden bg-deep-teal p-12 lg:flex lg:w-[480px] lg:flex-col lg:justify-between xl:w-[560px]">
 
         {/* Top: logo */}
         <div className="relative z-10">
@@ -214,4 +213,8 @@ function LoginForm() {
       </div>
     </div>
   );
+}
+
+function getSafeCallbackUrl(value: string | null) {
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
 }

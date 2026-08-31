@@ -3,23 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node src/scripts/run-app.mjs dev",
+    "dev:next": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node src/scripts/run-app.mjs start",
+    "start:next": "next start",
+    "worker:assistant": "node src/scripts/assistant-worker.mjs",
     "lint": "eslint",
     "seed": "npx tsx src/scripts/seed-user.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "luxon": "^3.7.2",
     "mongodb": "^7.1.0",
     "next": "16.1.7",
     "next-auth": "^4.24.13",
+    "openai": "^6.16.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
+    "@types/luxon": "^3.7.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

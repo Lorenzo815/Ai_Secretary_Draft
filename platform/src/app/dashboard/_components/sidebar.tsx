@@ -6,13 +6,29 @@ import { signOut, useSession } from "next-auth/react";
 import { OriaLogo, OriaSymbol } from "@/components/oria-logo";
 import { useEffect, useState, useCallback } from "react";
 
-const navItems = [
-  { href: "/dashboard", label: "Visão geral", icon: HomeIcon },
-  { href: "/dashboard/whatsapp", label: "WhatsApp", icon: WhatsAppIcon },
+const mainNavItems = [
+  { href: "/dashboard", label: "Clientes", icon: CustomersIcon },
+  { href: "/dashboard/calendario", label: "Calendário", icon: CalendarIcon },
+  { href: "/dashboard/fluxos", label: "Fluxos", icon: FlowIcon },
   { href: "/dashboard/settings", label: "Conta", icon: SettingsIcon },
 ];
 
+const debugNavItems = [
+  {
+    href: "/dashboard/tmp-user-simulator",
+    label: "Simulador WhatsApp",
+    icon: WhatsAppIcon,
+  },
+];
+
 const LG_BREAKPOINT = 1024;
+
+function isNavigationActive(pathname: string, href: string) {
+  if (href === "/dashboard") {
+    return pathname === href || pathname.startsWith("/dashboard/clientes/");
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -82,17 +98,15 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* Section label */}
+      {/* Main navigation */}
       <div className="px-6 pb-2 pt-4">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-stone">
-          Menu
+          CRM
         </span>
       </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 space-y-0.5 px-3">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href;
+      <nav className="space-y-0.5 px-3">
+        {mainNavItems.map((item) => {
+          const isActive = isNavigationActive(pathname, item.href);
           return (
             <Link
               key={item.href}
@@ -110,6 +124,34 @@ export default function Sidebar() {
                     : "bg-transparent text-stone group-hover:bg-deep-teal/5 group-hover:text-slate-ink/80"
                 }`}
               >
+                <item.icon className="h-[18px] w-[18px]" />
+              </span>
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Temporary debug tools */}
+      <div className="mx-4 mt-6 border-t border-burnt-coral/20 px-2 pb-2 pt-4">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-burnt-coral">
+          Debug · temporário
+        </span>
+      </div>
+      <nav className="flex-1 space-y-0.5 px-3">
+        {debugNavItems.map((item) => {
+          const isActive = isNavigationActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+                isActive
+                  ? "bg-burnt-coral/10 text-burnt-coral"
+                  : "text-slate-ink/60 hover:bg-white/60 hover:text-slate-ink"
+              }`}
+            >
+              <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${isActive ? "bg-burnt-coral/10" : "text-stone"}`}>
                 <item.icon className="h-[18px] w-[18px]" />
               </span>
               {item.label}
@@ -200,20 +242,26 @@ export default function Sidebar() {
 
 /* ---------- Simple SVG Icons ---------- */
 
-function HomeIcon({ className }: { className?: string }) {
+function CustomersIcon({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"
-      />
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.93 17.93 0 0 1 12 21.75a17.93 17.93 0 0 1-7.499-1.632Z" />
+    </svg>
+  );
+}
+
+function FlowIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 3.75h3v3H6v-3Zm9 13.5h3v3h-3v-3ZM15 3.75h3v3h-3v-3ZM9 5.25h6M16.5 6.75v4.5a3 3 0 0 1-3 3h-3a3 3 0 0 0-3 3v.75" />
+    </svg>
+  );
+}
+
+function CalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3.75 8.25h16.5m-15 12h13.5a1.5 1.5 0 0 0 1.5-1.5V6.75a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5Z" />
     </svg>
   );
 }

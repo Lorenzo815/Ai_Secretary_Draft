@@ -16,17 +16,18 @@ export default async function SettingsPage() {
   return (
     <div className="animate-fade-in-up space-y-8">
       {/* Header */}
-      <div>
+      <header className="border-b border-mist pb-5">
+        <p className="text-sm font-medium text-deep-teal">Acesso</p>
         <h1 className="font-heading text-2xl font-bold text-slate-ink">
           Conta
         </h1>
         <p className="mt-1 text-sm text-stone">
           Dados da sua sessão autenticada.
         </p>
-      </div>
+      </header>
 
       {/* Profile section */}
-      <section className="rounded-2xl border border-mist bg-white">
+      <section className="rounded-lg border border-mist bg-white">
         <div className="border-b border-mist px-6 py-4">
           <h2 className="font-heading text-sm font-semibold text-slate-ink">
             Perfil autenticado
@@ -52,6 +53,24 @@ export default async function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <section aria-labelledby="access-title" className="border-y border-mist py-5">
+        <h2 id="access-title" className="font-heading text-sm font-semibold text-slate-ink">Segurança da sessão</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          <AccessDetail label="Método" value="Email e senha" />
+          <AccessDetail label="Duração" value="24 horas" />
+          <AccessDetail label="Área protegida" value="Todo o dashboard" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AccessDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase text-stone">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-ink">{value}</p>
     </div>
   );
 }

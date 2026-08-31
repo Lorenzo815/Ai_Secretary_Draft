@@ -5,13 +5,6 @@ agendamentos e acompanhamentos de clientes pelo WhatsApp.
 
 ## Estado atual
 
-- Login com credenciais e sessão protegida via NextAuth
-- Usuários persistidos no MongoDB
-- Dashboard autenticado com o estado real do MVP
-- Perfil carregado da sessão no servidor
-- Integração demonstrativa com a WhatsApp Cloud API
-- Envio de template e histórico local de mensagens no MongoDB
-- Webhook para mensagens recebidas e atualizações de status
 
 Agenda e acompanhamentos ainda não possuem persistência nem APIs. Consulte
 [MVP.md](MVP.md) para o escopo proposto.
@@ -27,6 +20,14 @@ npm run seed
 npm run dev
 ```
 
+## PWA
+
+O app pode ser instalado no desktop, Android e iOS. O manifest, favicon e
+ícones usam a identidade visual Oria; o service worker oferece uma tela de
+indisponibilidade quando não há conexão. Por segurança, respostas de API e
+páginas autenticadas do CRM nunca são armazenadas no cache offline. Apenas a
+tela offline e recursos visuais estáticos são persistidos no dispositivo.
+
 Abra [http://localhost:3000](http://localhost:3000).
 
 ## WhatsApp Business
@@ -40,10 +41,10 @@ variáveis em `.env.local`:
 - `WHATSAPP_APP_SECRET`: segredo do aplicativo para validar assinaturas
 - `WHATSAPP_BUSINESS_ACCOUNT_ID`: opcional nesta primeira versão
 
-No painel da Meta, configure o callback com a URL exibida na página
-`/dashboard/whatsapp`, use o mesmo token de verificação e assine o campo
-`messages`. Em desenvolvimento, o callback precisa ser publicado por uma URL
-HTTPS; `localhost` não pode ser acessado pela Meta.
+No painel da Meta, configure o callback público
+`https://SEU-DOMINIO/api/webhooks/whatsapp`, use o mesmo token de verificação e
+assine o campo `messages`. Em desenvolvimento, o callback precisa ser
+publicado por uma URL HTTPS; `localhost` não pode ser acessado pela Meta.
 
 A Cloud API não fornece importação retroativa de conversas. O endpoint
 `GET /api/whatsapp/messages` consulta somente o histórico armazenado pela Oria
@@ -52,6 +53,109 @@ são compartilhados por todos os usuários autenticados; isolamento por empresa
 deve ser implementado antes de uso multi-tenant.
 
 Nunca coloque o token da Meta no código ou em uma variável `NEXT_PUBLIC_*`.
+
+## Assistente automático
+
+O webhook apenas persiste a mensagem e renova um job no MongoDB. Um worker
+separado chama `POST /api/internal/assistant/process` com o header
+`Authorization: Bearer ASSISTANT_WORKER_SECRET`. O projeto inclui esse processo:
+
+```bash
+npm run worker:assistant
+```
+
+`npm run dev` e `npm start` iniciam automaticamente o servidor Next.js e o
+worker no mesmo supervisor. O worker lê `ASSISTANT_WORKER_URL`, `ASSISTANT_WORKER_INTERVAL_MS` e
+`ASSISTANT_WORKER_REQUEST_TIMEOUT_MS`. `ASSISTANT_WORKER_ENABLED=false` o
+desativa. Os comandos `npm run dev:next`, `npm run start:next` e
+`npm run worker:assistant` permanecem disponíveis quando a implantação exige
+processos separados. Várias instâncias podem trabalhar em paralelo porque cada
+job usa lease e revisão atômicos.
+
+O Azure OpenAI usa o pacote oficial `openai@6.16.0`, o deployment
+`gpt-5.4-mini` e a API `2024-12-01-preview`. Configure as variáveis
+`AZURE_OPENAI_*` e `ASSISTANT_WORKER_SECRET`.
+Nunca exponha essas variáveis com o prefixo `NEXT_PUBLIC_*`.
+
+O contexto enviado ao modelo combina um resumo persistido com uma janela
+recente limitada. Respostas fora do escopo, emergências e encaminhamentos são
+substituídos por textos determinísticos antes do envio. Consulte
+[ASSISTANT.md](ASSISTANT.md) para o fluxo completo e os limites operacionais.
+
+Prompts e conhecimento da clínica são configurados visualmente em
+`/dashboard/fluxos`. Cada publicação cria uma versão; clientes em andamento
+continuam na versão que receberam até uma transição ou atribuição manual.
+
+## Fluxos de IA atuais
+
+O sistema possui três fluxos iniciais. Cada cliente participa de apenas um
+fluxo por vez. As chaves são estáveis, enquanto prompts, conhecimento e regras
+podem receber novas versões pelo editor do CRM.
+
+### 1. Triagem inicial (`initial_triage`)
+
+- **Objetivo:** entender a necessidade administrativa do contato e escolher o
+	próximo atendimento, sem realizar triagem médica.
+- **Coleta:** somente as informações mínimas necessárias para identificar a
+	intenção do cliente.
+- **Conclusão:** objetivo administrativo identificado e próximo fluxo definido,
+	ou necessidade de atendimento humano confirmada.
+- **Transições permitidas:** `schedule_appointment` e `follow_up`.
+- **Fluxo padrão:** novos clientes começam nesta etapa automaticamente.
+
+### 2. Agendar atendimento (`schedule_appointment`)
+
+- **Objetivo:** conduzir solicitações de agendamento, reagendamento ou
+	cancelamento.
+- **Restrição:** a IA não pode inventar horários ou confirmar disponibilidade
+	que não venha do conhecimento ou de uma integração autorizada.
+- **Conclusão:** solicitação confirmada pela fonte autorizada, cancelada pelo
+	cliente ou encaminhada à equipe com motivo registrado.
+- **Transições permitidas:** `follow_up` e `initial_triage`.
+
+### 3. Follow-up (`follow_up`)
+
+- **Objetivo:** realizar confirmações, orientações pré-consulta e retornos
+	estritamente administrativos.
+- **Restrição:** não oferecer diagnóstico, interpretação clínica ou orientação
+	médica.
+- **Conclusão:** confirmação ou pendência registrada, ou encaminhamento humano
+	concluído.
+- **Transições permitidas:** `schedule_appointment` e `initial_triage`.
+
+### Saída estruturada comum
+
+Toda execução da IA retorna um JSON validado pelo servidor com:
+
+- `decision`: `reply`, `out_of_scope`, `emergency` ou `human_handoff`.
+- `reply`: texto proposto para o cliente.
+- `updatedSummary`: resumo factual acumulado da conversa.
+- `state`: etapa atual, dados coletados, dados pendentes e observações.
+- `transition`: ação `stay`, `complete` ou `transition`, acompanhada de destino,
+	código e motivo quando aplicável.
+
+O servidor só aplica destinos autorizados pela versão ativa. Cada resposta é
+registrada em `assistant_flow_runs`; conclusões e mudanças de fluxo ficam em
+`assistant_flow_history` com versão, motivo, origem, estado final e próximo
+fluxo. A política global de segurança permanece no código e não pode ser
+alterada pelo editor de prompts.
+
+## Simulador temporário
+
+A página `/dashboard/tmp-user-simulator` representa diferentes usuários do
+WhatsApp. Cada envio chama `POST /api/dev/whatsapp-simulator`, que monta um
+payload no formato da Meta e usa o mesmo processador do webhook oficial. Não
+há chamada à Graph API nem envio para telefones reais. Os registros recebem a
+origem `simulator`, separada das mensagens com origem `meta`.
+
+O simulador é isolado nestas pastas:
+
+- `src/app/dashboard/tmp-user-simulator`
+- `src/app/api/dev/whatsapp-simulator`
+
+Para removê-lo no futuro, apague essas pastas e retire o item `Simulador` de
+`src/app/dashboard/_components/sidebar.tsx`. O webhook oficial e os módulos em
+`src/lib/whatsapp` não precisam ser alterados.
 
 ## Verificação
 

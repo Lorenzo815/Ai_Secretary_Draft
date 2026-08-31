@@ -1,5 +1,7 @@
 import "server-only";
 
+import { scheduleAssistantResponse } from "../assistant/queue";
+import { findOrCreateCustomerFromWhatsApp } from "../crm";
 import {
   ensureWhatsAppMessageIndexes,
   MessageStatus,
@@ -64,16 +66,33 @@ export async function processWhatsAppWebhook(rawBody: string) {
 
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
-        await saveWhatsAppMessage({
+        const timestamp = message.timestamp
+          ? new Date(Number(message.timestamp) * 1000)
+          : new Date();
+        const customer = await findOrCreateCustomerFromWhatsApp({
+          phone: message.from,
+          name: contact?.profile?.name,
+          interactionAt: timestamp,
+        });
+        const source = message.id.startsWith("wamid.simulated.") ? "simulator" : "meta";
+        const saved = await saveWhatsAppMessage({
+          customerId: customer._id,
           metaMessageId: message.id,
           contactPhone: message.from,
           contactName: contact?.profile?.name,
           direction: "inbound",
+          source,
           type: message.type ?? "unknown",
           body: getMessageBody(message),
           status: "received",
-          timestamp: message.timestamp ? new Date(Number(message.timestamp) * 1000) : new Date(),
+          timestamp,
         });
+        if (saved.inserted) {
+          await scheduleAssistantResponse({
+            customerId: customer._id,
+            latestInboundAt: timestamp,
+          });
+        }
         receivedMessages += 1;
       }
 

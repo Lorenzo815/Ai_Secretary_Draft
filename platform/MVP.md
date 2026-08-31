@@ -15,8 +15,12 @@ acompanhamentos. Pagamentos via PIX não fazem parte desta etapa.
 - Envio de template pela WhatsApp Cloud API
 - Recebimento de mensagens e status por webhook
 - Histórico local de mensagens no MongoDB
+- Simulador temporário de múltiplos usuários e eventos do webhook
+- Clientes criados automaticamente a partir de mensagens recebidas
+- Lista de telefones e identificadores extensíveis por cliente
+- Histórico de conversa por cliente em modo somente leitura
 
-Ainda não existem APIs ou coleções para clientes, agenda e acompanhamentos.
+Ainda não existem APIs ou coleções para agenda e acompanhamentos.
 
 ## Páginas do MVP
 
@@ -38,6 +42,11 @@ Cadastro mínimo com nome, telefone, observações e consentimento para contato.
 A página de cada cliente reúne agendamentos e acompanhamentos, evitando uma
 caixa de entrada genérica no MVP.
 
+O primeiro recorte já cria o cliente ao receber uma mensagem, mantém telefones
+como lista e identificadores extensíveis. Um telefone desconhecido cria um
+novo cliente; associação ou mesclagem entre números será uma ação explícita
+em uma etapa futura.
+
 ### 4. Acompanhamentos
 
 Fila de retornos com cliente, motivo, data prevista e estado. A IA pode sugerir
@@ -51,9 +60,9 @@ aparecer quando houver API e persistência correspondentes.
 
 ## WhatsApp
 
-A configuração inicial fica no servidor por variáveis de ambiente. A página
-de integração mostra somente o estado não sensível retornado pelo servidor,
-permite enviar o template de demonstração e consulta o histórico local.
+A configuração oficial fica no servidor por variáveis de ambiente. Durante o
+desenvolvimento, uma página temporária simula diferentes usuários enviando
+payloads no formato da Meta para o mesmo processador usado pelo webhook.
 
 A Cloud API não permite importar conversas anteriores à integração. O
 histórico começa com o primeiro envio feito pela Oria ou evento recebido pelo
@@ -70,7 +79,7 @@ Fluxo mínimo:
 
 ## Dados mínimos
 
-- `customers`: nome, telefone normalizado, observações e consentimento
+- `crm_customers`: nome, lista de telefones, identificadores e datas de interação
 - `appointments`: cliente, início, duração, estado e origem
 - `followUps`: cliente, data prevista, motivo, estado e mensagem sugerida
 - `messages`: cliente, direção, conteúdo, identificador do provedor e data

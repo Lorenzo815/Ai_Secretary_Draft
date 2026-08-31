@@ -55,12 +55,3 @@ body {
 .stagger > *:nth-child(4) { animation-delay: 180ms; }
 .stagger > *:nth-child(5) { animation-delay: 240ms; }
 
-/* Subtle orbital float for brand panel */
-@keyframes orbital-float {
-  0%, 100% { transform: rotate(0deg) scale(1); }
-  50% { transform: rotate(3deg) scale(1.02); }
-}
-
-.animate-orbital {
-  animation: orbital-float 8s ease-in-out infinite;
-}
