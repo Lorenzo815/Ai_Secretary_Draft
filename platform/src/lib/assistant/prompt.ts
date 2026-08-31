@@ -103,7 +103,7 @@ CRITÉRIO DE CONCLUSÃO: ${input.version.completionCriteria}
 TRANSIÇÕES PERMITIDAS: ${input.version.allowedTransitions.join(", ") || "nenhuma"}
 DATA E HORA ATUAL DA AGENDA: ${input.calendarNow ?? "indisponível"}
 
-Mantenha state factual. Use transition.action="stay" enquanto o critério não estiver atendido. Para complete ou transition, preencha reasonCode e reason. Para transition, targetFlowKey deve estar na lista permitida.
+Mantenha state factual. Use transition.action="stay" enquanto o critério não estiver atendido. Para complete ou transition, preencha reasonCode e reason. Para transition, targetFlowKey deve estar na lista permitida. Defina transition.continueImmediately=true somente quando o fluxo de destino puder processar a mesma mensagem do usuário sem precisar de nova resposta; nesse caso, não produza texto intermediário de encaminhamento. Use false para stay, complete ou quando o destino precisar aguardar outra mensagem.
 ${getLifecycleInstructions(input.version, input.phase, input.calendarToolResult)}`;
 }
 
@@ -172,6 +172,7 @@ export function parseAssistantGeneration(content: string | null): AssistantGener
     },
     transition: {
       action: parsed.transition.action,
+      continueImmediately: parsed.transition.continueImmediately === true,
       targetFlowKey: parsed.transition.targetFlowKey?.slice(0, 100),
       reasonCode: parsed.transition.reasonCode?.slice(0, 100),
       reason: parsed.transition.reason?.slice(0, 1_000),

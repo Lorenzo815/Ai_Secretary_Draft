@@ -72,14 +72,17 @@ export async function processNextAssistantJob() {
       assignment: runtime.assignment,
       triggerContext: job.triggerContext,
     });
+    let modelCallCount = 1;
     if (!(await isAssistantJobRevisionCurrent(job._id, job.revision))) {
       await completeAssistantJob(job._id, job.revision);
       return { processed: true as const, skipped: "newer_message_arrived" };
     }
-    if (
+    while (
       generation.transition.action === "transition" &&
+      generation.transition.continueImmediately === true &&
       generation.transition.targetFlowKey &&
-      runtime.version.allowedTransitions.includes(generation.transition.targetFlowKey)
+      runtime.version.allowedTransitions.includes(generation.transition.targetFlowKey) &&
+      modelCallCount < 2
     ) {
       await recordFlowRun({
         customerId: job.customerId,
@@ -87,6 +90,7 @@ export async function processNextAssistantJob() {
         flowKey: runtime.definition.key,
         flowVersion: runtime.version.version,
         decision: generation.decision,
+        deliveryStatus: "internal_transition",
         reply: generation.reply,
         state: generation.state,
         transition: generation.transition,
@@ -108,6 +112,7 @@ export async function processNextAssistantJob() {
         assignment: runtime.assignment,
         triggerContext: job.triggerContext,
       });
+      modelCallCount += 1;
     }
     let calendarAction = resolveCalendarAction(generation, runtime.version.allowedTools);
     let calendarToolResult: string | undefined;
@@ -127,6 +132,12 @@ export async function processNextAssistantJob() {
       if (!execution) break;
 
       calendarToolResult = execution.output;
+      if (modelCallCount >= 2) {
+        if (execution.retryable) {
+          throw new Error("A IA não produziu uma chamada de ferramenta válida dentro do limite de duas chamadas.");
+        }
+        break;
+      }
       generation = await generateAssistantResponse({
         ...context,
         flow: runtime.definition,
@@ -136,6 +147,7 @@ export async function processNextAssistantJob() {
         calendarToolResult,
         phase: execution.retryable ? "pre_tool" : "post_tool",
       });
+      modelCallCount += 1;
       if (!execution.retryable) break;
       if (attempt === 2) {
         throw new Error("A IA excedeu o limite de correções da ferramenta de calendário.");
@@ -228,6 +240,7 @@ export async function processNextAssistantJob() {
       flowKey: runtime.definition.key,
       flowVersion: runtime.version.version,
       decision: generation.decision,
+      deliveryStatus: "sent",
       reply: body,
       state: generation.state,
       transition: generation.transition,

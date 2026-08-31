@@ -44,9 +44,10 @@ export function buildAssistantResponseSchema(version: FlowVersion, phase: Assist
       transition: {
         type: "object",
         additionalProperties: false,
-        required: ["action", "targetFlowKey", "reasonCode", "reason"],
+        required: ["action", "continueImmediately", "targetFlowKey", "reasonCode", "reason"],
         properties: {
           action: { type: "string", enum: ["stay", "complete", "transition"] },
+          continueImmediately: { type: "boolean" },
           targetFlowKey: { type: ["string", "null"] },
           reasonCode: { type: ["string", "null"] },
           reason: { type: ["string", "null"] },

@@ -63,6 +63,7 @@ export interface CustomerFlowDocument {
 
 export interface FlowTransitionInput {
   action: "stay" | "complete" | "transition";
+  continueImmediately?: boolean;
   targetFlowKey?: string;
   reasonCode?: string;
   reason?: string;
@@ -89,6 +90,7 @@ interface FlowRunDocument {
   flowKey: string;
   flowVersion: number;
   decision: string;
+  deliveryStatus: "internal_transition" | "sent";
   reply: string;
   state: FlowState;
   transition: FlowTransitionInput;
@@ -117,7 +119,7 @@ const defaultFlows = [
     key: DEFAULT_FLOW_KEY,
     name: "Triagem inicial",
     description: "Entende a necessidade administrativa e direciona o próximo atendimento.",
-    prompt: "Identifique o objetivo administrativo do contato. Colete somente informações mínimas e não faça triagem médica. Quando o objetivo estiver claro, encaminhe para agendamento ou acompanhamento.",
+    prompt: "Identifique o objetivo administrativo do contato sem fazer triagem médica. Assim que a intenção de agendar, reagendar ou cancelar estiver clara, transicione imediatamente para o fluxo de agendamento com continueImmediately=true, para que ele processe a mesma mensagem. Não peça nome, motivo da consulta, período ou data na triagem quando o fluxo de destino puder coletar ou usar esses dados.",
     completionCriteria: "Objetivo administrativo identificado e próximo fluxo definido, ou necessidade de atendimento humano confirmada.",
     allowedTransitions: ["schedule_appointment", "follow_up"],
     lifecycle: "single_call" as const,

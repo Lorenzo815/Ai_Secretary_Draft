@@ -30,6 +30,47 @@ tela offline e recursos visuais estáticos são persistidos no dispositivo.
 
 Abra [http://localhost:3000](http://localhost:3000).
 
+## Implantação na Vercel
+
+O processamento deve funcionar no servidor sem depender de uma pessoa manter o
+site aberto no navegador. Webhooks do WhatsApp chegam diretamente às rotas da
+aplicação, mas lembretes futuros precisam de um processo server-side que seja
+acionado no horário correto.
+
+Atualmente, `npm run dev` e `npm start` iniciam o Next.js e um worker contínuo.
+Esse worker funciona em servidores Node tradicionais, mas não permanece ativo
+em uma implantação serverless da Vercel.
+
+### Limitação do plano Hobby
+
+No Vercel Hobby, Cron Jobs podem executar somente uma vez por dia e a execução
+pode ocorrer em qualquer momento dentro da hora agendada. Isso não oferece a
+precisão necessária para lembretes de consulta nem substitui o worker atual.
+As mensagens recebidas por webhook podem ser processadas sem uma aba aberta,
+mas lembretes pontuais exigem outra solução de agendamento.
+
+### O que o plano Pro oferece
+
+No Vercel Pro, Cron Jobs podem executar uma vez por minuto, com precisão de
+minuto, e cada projeto pode configurar até 100 jobs. Uma rota cron pode varrer
+os triggers pendentes no MongoDB e processá-los usando os leases e operações
+idempotentes já existentes. A execução continua sujeita aos limites de duração
+das Vercel Functions e o cron tem entrega best effort, portanto o banco deve
+continuar sendo a fonte de verdade para recuperar execuções atrasadas.
+
+Alternativas avaliadas para manter tudo associado ao app:
+
+- **Vercel Pro + Cron por minuto:** opção mais simples para adaptar a fila atual.
+- **Vercel Workflows:** execução durável com pausas de segundos a meses,
+	retomada após deploys e retries, mas adiciona o Workflow SDK e cobrança por
+	uso.
+- **Vercel Hobby + agendador externo:** mantém o site no Hobby, mas deixa de ser
+	totalmente autocontido na Vercel.
+
+Referências oficiais: [limites de Cron Jobs](https://vercel.com/docs/cron-jobs/usage-and-pricing),
+[precisão e segurança dos crons](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
+e [Vercel Workflows](https://vercel.com/docs/workflows).
+
 ## WhatsApp Business
 
 A demonstração usa uma configuração única no servidor. Preencha estas
@@ -132,10 +173,18 @@ Toda execução da IA retorna um JSON validado pelo servidor com:
 - `updatedSummary`: resumo factual acumulado da conversa.
 - `state`: etapa atual, dados coletados, dados pendentes e observações.
 - `transition`: ação `stay`, `complete` ou `transition`, acompanhada de destino,
-	código e motivo quando aplicável.
+	código e motivo quando aplicável. O campo `continueImmediately` informa se o
+	fluxo de destino deve processar a mesma mensagem sem aguardar o cliente.
 
-O servidor só aplica destinos autorizados pela versão ativa. Cada resposta é
-registrada em `assistant_flow_runs`; conclusões e mudanças de fluxo ficam em
+O servidor só aplica destinos autorizados pela versão ativa. Cada job é limitado
+a no máximo duas chamadas reais ao modelo sem intervenção do usuário, evitando
+ciclos de transição. Quando a segunda chamada executa uma ferramenta com sucesso,
+o resultado determinístico da ferramenta produz a resposta sem uma terceira
+inferência. Somente a
+resposta final é enviada ao cliente; respostas intermediárias existem apenas para
+a decisão estruturada de transição. Cada execução é registrada em
+`assistant_flow_runs` com `deliveryStatus` igual a `internal_transition` ou
+`sent`; conclusões e mudanças de fluxo ficam em
 `assistant_flow_history` com versão, motivo, origem, estado final e próximo
 fluxo. A política global de segurança permanece no código e não pode ser
 alterada pelo editor de prompts.
