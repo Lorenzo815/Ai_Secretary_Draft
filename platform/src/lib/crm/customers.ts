@@ -126,6 +126,7 @@ export interface CustomerOperationsDocument extends CustomerDocument {
     status: "scheduled";
   };
   latestMessage?: { direction: "inbound" | "outbound"; body: string; timestamp: Date };
+  messageAfterClosure?: boolean;
 }
 
 const DB_NAME = "ai_secretary";
@@ -448,6 +449,15 @@ export async function listCustomerOperations() {
       conversationState: { $arrayElemAt: ["$conversationDocuments", 0] },
       nextAppointment: { $arrayElemAt: ["$appointmentDocuments", 0] },
       latestMessage: { $arrayElemAt: ["$messageDocuments", 0] },
+    } },
+    { $set: {
+      messageAfterClosure: {
+        $and: [
+          { $eq: ["$serviceStatus", "closed"] },
+          { $eq: ["$latestMessage.direction", "inbound"] },
+          { $gt: ["$latestMessage.timestamp", "$flow.completedAt"] },
+        ],
+      },
     } },
     { $unset: ["flowDocuments", "conversationDocuments", "appointmentDocuments", "messageDocuments"] },
   ]).toArray();

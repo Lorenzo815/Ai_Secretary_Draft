@@ -1,3 +1,7 @@
+implmentar: a pagian de conversa de cada cliente deve ter um mecnaismo onde o humano pode interagr com o usuario de foram direta, mas isso forca o fluxo a ser convertido para o atendimento humano. sem possibilidade de reativar a IA...
+
+
+
 # How to handle ai generation 
 
 Once the webhook hit our endpoiint we can maybe use that to trigger a generation with some buffer for wait for user digitations? lets say 10 seconds?

@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const [customers, overview] = await Promise.all([listCustomerOperations(), getDashboardOverview()]);
   const waitingHuman = customers.filter((customer) => customer.serviceStatus === "waiting_human").length;
+  const messagesAfterClosure = customers.filter((customer) => customer.messageAfterClosure);
   const inboundMessages = Number(overview.messageDirections.inbound ?? 0);
   const outboundMessages = Number(overview.messageDirections.outbound ?? 0);
   const pendingJobs = Number(overview.jobStatuses.pending ?? 0);
@@ -17,6 +18,15 @@ export default async function DashboardPage() {
   const customerById = new Map(customers.map((customer) => [customer._id.toString(), customer]));
   const pendingPaymentCustomerIds = new Set(overview.pendingPayments.map((payment) => payment.customerId.toString()));
   const actionItems = [
+    ...messagesAfterClosure.map((customer) => ({
+      key: `post-closure-${customer._id.toString()}`,
+      href: `/dashboard/clientes/${customer._id.toString()}`,
+      label: "Nova mensagem após encerramento",
+      customerName: customer.name,
+      detail: `Recebida ${formatRelativeTime(customer.latestMessage!.timestamp, overview.generatedAt)} · IA permanece encerrada`,
+      tone: "coral" as const,
+      timestamp: customer.latestMessage!.timestamp.getTime(),
+    })),
     ...overview.pendingPayments.map((payment) => {
       const customer = customerById.get(payment.customerId.toString());
       return {
@@ -81,6 +91,16 @@ export default async function DashboardPage() {
         </div>
         <p className="text-xs font-semibold text-stone">Coorte comercial: últimos {overview.periodDays} dias</p>
       </header>
+
+      {messagesAfterClosure.length > 0 && (
+        <section role="alert" className="flex flex-col justify-between gap-3 border-l-4 border-burnt-coral bg-burnt-coral/[0.06] px-4 py-3 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-semibold text-slate-ink">{messagesAfterClosure.length} cliente(s) enviaram mensagem após o encerramento</p>
+            <p className="mt-0.5 text-xs text-stone">A IA não foi reativada. A equipe deve revisar a conversa.</p>
+          </div>
+          <Link href={`/dashboard/clientes/${messagesAfterClosure[0]._id.toString()}`} className="shrink-0 text-xs font-semibold text-deep-teal hover:text-forest-teal">Revisar agora</Link>
+        </section>
+      )}
 
       <DashboardSections
         operation={(
@@ -195,7 +215,7 @@ export default async function DashboardPage() {
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${getSituationStyle(customer)}`}>{getSituation(customer)}</span>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                  <div><span className="text-stone">Responsável</span><p className="mt-0.5 font-semibold text-slate-ink">{getOwner(customer.serviceStatus)}</p></div>
+                  <div><span className="text-stone">Responsável</span><p className="mt-0.5 font-semibold text-slate-ink">{getCustomerOwner(customer)}</p></div>
                   <div><span className="text-stone">Fluxo</span><p className="mt-0.5 font-semibold text-slate-ink">{formatFlow(customer.flow?.flowKey)}</p></div>
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{getContext(customer)}</p>
@@ -232,7 +252,7 @@ export default async function DashboardPage() {
                       </p>
                     </td>
                     <td className="px-5 py-4 text-sm font-semibold text-slate-ink">
-                      {getOwner(customer.serviceStatus)}
+                      {getCustomerOwner(customer)}
                     </td>
                     <td className="px-5 py-4">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getSituationStyle(customer)}`}>
@@ -327,7 +347,13 @@ function getOwner(status?: CustomerOperationsDocument["serviceStatus"]) {
   return "IA";
 }
 
+function getCustomerOwner(customer: CustomerOperationsDocument) {
+  if (customer.messageAfterClosure) return "Equipe";
+  return getOwner(customer.serviceStatus);
+}
+
 function getSituation(customer: CustomerOperationsDocument) {
+  if (customer.messageAfterClosure) return "Nova mensagem após encerramento";
   if (customer.serviceStatus === "waiting_human") return "Aguardando equipe";
   if (customer.serviceStatus === "human_active") return "Atendimento humano";
   if (customer.serviceStatus === "closed") return "Encerrado";
@@ -338,6 +364,7 @@ function getSituation(customer: CustomerOperationsDocument) {
 }
 
 function getSituationStyle(customer: CustomerOperationsDocument) {
+  if (customer.messageAfterClosure) return "bg-burnt-coral/10 text-burnt-coral";
   if (customer.serviceStatus === "waiting_human") return "bg-burnt-coral/10 text-burnt-coral";
   if (customer.serviceStatus === "human_active") return "bg-slate-ink/10 text-slate-ink";
   if (customer.serviceStatus === "closed") return "bg-stone/10 text-stone";
