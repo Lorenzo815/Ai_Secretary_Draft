@@ -1,18 +1,18 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { getAssistantConfig } from "@/lib/assistant/config";
-import { processNextAssistantJob, processNextFollowUpTrigger } from "@/lib/assistant";
+import { getAssistantSettings, processNextAssistantJob } from "@/lib/assistant";
 
 export async function POST(request: Request) {
   if (!isAuthorized(request.headers.get("authorization"))) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
+  const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 1, 1), 20);
+  const settings = await getAssistantSettings();
+  if (!settings.processingEnabled) {
+    return NextResponse.json({ processed: 0, results: [], processingEnabled: false });
+  }
   const results = [];
-  const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 5, 1), 20);
-  const config = getAssistantConfig();
-  const triggerResult = await processNextFollowUpTrigger(config.leaseMs);
-  if (triggerResult.processed) results.push(triggerResult);
   for (let index = 0; index < batchSize; index += 1) {
     const result = await processNextAssistantJob();
     if (!result.processed) break;

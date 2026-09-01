@@ -5,7 +5,6 @@ import clientPromise from "../mongodb";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
-export type MessageSource = "meta" | "simulator";
 
 export interface WhatsAppMessageDocument {
   _id: ObjectId;
@@ -14,7 +13,6 @@ export interface WhatsAppMessageDocument {
   contactPhone: string;
   contactName?: string;
   direction: MessageDirection;
-  source: MessageSource;
   type: string;
   body: string;
   status: MessageStatus;
@@ -55,11 +53,11 @@ export async function updateWhatsAppMessageStatus(metaMessageId: string, status:
   );
 }
 
-export async function listWhatsAppMessages(limit = 100, source?: MessageSource) {
+export async function listWhatsAppMessages(limit = 100) {
   const messages = await getMessagesCollection();
   const safeLimit = Math.min(Math.max(limit, 1), 200);
   return messages
-    .find(source ? { source } : {}, { projection: { _id: 0 } })
+    .find({}, { projection: { _id: 0 } })
     .sort({ timestamp: -1 })
     .limit(safeLimit)
     .toArray();

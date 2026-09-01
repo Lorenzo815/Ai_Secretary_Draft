@@ -7,10 +7,13 @@ import {
   parseAssistantGeneration,
 } from "./prompt";
 import type { WhatsAppMessageDocument } from "../whatsapp/messages";
+import type { CustomerProfileSnapshot } from "../crm";
 import { getAssistantSettings, type CustomerFlowDocument, type FlowDefinitionDocument, type FlowVersion } from "./flows";
 import { DateTime } from "luxon";
-import { getCalendarSettings } from "../calendar";
+import { getActiveFirstVisitOption, getCalendarSettings } from "../calendar";
 import { buildAssistantResponseSchema, type AssistantCallPhase } from "./schema";
+import type { ObjectId } from "mongodb";
+import { completeAssistantModelTrace, failAssistantModelTrace, startAssistantModelTrace } from "./model-trace";
 
 let client: AzureOpenAI | undefined;
 
@@ -20,14 +23,23 @@ export async function generateAssistantResponse(input: {
   flow: FlowDefinitionDocument;
   version: FlowVersion;
   assignment: CustomerFlowDocument;
-  calendarToolResult?: string;
-  triggerContext?: string;
+  toolResult?: string;
   phase?: AssistantCallPhase;
+  customerProfile: CustomerProfileSnapshot;
+  customerId: ObjectId;
 }) {
   const config = getAssistantConfig();
-  const [calendarSettings, assistantSettings] = await Promise.all([
+  const callStartedAt = Date.now();
+  const trace = {
+    customerId: input.customerId.toString(),
+    flowKey: input.flow.key,
+    flowVersion: input.version.version,
+    phase: input.phase ?? (input.version.lifecycle === "tool_cycle" ? "pre_tool" : "single"),
+  };
+  const [calendarSettings, assistantSettings, activeFirstVisitOption] = await Promise.all([
     getCalendarSettings(),
     getAssistantSettings(),
+    getActiveFirstVisitOption(input.customerId),
   ]);
   const phase = input.phase ?? (input.version.lifecycle === "tool_cycle" ? "pre_tool" : "single");
   client ??= new AzureOpenAI({
@@ -35,35 +47,93 @@ export async function generateAssistantResponse(input: {
     endpoint: config.endpoint,
     apiVersion: config.apiVersion,
     deployment: config.deployment,
+    maxRetries: 0,
+    timeout: config.modelRequestTimeoutMs,
   });
 
-  const response = await client.chat.completions.create({
-    model: config.deployment,
-    messages: buildAssistantMessages({
+  const messages = buildAssistantMessages({
       flow: input.flow,
       version: input.version,
       assignment: input.assignment,
       summary: input.summary,
       messages: input.messages,
-      calendarToolResult: input.calendarToolResult,
-      triggerContext: input.triggerContext,
+      toolResult: input.toolResult,
       calendarNow: DateTime.now().setZone(calendarSettings.timezone).toISO() ?? undefined,
+      calendarEventTypes: calendarSettings.eventTypes.map((eventType) => ({
+        key: eventType.key,
+        name: eventType.name,
+        durationMinutes: eventType.durationMinutes,
+        resourceId: eventType.resourceId,
+      })),
       settings: assistantSettings,
       phase,
-    }),
-    max_completion_tokens: 4_096,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "clinic_flow_response",
-        strict: true,
-        schema: buildAssistantResponseSchema(
-          input.version,
-          phase,
-        ),
-      },
-    },
+      customerProfile: input.customerProfile,
+      activeFirstVisitOption,
+    });
+  const traceId = await startAssistantModelTrace({
+    customerId: input.customerId,
+    flowKey: input.flow.key,
+    flowVersion: input.version.version,
+    phase,
+    messageCount: messages.length,
   });
+  console.info("Assistant model call started", { ...trace, messageCount: messages.length });
 
-  return parseAssistantGeneration(response.choices[0]?.message.content ?? null);
+  try {
+    const response = await client.chat.completions.create({
+      model: config.deployment,
+      messages,
+      max_completion_tokens: 4_096,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "clinic_flow_response",
+          strict: true,
+          schema: buildAssistantResponseSchema(
+            input.version,
+            phase,
+          ),
+        },
+      },
+    });
+
+    const content = response.choices[0]?.message.content ?? null;
+    const generation = parseAssistantGeneration(content);
+    await completeAssistantModelTrace({
+      traceId,
+      durationMs: Date.now() - callStartedAt,
+      requestId: response._request_id,
+      finishReason: response.choices[0]?.finish_reason,
+      usage: response.usage,
+      generation,
+    }).catch((traceError) => console.error("Assistant model trace could not be completed", traceError));
+    console.info("Assistant model call completed", {
+      ...trace,
+      durationMs: Date.now() - callStartedAt,
+      requestId: response._request_id,
+      finishReason: response.choices[0]?.finish_reason,
+      usage: response.usage,
+      result: {
+        decision: generation.decision,
+        reply: generation.reply,
+        stage: generation.state.stage,
+        collectedDataKeys: generation.state.collectedData.map((item) => item.key),
+        missingData: generation.state.missingData,
+        notes: generation.state.notes,
+        transition: generation.transition,
+        toolCalls: generation.toolCalls.map((call) => ({ tool: call.tool, argumentKeys: Object.keys(call.arguments) })),
+      },
+    });
+    return generation;
+  } catch (error) {
+    await failAssistantModelTrace({ traceId, durationMs: Date.now() - callStartedAt, error })
+      .catch((traceError) => console.error("Assistant model trace failure could not be recorded", traceError));
+    console.error("Assistant model call failed", {
+      ...trace,
+      durationMs: Date.now() - callStartedAt,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }

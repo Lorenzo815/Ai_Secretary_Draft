@@ -1,3 +1,7 @@
+# How to handle ai generation 
+
+Once the webhook hit our endpoiint we can maybe use that to trigger a generation with some buffer for wait for user digitations? lets say 10 seconds?
+
 # Oria Platform
 
 Aplicação principal da Oria, uma secretária com IA voltada inicialmente para
@@ -5,9 +9,10 @@ agendamentos e acompanhamentos de clientes pelo WhatsApp.
 
 ## Estado atual
 
-
-Agenda e acompanhamentos ainda não possuem persistência nem APIs. Consulte
-[MVP.md](MVP.md) para o escopo proposto.
+A plataforma persiste CRM, conversas, fluxos, pagamentos e agenda no MongoDB.
+O assistente conduz identificação, cadastro, informações comerciais, solicitação
+de sinal via Pix e agendamento da primeira visita. Consulte [MVP.md](MVP.md)
+para o escopo do produto.
 
 ## Desenvolvimento
 
@@ -34,42 +39,14 @@ Abra [http://localhost:3000](http://localhost:3000).
 
 O processamento deve funcionar no servidor sem depender de uma pessoa manter o
 site aberto no navegador. Webhooks do WhatsApp chegam diretamente às rotas da
-aplicação, mas lembretes futuros precisam de um processo server-side que seja
-acionado no horário correto.
+aplicação e enfileiram respostas para processamento server-side.
 
 Atualmente, `npm run dev` e `npm start` iniciam o Next.js e um worker contínuo.
 Esse worker funciona em servidores Node tradicionais, mas não permanece ativo
 em uma implantação serverless da Vercel.
 
-### Limitação do plano Hobby
-
-No Vercel Hobby, Cron Jobs podem executar somente uma vez por dia e a execução
-pode ocorrer em qualquer momento dentro da hora agendada. Isso não oferece a
-precisão necessária para lembretes de consulta nem substitui o worker atual.
-As mensagens recebidas por webhook podem ser processadas sem uma aba aberta,
-mas lembretes pontuais exigem outra solução de agendamento.
-
-### O que o plano Pro oferece
-
-No Vercel Pro, Cron Jobs podem executar uma vez por minuto, com precisão de
-minuto, e cada projeto pode configurar até 100 jobs. Uma rota cron pode varrer
-os triggers pendentes no MongoDB e processá-los usando os leases e operações
-idempotentes já existentes. A execução continua sujeita aos limites de duração
-das Vercel Functions e o cron tem entrega best effort, portanto o banco deve
-continuar sendo a fonte de verdade para recuperar execuções atrasadas.
-
-Alternativas avaliadas para manter tudo associado ao app:
-
-- **Vercel Pro + Cron por minuto:** opção mais simples para adaptar a fila atual.
-- **Vercel Workflows:** execução durável com pausas de segundos a meses,
-	retomada após deploys e retries, mas adiciona o Workflow SDK e cobrança por
-	uso.
-- **Vercel Hobby + agendador externo:** mantém o site no Hobby, mas deixa de ser
-	totalmente autocontido na Vercel.
-
-Referências oficiais: [limites de Cron Jobs](https://vercel.com/docs/cron-jobs/usage-and-pricing),
-[precisão e segurança dos crons](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
-e [Vercel Workflows](https://vercel.com/docs/workflows).
+Em uma implantação serverless, configure uma chamada recorrente à rota interna
+do worker ou use uma infraestrutura Node que mantenha o processo contínuo.
 
 ## WhatsApp Business
 
@@ -107,7 +84,9 @@ npm run worker:assistant
 
 `npm run dev` e `npm start` iniciam automaticamente o servidor Next.js e o
 worker no mesmo supervisor. O worker lê `ASSISTANT_WORKER_URL`, `ASSISTANT_WORKER_INTERVAL_MS` e
-`ASSISTANT_WORKER_REQUEST_TIMEOUT_MS`. `ASSISTANT_WORKER_ENABLED=false` o
+`ASSISTANT_WORKER_REQUEST_TIMEOUT_MS`. Cada requisição processa um job por padrão;
+`ASSISTANT_MODEL_REQUEST_TIMEOUT_MS` limita cada inferência e `ASSISTANT_LEASE_MS`
+deve permanecer maior que o timeout total do worker. `ASSISTANT_WORKER_ENABLED=false` o
 desativa. Os comandos `npm run dev:next`, `npm run start:next` e
 `npm run worker:assistant` permanecem disponíveis quando a implantação exige
 processos separados. Várias instâncias podem trabalhar em paralelo porque cada
@@ -129,40 +108,40 @@ continuam na versão que receberam até uma transição ou atribuição manual.
 
 ## Fluxos de IA atuais
 
-O sistema possui três fluxos iniciais. Cada cliente participa de apenas um
+O sistema possui cinco fluxos iniciais. Cada cliente participa de apenas um
 fluxo por vez. As chaves são estáveis, enquanto prompts, conhecimento e regras
 podem receber novas versões pelo editor do CRM.
 
-### 1. Triagem inicial (`initial_triage`)
+### Jornada padrão
 
-- **Objetivo:** entender a necessidade administrativa do contato e escolher o
-	próximo atendimento, sem realizar triagem médica.
-- **Coleta:** somente as informações mínimas necessárias para identificar a
-	intenção do cliente.
-- **Conclusão:** objetivo administrativo identificado e próximo fluxo definido,
-	ou necessidade de atendimento humano confirmada.
-- **Transições permitidas:** `schedule_appointment` e `follow_up`.
-- **Fluxo padrão:** novos clientes começam nesta etapa automaticamente.
+- `initial_triage`: pergunta explicitamente se é a primeira consulta. Pacientes
+  de retorno são encaminhados para atendimento humano.
+- `collect_profile`: coleta gradualmente nome completo, nascimento, CPF,
+  endereço, telefones e profissão.
+- `commercial_information`: responde com o conteúdo comercial aprovado e sem
+  pressão, promessa de resultado ou alegação médica não confirmada.
+- `payment_confirmation`: cria uma solicitação do sinal com os dados Pix
+  configurados. A equipe confirma ou rejeita o pagamento na ficha do cliente.
+- `schedule_appointment`: oferece uma única combinação por vez e agenda
+  Bioimpedância antes da Consulta Dr., juntas ou separadas conforme preferência.
 
-### 2. Agendar atendimento (`schedule_appointment`)
+O médico e a técnica de Bioimpedância têm recursos e expedientes independentes.
+Os dois eventos são reservados pelo servidor com um mesmo identificador de
+visita; se a segunda gravação falhar, a primeira é removida. O tipo `follow_up`
+continua disponível na agenda como "Retorno".
 
-- **Objetivo:** conduzir solicitações de agendamento, reagendamento ou
-	cancelamento.
-- **Restrição:** a IA não pode inventar horários ou confirmar disponibilidade
-	que não venha do conhecimento ou de uma integração autorizada.
-- **Conclusão:** solicitação confirmada pela fonte autorizada, cancelada pelo
-	cliente ou encaminhada à equipe com motivo registrado.
-- **Transições permitidas:** `follow_up` e `initial_triage`.
+### Dados pessoais e Pix
 
-### 3. Follow-up (`follow_up`)
+O CRM é a fonte autoritativa do cadastro. O CPF é validado, cifrado com
+AES-256-GCM usando `PII_ENCRYPTION_KEY`, indexado por HMAC e exibido ao modelo e
+à equipe apenas mascarado. CPF completo não pode permanecer no estado, resumo,
+resposta ou auditoria do assistente. Em desenvolvimento, `NEXTAUTH_SECRET` é
+aceito como fallback, mas produção deve usar uma chave de PII independente.
 
-- **Objetivo:** realizar confirmações, orientações pré-consulta e retornos
-	estritamente administrativos.
-- **Restrição:** não oferecer diagnóstico, interpretação clínica ou orientação
-	médica.
-- **Conclusão:** confirmação ou pendência registrada, ou encaminhamento humano
-	concluído.
-- **Transições permitidas:** `schedule_appointment` e `initial_triage`.
+Chave Pix, favorecido e valor do sinal são configurados em
+`/dashboard/settings`. Sem esses dados, a ferramenta de pagamento falha sem
+inventar valores. A solicitação apenas registra pagamento pendente e transfere
+o atendimento; somente a confirmação humana libera o fluxo de agendamento.
 
 ### Saída estruturada comum
 
@@ -188,23 +167,6 @@ a decisão estruturada de transição. Cada execução é registrada em
 `assistant_flow_history` com versão, motivo, origem, estado final e próximo
 fluxo. A política global de segurança permanece no código e não pode ser
 alterada pelo editor de prompts.
-
-## Simulador temporário
-
-A página `/dashboard/tmp-user-simulator` representa diferentes usuários do
-WhatsApp. Cada envio chama `POST /api/dev/whatsapp-simulator`, que monta um
-payload no formato da Meta e usa o mesmo processador do webhook oficial. Não
-há chamada à Graph API nem envio para telefones reais. Os registros recebem a
-origem `simulator`, separada das mensagens com origem `meta`.
-
-O simulador é isolado nestas pastas:
-
-- `src/app/dashboard/tmp-user-simulator`
-- `src/app/api/dev/whatsapp-simulator`
-
-Para removê-lo no futuro, apague essas pastas e retire o item `Simulador` de
-`src/app/dashboard/_components/sidebar.tsx`. O webhook oficial e os módulos em
-`src/lib/whatsapp` não precisam ser alterados.
 
 ## Verificação
 

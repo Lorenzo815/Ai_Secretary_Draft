@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { CustomerServiceStatus, updateCustomerServiceStatus } from "@/lib/crm";
 import { listWhatsAppMessagesForAssistant } from "@/lib/whatsapp";
 import { scheduleAssistantResponse } from "@/lib/assistant/queue";
+import { completeActiveCustomerFlow } from "@/lib/assistant/flows";
 
 const validStatuses = new Set<CustomerServiceStatus>([
   "ai_active",
@@ -26,6 +27,13 @@ export async function PUT(
     return NextResponse.json({ error: "Status inválido." }, { status: 400 });
   }
   const customer = await updateCustomerServiceStatus(new ObjectId(id), input.status);
+  if (input.status === "closed") {
+    await completeActiveCustomerFlow(
+      customer._id,
+      "service_closed",
+      "Atendimento encerrado pela equipe.",
+    );
+  }
   if (input.status === "ai_active") {
     const recent = await listWhatsAppMessagesForAssistant(customer._id, undefined, 1);
     const latest = recent[0];

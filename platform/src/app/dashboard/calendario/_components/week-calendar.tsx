@@ -8,39 +8,33 @@ interface Appointment {
   startAt: string;
   endAt: string;
   status: "scheduled" | "cancelled" | "completed";
+  eventType?: string;
 }
 
-interface ScheduledTrigger {
-  _id: string;
-  appointmentId: string;
-  customerId: string;
-  type: "appointment_reminder";
-  dueAt: string;
-  status: "pending" | "processing" | "awaiting_response" | "completed" | "cancelled" | "failed";
-}
-
-interface CustomerOption {
-  id: string;
+interface EventTypeDefinition {
+  key: string;
   name: string;
+  color: string;
 }
 
 const dayFormatter = new Intl.DateTimeFormat("pt-BR", { weekday: "short" });
 
 export default function WeekCalendar({
   timezone,
-  customers,
+  eventTypes,
   refreshKey,
+  onCreateEvent,
 }: {
   timezone: string;
-  customers: CustomerOption[];
+  eventTypes: EventTypeDefinition[];
   refreshKey: number;
+  onCreateEvent: (date: string) => void;
 }) {
   const [weekStart, setWeekStart] = useState(() => getCurrentWeekStart(timezone));
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [triggers, setTriggers] = useState<ScheduledTrigger[]>([]);
   const [showAppointments, setShowAppointments] = useState(true);
-  const [showTriggers, setShowTriggers] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
 
@@ -52,14 +46,12 @@ export default function WeekCalendar({
       .then(async (response) => {
         const data = await response.json() as {
           appointments?: Appointment[];
-          triggers?: ScheduledTrigger[];
           error?: string;
         };
         if (!response.ok) throw new Error(data.error ?? "Não foi possível carregar a semana.");
         if (!active) return;
         setError("");
         setAppointments(data.appointments ?? []);
-        setTriggers(data.triggers ?? []);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Falha ao carregar a semana.");
@@ -75,6 +67,22 @@ export default function WeekCalendar({
     setWeekStart(nextWeekStart);
   }
 
+  async function deleteEvent(appointment: Appointment) {
+    if (!window.confirm("Excluir este evento permanentemente? Esta ação não pode ser desfeita.")) return;
+    setDeletingId(appointment._id);
+    setError("");
+    try {
+      const response = await fetch(`/api/calendar/appointments/${appointment._id}?permanent=true`, { method: "DELETE" });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Não foi possível excluir o evento.");
+      setAppointments((current) => current.filter((item) => item._id !== appointment._id));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Não foi possível excluir o evento.");
+    } finally {
+      setDeletingId("");
+    }
+  }
+
   return (
     <section aria-labelledby="week-calendar-title" className="border-t border-mist pt-7">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -86,7 +94,6 @@ export default function WeekCalendar({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Toggle label="Pacientes" checked={showAppointments} onChange={setShowAppointments} color="teal" />
-          <Toggle label="Automações" checked={showTriggers} onChange={setShowTriggers} color="coral" />
           <div className="ml-1 flex overflow-hidden rounded-lg border border-mist bg-white">
             <button type="button" onClick={() => navigateTo(addDays(weekStart, -7))} className="h-9 w-9 border-r border-mist text-lg text-slate-ink hover:bg-soft-ivory" aria-label="Semana anterior">‹</button>
             <button type="button" onClick={() => navigateTo(getCurrentWeekStart(timezone))} className="px-3 text-xs font-semibold text-slate-ink hover:bg-soft-ivory">Hoje</button>
@@ -101,7 +108,7 @@ export default function WeekCalendar({
           {days.map((day) => {
             const dateKey = toDateKey(day);
             const dayAppointments = appointments.filter((item) => getDateKey(item.startAt, timezone) === dateKey);
-            const dayTriggers = triggers.filter((item) => getDateKey(item.dueAt, timezone) === dateKey);
+            const appointmentGroups = groupOverlappingAppointments(dayAppointments);
             const isToday = dateKey === toDateKey(getToday(timezone));
             return (
               <div key={dateKey} className="bg-white lg:min-h-[390px]">
@@ -111,22 +118,37 @@ export default function WeekCalendar({
                 </div>
                 <div className="space-y-2 p-2">
                   {loading && <p className="py-8 text-center text-xs text-stone">Carregando…</p>}
-                  {!loading && showAppointments && dayAppointments.map((appointment) => (
-                    <article key={appointment._id} className="border-l-2 border-deep-teal bg-deep-teal/5 px-2.5 py-2">
-                      <p className="text-xs font-bold text-deep-teal">{formatTime(appointment.startAt, timezone)}–{formatTime(appointment.endAt, timezone)}</p>
-                      <p className="mt-1 break-words text-xs font-semibold text-slate-ink">{appointment.customerName}</p>
-                      <p className="mt-0.5 text-[10px] text-stone">{formatAppointmentStatus(appointment.status)}</p>
-                    </article>
+                  {!loading && showAppointments && appointmentGroups.map((lanes) => (
+                    <div key={lanes[0][0]._id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}>
+                      {lanes.map((lane) => (
+                        <div key={lane[0]._id} className="min-w-0 space-y-2">
+                          {lane.map((appointment) => {
+                            const definition = eventTypes.find((eventType) => eventType.key === appointment.eventType) ?? eventTypes[0];
+                            const color = definition?.color ?? "#0F766E";
+                            return (
+                              <article key={appointment._id} className="min-w-0 border-l-2 px-2 py-2" style={{ borderColor: color, backgroundColor: `${color}12` }}>
+                                <div className="flex items-start justify-between gap-1">
+                                  <p className="min-w-0 break-words text-xs font-bold" style={{ color }}>{formatTime(appointment.startAt, timezone)}–{formatTime(appointment.endAt, timezone)}</p>
+                                  <button type="button" onClick={() => deleteEvent(appointment)} disabled={deletingId === appointment._id} className="flex h-6 w-6 shrink-0 items-center justify-center text-stone hover:bg-burnt-coral/10 hover:text-burnt-coral disabled:opacity-40" aria-label={`Excluir evento de ${appointment.customerName || "sem cliente"}`} title="Excluir evento">
+                                    <TrashIcon />
+                                  </button>
+                                </div>
+                                <p className="mt-1 break-words text-xs font-semibold text-slate-ink">{appointment.customerName || "Sem cliente"}</p>
+                                <p className="mt-0.5 break-words text-[10px] text-stone">{definition?.name ?? "Tipo removido"} · {formatAppointmentStatus(appointment.status)}</p>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
                   ))}
-                  {!loading && showTriggers && dayTriggers.map((trigger) => (
-                    <article key={trigger._id} className="border-l-2 border-burnt-coral bg-burnt-coral/5 px-2.5 py-2">
-                      <p className="text-xs font-bold text-burnt-coral">{formatTime(trigger.dueAt, timezone)}</p>
-                      <p className="mt-1 break-words text-xs font-semibold text-slate-ink">{customers.find((item) => item.id === trigger.customerId)?.name ?? "Cliente"}</p>
-                      <p className="mt-0.5 text-[10px] text-stone">Lembrete · {formatTriggerStatus(trigger.status)}</p>
-                    </article>
-                  ))}
-                  {!loading && (!showAppointments || dayAppointments.length === 0) && (!showTriggers || dayTriggers.length === 0) && (
+                  {!loading && (!showAppointments || dayAppointments.length === 0) && (
                     <p className="py-4 text-center text-xs text-stone lg:py-8">Sem eventos</p>
+                  )}
+                  {!loading && (
+                    <button type="button" onClick={() => onCreateEvent(dateKey)} className="min-h-9 w-full border border-dashed border-mist px-2 text-xs font-semibold text-deep-teal hover:border-deep-teal/40 hover:bg-deep-teal/5">
+                      + Criar evento
+                    </button>
                   )}
                 </div>
               </div>
@@ -138,7 +160,18 @@ export default function WeekCalendar({
   );
 }
 
-function Toggle({ label, checked, onChange, color }: { label: string; checked: boolean; onChange: (checked: boolean) => void; color: "teal" | "coral" }) {
+function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="m19 6-1 14H6L5 6" />
+      <path d="M10 11v5M14 11v5" />
+    </svg>
+  );
+}
+
+function Toggle({ label, checked, onChange, color }: { label: string; checked: boolean; onChange: (checked: boolean) => void; color: "teal" }) {
   return (
     <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-slate-ink">
       <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? color === "teal" ? "bg-deep-teal" : "bg-burnt-coral" : "bg-mist"}`}>
@@ -194,11 +227,37 @@ function formatAppointmentStatus(status: Appointment["status"]) {
   return "Concluído";
 }
 
-function formatTriggerStatus(status: ScheduledTrigger["status"]) {
-  if (status === "pending") return "Pendente";
-  if (status === "processing") return "Processando";
-  if (status === "awaiting_response") return "Aguardando confirmação";
-  if (status === "completed") return "Concluído";
-  if (status === "cancelled") return "Cancelado";
-  return "Falhou";
+function groupOverlappingAppointments(appointments: Appointment[]) {
+  const sorted = [...appointments].sort((first, second) => (
+    new Date(first.startAt).getTime() - new Date(second.startAt).getTime()
+  ));
+  const groups: Appointment[][][] = [];
+  let cluster: Appointment[] = [];
+  let clusterEnd = 0;
+
+  function appendCluster() {
+    if (cluster.length === 0) return;
+    const lanes: Appointment[][] = [];
+    for (const appointment of cluster) {
+      const start = new Date(appointment.startAt).getTime();
+      const lane = lanes.find((items) => new Date(items[items.length - 1].endAt).getTime() <= start);
+      if (lane) lane.push(appointment);
+      else lanes.push([appointment]);
+    }
+    groups.push(lanes);
+  }
+
+  for (const appointment of sorted) {
+    const start = new Date(appointment.startAt).getTime();
+    const end = new Date(appointment.endAt).getTime();
+    if (cluster.length > 0 && start >= clusterEnd) {
+      appendCluster();
+      cluster = [];
+      clusterEnd = 0;
+    }
+    cluster.push(appointment);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  appendCluster();
+  return groups;
 }

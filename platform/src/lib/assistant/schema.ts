@@ -1,22 +1,29 @@
 import type { FlowVersion } from "./flows";
+import { ASSISTANT_DECISIONS } from "./tools/contracts";
+import { getToolDefinition, isAssistantToolKey } from "./tools/registry";
 
 export type AssistantCallPhase = "single" | "pre_tool" | "post_tool";
 
 export function buildAssistantResponseSchema(version: FlowVersion, phase: AssistantCallPhase) {
-  const calendarActions = phase === "pre_tool"
-    ? [
-        "none",
-        ...(version.allowedTools.includes("calendar.check_availability") ? ["check_availability"] : []),
-        ...(version.allowedTools.includes("calendar.book_appointment") ? ["book_appointment"] : []),
-      ]
-    : ["none"];
+  const allowedTools = phase === "pre_tool"
+    ? version.allowedTools.filter(isAssistantToolKey)
+    : [];
+  const toolCallSchemas = allowedTools.map((key) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["tool", "arguments"],
+    properties: {
+      tool: { type: "string", enum: [key] },
+      arguments: getToolDefinition(key).argumentsSchema,
+    },
+  }));
 
   return {
     type: "object",
     additionalProperties: false,
-    required: ["decision", "reply", "updatedSummary", "state", "transition", "calendarAction"],
+    required: ["decision", "reply", "updatedSummary", "state", "transition", "toolCalls"],
     properties: {
-      decision: { type: "string", enum: ["reply", "out_of_scope", "emergency", "human_handoff"] },
+      decision: { type: "string", enum: ASSISTANT_DECISIONS },
       reply: { type: "string" },
       updatedSummary: { type: "string" },
       state: {
@@ -27,6 +34,7 @@ export function buildAssistantResponseSchema(version: FlowVersion, phase: Assist
           stage: { type: "string" },
           collectedData: {
             type: "array",
+            maxItems: 0,
             items: {
               type: "object",
               additionalProperties: false,
@@ -48,25 +56,18 @@ export function buildAssistantResponseSchema(version: FlowVersion, phase: Assist
         properties: {
           action: { type: "string", enum: ["stay", "complete", "transition"] },
           continueImmediately: { type: "boolean" },
-          targetFlowKey: { type: ["string", "null"] },
+          targetFlowKey: { type: ["string", "null"], enum: [...version.allowedTransitions, null] },
           reasonCode: { type: ["string", "null"] },
           reason: { type: ["string", "null"] },
         },
       },
-      calendarAction: {
-        type: "object",
-        additionalProperties: false,
-        required: ["action", "dateIntent", "fromDate", "toDate", "period", "startAt", "confirmedByCustomer", "notes"],
-        properties: {
-          action: { type: "string", enum: calendarActions },
-          dateIntent: { type: ["string", "null"], enum: ["exact_date", "date_range", "next_available", null] },
-          fromDate: { type: ["string", "null"] },
-          toDate: { type: ["string", "null"] },
-          period: { type: ["string", "null"], enum: ["morning", "afternoon", "any", null] },
-          startAt: { type: ["string", "null"] },
-          confirmedByCustomer: { type: "boolean" },
-          notes: { type: ["string", "null"] },
-        },
+      toolCalls: {
+        type: "array",
+        minItems: 0,
+        maxItems: phase === "pre_tool" ? 2 : 0,
+        items: toolCallSchemas.length > 0
+          ? { anyOf: toolCallSchemas }
+          : { type: "object", additionalProperties: false, required: [], properties: {} },
       },
     },
   };

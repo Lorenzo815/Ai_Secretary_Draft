@@ -1,8 +1,11 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { getAssistantSettings } from "@/lib/assistant";
+import SystemControls from "./_components/system-controls";
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions);
+  const assistantSettings = await getAssistantSettings();
 
   const initials = session?.user?.name
     ? session.user.name
@@ -62,6 +65,11 @@ export default async function SettingsPage() {
           <AccessDetail label="Área protegida" value="Todo o dashboard" />
         </div>
       </section>
+
+      <SystemControls
+        initialProcessingEnabled={assistantSettings.processingEnabled}
+        initialPayment={assistantSettings.payment}
+      />
     </div>
   );
 }

@@ -2,98 +2,86 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
-import { bookAppointment, findAvailableSlots, getCalendarSettings } from "../../calendar";
-import type { AssistantGeneration, CalendarAction } from "../prompt";
-import type { AssistantToolKey } from "../flows";
+import { bookAppointment, bookFirstVisit, findAvailableSlots, findCustomerAppointments, findFirstVisitOption, getCalendarSettings, updateCustomerAppointment } from "../../calendar";
+import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
-export interface CalendarToolExecution {
-  output: string;
-  retryable: boolean;
+interface CalendarToolArguments {
+  action: "find_first_visit_option" | "book_first_visit" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  dateIntent: "exact_date" | "date_range" | "next_available" | null;
+  fromDate: string | null;
+  toDate: string | null;
+  period: "morning" | "afternoon" | "any" | null;
+  appointmentId: string | null;
+  optionId: string | null;
+  eventType: string | null;
+  eventTypes: string[];
+  startAt: string | null;
+  confirmedByCustomer: boolean;
+  notes: string | null;
+  preference: "together" | "separate" | null;
 }
 
-export function getGroundedCalendarReply(output?: string) {
-  if (!output) return null;
-  try {
-    const result = JSON.parse(output) as {
-      ok?: boolean;
-      type?: string;
-      tool?: string;
-      timezone?: string;
-      startAt?: string;
-      slots?: Array<{ label?: string }>;
-    };
-    if (result.ok && result.tool === "calendar.check_availability") {
-      const labels = result.slots?.map((slot) => slot.label).filter((label): label is string => Boolean(label)) ?? [];
-      if (labels.length === 0) {
-        return "Não encontrei horários disponíveis nesse período. Você prefere ampliar o intervalo ou escolher outro período do dia?";
-      }
-      return `Encontrei estes horários disponíveis: ${joinLabels(labels)}. Qual deles você prefere?`;
-    }
-    if (result.ok && result.tool === "calendar.book_appointment" && result.startAt && result.timezone) {
-      const startAt = DateTime.fromISO(result.startAt, { zone: "utc" })
-        .setZone(result.timezone)
-        .setLocale("pt-BR")
-        .toFormat("dd/LL/yyyy 'às' HH:mm");
-      return `Seu agendamento foi confirmado para ${startAt}.`;
-    }
-    if (result.type === "operational_error") {
-      return "Não consegui acessar a agenda agora. Encaminhei a solicitação para continuidade pela equipe.";
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-export function resolveCalendarAction(
-  generation: AssistantGeneration,
-  allowedTools: AssistantToolKey[],
-): CalendarAction {
-  const tool = getToolKey(generation.calendarAction.action);
-  if (!tool || allowedTools.includes(tool)) return generation.calendarAction;
-  return emptyCalendarAction();
-}
-
-export async function assertCalendarToolCall(input: {
-  generation: AssistantGeneration;
-  allowedTools: AssistantToolKey[];
-}): Promise<CalendarToolExecution | null> {
-  if (
-    input.allowedTools.length === 0 ||
-    input.generation.calendarAction.action !== "none" ||
-    input.generation.state.missingData.length > 0 ||
-    input.generation.decision === "emergency" ||
-    input.generation.decision === "out_of_scope"
-  ) {
-    return null;
-  }
-
-  return validationError(
-    "calendar",
-    [{
-      field: "calendarAction.action",
-      code: "tool_call_required",
-      message: "O fluxo de agendamento está sem dados pendentes; consulte a agenda ou solicite os dados realmente ausentes.",
-    }],
-  );
-}
-
-export async function executeCalendarAction(input: {
-  action: CalendarAction;
-  allowedTools: AssistantToolKey[];
+async function executeCalendarAction(input: {
+  action: CalendarToolArguments;
   customerId: ObjectId;
   customerName: string;
   contactPhone: string;
-  messageSource: "meta" | "simulator";
-}): Promise<CalendarToolExecution | null> {
-  if (input.action.action === "none") return null;
-  const tool = getToolKey(input.action.action);
-  if (!tool || !input.allowedTools.includes(tool)) {
-    return validationError("calendar", [{
-      field: "calendarAction.action",
-      code: "tool_not_allowed",
-      message: "Esta ferramenta não está autorizada na versão atual do fluxo.",
-    }]);
+}): Promise<ToolExecution | null> {
+  if (input.action.action === "find_first_visit_option") {
+    const validation = await validateFirstVisitAvailability(input.action);
+    if (validation) return validation;
+    try {
+      const result = await findFirstVisitOption({
+        customerId: input.customerId,
+        fromDate: input.action.fromDate!,
+        toDate: input.action.toDate!,
+        period: input.action.period!,
+        preference: input.action.preference!,
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool: "calendar.find_first_visit_option",
+          timezone: result.settings.timezone,
+          optionId: result.option?._id.toString() ?? null,
+          preference: result.option?.preference ?? input.action.preference,
+          bioimpedance: result.option?.bioimpedance ?? null,
+          consultation: result.option?.consultation ?? null,
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError("calendar.find_first_visit_option", error, "Falha na consulta da primeira visita.");
+    }
+  }
+
+  if (input.action.action === "book_first_visit") {
+    if (!input.action.optionId || !ObjectId.isValid(input.action.optionId) || !input.action.confirmedByCustomer) {
+      return validationError("calendar.book_first_visit", [
+        invalid("arguments", "Informe optionId válido e confirmação explícita do cliente."),
+      ]);
+    }
+    try {
+      const result = await bookFirstVisit({
+        customerId: input.customerId,
+        customerName: input.customerName,
+        contactPhone: input.contactPhone,
+        optionId: new ObjectId(input.action.optionId),
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool: "calendar.book_first_visit",
+          visitGroupId: result.visitGroupId.toString(),
+          timezone: result.settings.timezone,
+          bioimpedance: result.option.bioimpedance,
+          consultation: result.option.consultation,
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError("calendar.book_first_visit", error, "Falha na reserva da primeira visita.");
+    }
   }
 
   if (input.action.action === "check_availability") {
@@ -104,6 +92,7 @@ export async function executeCalendarAction(input: {
         fromDate: input.action.fromDate!,
         toDate: input.action.toDate!,
         period: input.action.period!,
+        eventType: input.action.eventType!,
         limit: 8,
       });
       return {
@@ -111,12 +100,78 @@ export async function executeCalendarAction(input: {
           ok: true,
           tool: "calendar.check_availability",
           timezone: result.settings.timezone,
+          eventType: input.action.eventType,
+          eventTypeName: result.settings.eventTypes.find((item) => item.key === input.action.eventType)?.name,
+          eventTypes: serializeEventTypes(result.settings.eventTypes),
           slots: result.slots,
         }),
         retryable: false,
       };
     } catch (error) {
       return operationalError("calendar.check_availability", error, "Falha na consulta.");
+    }
+  }
+
+  if (input.action.action === "list_appointments") {
+    const validation = await validateListInput(input.action);
+    if (validation) return validation;
+    try {
+      const result = await findCustomerAppointments({
+        customerId: input.customerId,
+        fromDate: input.action.fromDate!,
+        toDate: input.action.toDate!,
+        eventTypes: input.action.eventTypes,
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool: "calendar.list_appointments",
+          timezone: result.settings.timezone,
+          eventTypes: serializeEventTypes(result.settings.eventTypes),
+          appointments: result.appointments.map((appointment) => ({
+            appointmentId: appointment._id.toString(),
+            startAt: appointment.startAt.toISOString(),
+            endAt: appointment.endAt.toISOString(),
+            eventType: appointment.eventType,
+            eventTypeName: result.settings.eventTypes.find((item) => item.key === appointment.eventType)?.name ?? "Tipo removido",
+            notes: appointment.notes ?? null,
+          })),
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError("calendar.list_appointments", error, "Falha na consulta de eventos.");
+    }
+  }
+
+  if (input.action.action === "update_appointment") {
+    const validation = await validateUpdateInput(input.action);
+    if (validation) return validation;
+    try {
+      const appointment = await updateCustomerAppointment({
+        appointmentId: new ObjectId(input.action.appointmentId!),
+        customerId: input.customerId,
+        startAt: input.action.startAt ?? undefined,
+        eventType: input.action.eventType ?? undefined,
+        notes: input.action.notes ?? undefined,
+      });
+      const settings = await getCalendarSettings();
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool: "calendar.update_appointment",
+          appointmentId: appointment._id.toString(),
+          startAt: appointment.startAt.toISOString(),
+          endAt: appointment.endAt.toISOString(),
+          eventType: appointment.eventType,
+          eventTypeName: settings.eventTypes.find((item) => item.key === appointment.eventType)?.name ?? "Tipo removido",
+          eventTypes: serializeEventTypes(settings.eventTypes),
+          timezone: appointment.timezone,
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError("calendar.update_appointment", error, "Falha na alteração.");
     }
   }
 
@@ -128,9 +183,9 @@ export async function executeCalendarAction(input: {
       customerName: input.customerName,
       contactPhone: input.contactPhone,
       startAt: input.action.startAt!,
+      eventType: input.action.eventType!,
       notes: input.action.notes ?? undefined,
       source: "assistant",
-      messageSource: input.messageSource,
     });
     return {
       output: JSON.stringify({
@@ -141,6 +196,7 @@ export async function executeCalendarAction(input: {
         startAt: appointment.startAt.toISOString(),
         endAt: appointment.endAt.toISOString(),
         timezone: appointment.timezone,
+        eventType: appointment.eventType,
       }),
       retryable: false,
     };
@@ -149,54 +205,125 @@ export async function executeCalendarAction(input: {
   }
 }
 
-async function validateAvailabilityInput(action: CalendarAction) {
+async function validateAvailabilityInput(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
   const fromDate = parseDate(action.fromDate, settings.timezone);
   const toDate = parseDate(action.toDate, settings.timezone);
 
   if (!action.dateIntent) {
-    errors.push(required("calendarAction.dateIntent", "Informe como a data foi interpretada."));
+    errors.push(required("arguments.dateIntent", "Informe como a data foi interpretada."));
   }
-  if (!fromDate) errors.push(required("calendarAction.fromDate", "Informe a data inicial em YYYY-MM-DD."));
-  if (!toDate) errors.push(required("calendarAction.toDate", "Informe a data final em YYYY-MM-DD."));
-  if (!action.period) errors.push(required("calendarAction.period", "Informe morning, afternoon ou any."));
+  if (!fromDate) errors.push(required("arguments.fromDate", "Informe a data inicial em YYYY-MM-DD."));
+  if (!toDate) errors.push(required("arguments.toDate", "Informe a data final em YYYY-MM-DD."));
+  if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
+  validateEventType(action.eventType, settings, errors, "arguments.eventType");
 
   if (fromDate && toDate) {
     const rangeDays = toDate.diff(fromDate, "days").days;
     if (rangeDays < 0) {
-      errors.push(invalid("calendarAction.toDate", "A data final não pode anteceder a inicial."));
+      errors.push(invalid("arguments.toDate", "A data final não pode anteceder a inicial."));
     } else if (rangeDays > 31) {
-      errors.push(invalid("calendarAction.toDate", "A janela deve ter no máximo 31 dias."));
+      errors.push(invalid("arguments.toDate", "A janela deve ter no máximo 31 dias."));
     }
     if (action.dateIntent === "exact_date" && rangeDays !== 0) {
-      errors.push(invalid("calendarAction.toDate", "Para exact_date, fromDate e toDate devem ser iguais."));
+      errors.push(invalid("arguments.toDate", "Para exact_date, fromDate e toDate devem ser iguais."));
     }
     if (action.dateIntent === "next_available" && rangeDays < 7) {
-      errors.push(invalid("calendarAction.toDate", "Para next_available, pesquise uma janela de 7 a 31 dias."));
+      errors.push(invalid("arguments.toDate", "Para next_available, pesquise uma janela de 7 a 31 dias."));
     }
   }
 
   return errors.length > 0 ? validationError("calendar.check_availability", errors) : null;
 }
 
-async function validateBookingInput(action: CalendarAction) {
+async function validateFirstVisitAvailability(action: CalendarToolArguments) {
+  const settings = await getCalendarSettings();
+  const errors: ToolValidationIssue[] = [];
+  const fromDate = parseDate(action.fromDate, settings.timezone);
+  const toDate = parseDate(action.toDate, settings.timezone);
+  if (!action.dateIntent) errors.push(required("arguments.dateIntent", "Informe como a data foi interpretada."));
+  if (!fromDate) errors.push(required("arguments.fromDate", "Informe a data inicial em YYYY-MM-DD."));
+  if (!toDate) errors.push(required("arguments.toDate", "Informe a data final em YYYY-MM-DD."));
+  if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
+  if (!action.preference) errors.push(required("arguments.preference", "Informe together ou separate."));
+  if (fromDate && toDate) {
+    const rangeDays = toDate.diff(fromDate, "days").days;
+    if (rangeDays < 0 || rangeDays > 31) errors.push(invalid("arguments.toDate", "Use uma janela válida de até 31 dias."));
+    if (action.dateIntent === "exact_date" && rangeDays !== 0) errors.push(invalid("arguments.toDate", "Para exact_date, use datas iguais."));
+    if (action.dateIntent === "next_available" && rangeDays < 7) errors.push(invalid("arguments.toDate", "Para next_available, use de 7 a 31 dias."));
+  }
+  return errors.length > 0 ? validationError("calendar.find_first_visit_option", errors) : null;
+}
+
+async function validateBookingInput(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
   const startAt = action.startAt
     ? DateTime.fromISO(action.startAt, { setZone: true })
     : null;
 
+  validateEventType(action.eventType, settings, errors, "arguments.eventType");
+
   if (!action.confirmedByCustomer) {
-    errors.push(invalid("calendarAction.confirmedByCustomer", "A reserva exige confirmação explícita do cliente."));
+    errors.push(invalid("arguments.confirmedByCustomer", "A reserva exige confirmação explícita do cliente."));
   }
   if (!startAt?.isValid || !startAt.isOffsetFixed) {
-    errors.push(required("calendarAction.startAt", "Informe data, hora e offset, por exemplo 2026-09-02T09:00:00-03:00."));
+    errors.push(required("arguments.startAt", "Informe data, hora e offset, por exemplo 2026-09-02T09:00:00-03:00."));
   } else if (startAt.setZone(settings.timezone) <= DateTime.now().setZone(settings.timezone)) {
-    errors.push(invalid("calendarAction.startAt", "O horário confirmado deve estar no futuro."));
+    errors.push(invalid("arguments.startAt", "O horário confirmado deve estar no futuro."));
   }
 
   return errors.length > 0 ? validationError("calendar.book_appointment", errors) : null;
+}
+
+async function validateListInput(action: CalendarToolArguments) {
+  const settings = await getCalendarSettings();
+  const errors: ToolValidationIssue[] = [];
+  const fromDate = parseDate(action.fromDate, settings.timezone);
+  const toDate = parseDate(action.toDate, settings.timezone);
+  if (!fromDate) errors.push(required("arguments.fromDate", "Informe a data inicial em YYYY-MM-DD."));
+  if (!toDate) errors.push(required("arguments.toDate", "Informe a data final em YYYY-MM-DD."));
+  if (fromDate && toDate && (toDate < fromDate || toDate.diff(fromDate, "days").days > 366)) {
+    errors.push(invalid("arguments.toDate", "A consulta deve cobrir um período válido de até 366 dias."));
+  }
+  for (const eventType of action.eventTypes) {
+    validateEventType(eventType, settings, errors, "arguments.eventTypes");
+  }
+  return errors.length > 0 ? validationError("calendar.list_appointments", errors) : null;
+}
+
+async function validateUpdateInput(action: CalendarToolArguments) {
+  const settings = await getCalendarSettings();
+  const errors: ToolValidationIssue[] = [];
+  if (!action.appointmentId || !ObjectId.isValid(action.appointmentId)) {
+    errors.push(required("arguments.appointmentId", "Informe um ID obtido pela consulta de eventos."));
+  }
+  if (!action.confirmedByCustomer) {
+    errors.push(invalid("arguments.confirmedByCustomer", "A alteração exige confirmação explícita do cliente."));
+  }
+  if (!action.startAt && !action.eventType && action.notes === null) {
+    errors.push(required("arguments", "Informe ao menos uma alteração de horário, tipo ou observação."));
+  }
+  if (action.eventType) validateEventType(action.eventType, settings, errors, "arguments.eventType");
+  if (action.startAt) {
+    const startAt = DateTime.fromISO(action.startAt, { setZone: true });
+    if (!startAt.isValid || !startAt.isOffsetFixed) {
+      errors.push(required("arguments.startAt", "Informe data, hora e offset no novo horário."));
+    }
+  }
+  return errors.length > 0 ? validationError("calendar.update_appointment", errors) : null;
+}
+
+function validateEventType(
+  eventType: string | null,
+  settings: Awaited<ReturnType<typeof getCalendarSettings>>,
+  errors: ToolValidationIssue[],
+  field: string,
+) {
+  if (!eventType || !settings.eventTypes.some((item) => item.key === eventType)) {
+    errors.push(required(field, "Informe uma chave de tipo de evento configurada."));
+  }
 }
 
 interface ToolValidationIssue {
@@ -205,7 +332,7 @@ interface ToolValidationIssue {
   message: string;
 }
 
-async function validationError(tool: string, errors: ToolValidationIssue[]): Promise<CalendarToolExecution> {
+async function validationError(tool: string, errors: ToolValidationIssue[]): Promise<ToolExecution> {
   const settings = await getCalendarSettings();
   return {
     output: JSON.stringify({
@@ -214,13 +341,14 @@ async function validationError(tool: string, errors: ToolValidationIssue[]): Pro
       tool,
       calendarNow: DateTime.now().setZone(settings.timezone).toISO(),
       timezone: settings.timezone,
+      eventTypes: serializeEventTypes(settings.eventTypes),
       errors,
     }),
     retryable: true,
   };
 }
 
-function operationalError(tool: string, error: unknown, fallback: string): CalendarToolExecution {
+function operationalError(tool: string, error: unknown, fallback: string): ToolExecution {
   return {
     output: JSON.stringify({
       ok: false,
@@ -246,26 +374,43 @@ function invalid(field: string, message: string): ToolValidationIssue {
   return { field, code: "invalid", message };
 }
 
-function emptyCalendarAction(): CalendarAction {
-  return {
-    action: "none",
-    dateIntent: null,
-    fromDate: null,
-    toDate: null,
-    period: null,
-    startAt: null,
-    confirmedByCustomer: false,
-    notes: null,
-  };
+function serializeEventTypes(eventTypes: Awaited<ReturnType<typeof getCalendarSettings>>["eventTypes"]) {
+  return eventTypes.map((eventType) => ({
+    key: eventType.key,
+    name: eventType.name,
+    durationMinutes: eventType.durationMinutes,
+  }));
 }
 
-function joinLabels(labels: string[]) {
-  if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, -1).join(", ")} ou ${labels.at(-1)}`;
+export function executeRegisteredCalendarTool(
+  action: CalendarToolArguments["action"],
+  context: ToolExecutionContext,
+  args: Record<string, unknown>,
+) {
+  return executeCalendarAction({
+    ...context,
+    action: {
+      action,
+      dateIntent: asValue(args.dateIntent, ["exact_date", "date_range", "next_available"]),
+      fromDate: asString(args.fromDate),
+      toDate: asString(args.toDate),
+      period: asValue(args.period, ["morning", "afternoon", "any"]),
+      appointmentId: asString(args.appointmentId),
+      optionId: asString(args.optionId),
+      eventType: asString(args.eventType),
+      eventTypes: Array.isArray(args.eventTypes) ? args.eventTypes.filter((item): item is string => typeof item === "string") : [],
+      startAt: asString(args.startAt),
+      confirmedByCustomer: args.confirmedByCustomer === true,
+      notes: asString(args.notes),
+      preference: asValue(args.preference, ["together", "separate"]),
+    },
+  });
 }
 
-function getToolKey(action: CalendarAction["action"]): AssistantToolKey | null {
-  if (action === "check_availability") return "calendar.check_availability";
-  if (action === "book_appointment") return "calendar.book_appointment";
-  return null;
+function asString(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function asValue<const Value extends string>(value: unknown, allowed: readonly Value[]) {
+  return typeof value === "string" && allowed.includes(value as Value) ? value as Value : null;
 }

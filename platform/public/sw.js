@@ -1,5 +1,6 @@
-const CACHE_NAME = "oria-static-v1";
+const CACHE_NAME = "oria-static-v2";
 const PRECACHE = ["/offline", "/icon.svg"];
+const IS_LOCALHOST = self.location.hostname === "localhost" || self.location.hostname === "127.0.0.1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -18,6 +19,8 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  if (IS_LOCALHOST) return;
+
   const request = event.request;
   if (request.method !== "GET") return;
 

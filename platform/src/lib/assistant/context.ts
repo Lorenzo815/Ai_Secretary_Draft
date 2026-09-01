@@ -24,7 +24,7 @@ export async function loadAssistantContext(customerId: ObjectId, messageLimit: n
   const state = await states.findOne({ customerId });
   const messages = await listWhatsAppMessagesForAssistant(
     customerId,
-    state?.summarizedThrough,
+    undefined,
     messageLimit,
   );
 

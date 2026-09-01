@@ -1,176 +1,40 @@
 import "server-only";
 
-import { Collection, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
+import { ObjectId } from "mongodb";
+import type { AssistantToolKey } from "./tools";
+import {
+  DEFAULT_FLOW_KEY,
+  DEFAULT_GLOBAL_PROMPT,
+  DEFAULT_HANDOFF_POLICY,
+  LEGACY_DEFAULT_GLOBAL_PROMPT,
+  DEFAULT_OFFENSE_POLICY,
+  DEFAULT_PAYMENT_SETTINGS,
+  flowCatalog,
+} from "./flows/catalog";
+import type {
+  CustomerFlowDocument,
+  FlowDefinitionDocument,
+  FlowRunDocument,
+  FlowState,
+  FlowTransitionInput,
+  FlowVersion,
+} from "./flows/contracts";
+import {
+  getAssignmentsCollection,
+  getFlowsCollection,
+  getHistoryCollection,
+  getRunsCollection,
+  getSettingsCollection,
+} from "./flows/repository";
 
-export interface FlowVersion {
-  version: number;
-  prompt: string;
-  lifecycle: "single_call" | "tool_cycle";
-  preToolPrompt: string;
-  postToolPrompt: string;
-  allowedTools: AssistantToolKey[];
-  knowledgeContext: string;
-  completionCriteria: string;
-  allowedTransitions: string[];
-  createdAt: Date;
-}
-
-export type AssistantToolKey = "calendar.check_availability" | "calendar.book_appointment";
-
-export interface AssistantSettingsDocument {
-  key: "global";
-  defaultFlowKey: string;
-  globalPrompt: string;
-  offensePolicy: string;
-  handoffPolicy: string;
-  version: number;
-  updatedAt: Date;
-}
-
-export interface FlowDefinitionDocument {
-  _id: ObjectId;
-  key: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  currentVersion: number;
-  versions: FlowVersion[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface FlowState {
-  stage: string;
-  collectedData: Array<{ key: string; value: string }>;
-  missingData: string[];
-  notes: string[];
-}
-
-export interface CustomerFlowDocument {
-  _id: ObjectId;
-  customerId: ObjectId;
-  flowKey: string;
-  flowVersion: number;
-  status: "active" | "completed";
-  state: FlowState;
-  startedAt: Date;
-  updatedAt: Date;
-  completedAt?: Date;
-  completionCode?: string;
-  completionReason?: string;
-}
-
-export interface FlowTransitionInput {
-  action: "stay" | "complete" | "transition";
-  continueImmediately?: boolean;
-  targetFlowKey?: string;
-  reasonCode?: string;
-  reason?: string;
-}
-
-interface FlowHistoryDocument {
-  _id: ObjectId;
-  customerId: ObjectId;
-  flowKey: string;
-  flowVersion: number;
-  startedAt: Date;
-  completedAt: Date;
-  completionCode: string;
-  completionReason: string;
-  finalState: FlowState;
-  nextFlowKey?: string;
-  source: "assistant" | "manual";
-}
-
-interface FlowRunDocument {
-  _id: ObjectId;
-  customerId: ObjectId;
-  jobRevision: number;
-  flowKey: string;
-  flowVersion: number;
-  decision: string;
-  deliveryStatus: "internal_transition" | "sent";
-  reply: string;
-  state: FlowState;
-  transition: FlowTransitionInput;
-  calendarAction?: {
-    action: string;
-    dateIntent?: string | null;
-    fromDate: string | null;
-    toDate: string | null;
-    period: string | null;
-    startAt: string | null;
-    confirmedByCustomer: boolean;
-    notes: string | null;
-  };
-  calendarToolResult?: string;
-  createdAt: Date;
-}
-
-const DB_NAME = "ai_secretary";
-const DEFAULT_FLOW_KEY = "initial_triage";
-const DEFAULT_GLOBAL_PROMPT = "Responda de forma objetiva, acolhedora e profissional, usando português brasileiro.";
-const DEFAULT_OFFENSE_POLICY = "Não confronte nem reproduza ofensas. Estabeleça um limite breve e ofereça ajuda apenas para assuntos administrativos da clínica.";
-const DEFAULT_HANDOFF_POLICY = "Encaminhe para a equipe humana quando faltar informação confirmada, houver exceção operacional, solicitação sensível ou necessidade de decisão não autorizada.";
-
-const defaultFlows = [
-  {
-    key: DEFAULT_FLOW_KEY,
-    name: "Triagem inicial",
-    description: "Entende a necessidade administrativa e direciona o próximo atendimento.",
-    prompt: "Identifique o objetivo administrativo do contato sem fazer triagem médica. Assim que a intenção de agendar, reagendar ou cancelar estiver clara, transicione imediatamente para o fluxo de agendamento com continueImmediately=true, para que ele processe a mesma mensagem. Não peça nome, motivo da consulta, período ou data na triagem quando o fluxo de destino puder coletar ou usar esses dados.",
-    completionCriteria: "Objetivo administrativo identificado e próximo fluxo definido, ou necessidade de atendimento humano confirmada.",
-    allowedTransitions: ["schedule_appointment", "follow_up"],
-    lifecycle: "single_call" as const,
-    allowedTools: [] as AssistantToolKey[],
-  },
-  {
-    key: "schedule_appointment",
-    name: "Agendar atendimento",
-    description: "Coleta preferências e conduz confirmação de agendamento.",
-    prompt: "Ajude com agendamento, reagendamento ou cancelamento. Não confirme disponibilidade que não esteja no contexto autorizado. Encaminhe à equipe quando faltar integração ou confirmação.",
-    completionCriteria: "Solicitação registrada e confirmada pela fonte autorizada, cancelada pelo cliente ou encaminhada à equipe com motivo.",
-    allowedTransitions: ["follow_up", "initial_triage"],
-    lifecycle: "tool_cycle" as const,
-    allowedTools: ["calendar.check_availability", "calendar.book_appointment"] as AssistantToolKey[],
-  },
-  {
-    key: "follow_up",
-    name: "Follow-up",
-    description: "Conduz confirmações, orientações pré-consulta e retornos administrativos.",
-    prompt: "Realize apenas acompanhamentos administrativos previstos no contexto autorizado, sem oferecer orientação médica. Ao solicitar confirmação de um agendamento, informe a data e o horário e termine com uma pergunta direta: Você confirma sua presença? O envio do lembrete não é uma confirmação do cliente: mantenha o fluxo ativo e aguarde uma resposta posterior. Só registre confirmação quando o cliente responder de forma explícita e inequívoca. Se ele pedir reagendamento ou cancelamento, não trate isso como confirmação e conduza a solicitação ao fluxo adequado.",
-    completionCriteria: "O fluxo só pode ser concluído após uma resposta explícita do cliente confirmando presença, após solicitação inequívoca de reagendamento ou cancelamento devidamente encaminhada, ou após encaminhamento humano concluído. O mero envio ou recebimento do lembrete não conclui o fluxo.",
-    allowedTransitions: ["schedule_appointment", "initial_triage"],
-    lifecycle: "single_call" as const,
-    allowedTools: [] as AssistantToolKey[],
-  },
-];
-
-async function getFlowsCollection(): Promise<Collection<FlowDefinitionDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<FlowDefinitionDocument>("assistant_flows");
-}
-
-async function getAssignmentsCollection(): Promise<Collection<CustomerFlowDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<CustomerFlowDocument>("assistant_customer_flows");
-}
-
-async function getHistoryCollection(): Promise<Collection<FlowHistoryDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<FlowHistoryDocument>("assistant_flow_history");
-}
-
-async function getRunsCollection(): Promise<Collection<FlowRunDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<FlowRunDocument>("assistant_flow_runs");
-}
-
-async function getSettingsCollection(): Promise<Collection<AssistantSettingsDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<AssistantSettingsDocument>("assistant_settings");
-}
+export type {
+  AssistantSettingsDocument,
+  CustomerFlowDocument,
+  FlowDefinitionDocument,
+  FlowState,
+  FlowTransitionInput,
+  FlowVersion,
+} from "./flows/contracts";
 
 export async function listFlowDefinitions() {
   await ensureDefaultFlows();
@@ -182,7 +46,46 @@ export async function getAssistantSettings() {
   await ensureDefaultFlows();
   const settings = await (await getSettingsCollection()).findOne({ key: "global" });
   if (!settings) throw new Error("Configuração global não encontrada.");
-  return settings;
+  return {
+    ...settings,
+    processingEnabled: settings.processingEnabled !== false,
+    payment: settings.payment ?? DEFAULT_PAYMENT_SETTINGS,
+  };
+}
+
+export async function updatePaymentSettings(input: {
+  pixKey: string;
+  recipientName: string;
+  signalAmountCents: number;
+}) {
+  await ensureDefaultFlows();
+  const pixKey = input.pixKey.trim().slice(0, 200);
+  const recipientName = input.recipientName.trim().slice(0, 200);
+  if (!Number.isInteger(input.signalAmountCents) || input.signalAmountCents < 100 || input.signalAmountCents > 1_000_000) {
+    throw new Error("O valor do sinal deve estar entre R$ 1,00 e R$ 10.000,00.");
+  }
+  const settings = await getSettingsCollection();
+  await settings.updateOne(
+    { key: "global" },
+    {
+      $set: {
+        payment: { pixKey, recipientName, signalAmountCents: input.signalAmountCents },
+        updatedAt: new Date(),
+      },
+      $inc: { version: 1 },
+    },
+  );
+  return settings.findOne({ key: "global" });
+}
+
+export async function setAssistantProcessingEnabled(processingEnabled: boolean) {
+  await ensureDefaultFlows();
+  const settings = await getSettingsCollection();
+  await settings.updateOne(
+    { key: "global" },
+    { $set: { processingEnabled, updatedAt: new Date() } },
+  );
+  return { processingEnabled };
 }
 
 export async function updateAssistantSettings(input: {
@@ -380,6 +283,38 @@ export async function applyFlowResult(input: {
   return { applied: true as const };
 }
 
+export async function completeActiveCustomerFlow(
+  customerId: ObjectId,
+  reasonCode: string,
+  reason: string,
+) {
+  const assignments = await getAssignmentsCollection();
+  const current = await assignments.findOne({ customerId, status: "active" });
+  if (!current) return { applied: false as const };
+
+  const now = new Date();
+  const transition: FlowTransitionInput = {
+    action: "complete",
+    continueImmediately: false,
+    reasonCode,
+    reason,
+  };
+  await archiveFlow(current, transition, "manual", now);
+  await assignments.updateOne(
+    { _id: current._id, status: "active" },
+    {
+      $set: {
+        status: "completed",
+        completedAt: now,
+        completionCode: reasonCode,
+        completionReason: reason,
+        updatedAt: now,
+      },
+    },
+  );
+  return { applied: true as const };
+}
+
 export async function recordFlowRun(run: Omit<FlowRunDocument, "_id" | "createdAt">) {
   await (await getRunsCollection()).insertOne({ ...run, _id: new ObjectId(), createdAt: new Date() });
 }
@@ -434,36 +369,60 @@ async function getFlowVersion(key: string, versionNumber: number) {
 async function ensureDefaultFlows() {
   const flows = await getFlowsCollection();
   const now = new Date();
-  await Promise.all(defaultFlows.map((flow) =>
-    flows.updateOne(
-      { key: flow.key },
-      {
-        $setOnInsert: {
+  for (const flow of flowCatalog) {
+    const current = await flows.findOne({ key: flow.key });
+    const nextVersion = (current?.currentVersion ?? 0) + 1;
+    if (!current) {
+      await flows.insertOne({
           _id: new ObjectId(),
           key: flow.key,
+          catalogRevision: flow.revision,
           name: flow.name,
           description: flow.description,
           enabled: true,
-          currentVersion: 1,
+          currentVersion: nextVersion,
           versions: [{
-            version: 1,
+            version: nextVersion,
             prompt: flow.prompt,
             lifecycle: flow.lifecycle,
-            preToolPrompt: flow.lifecycle === "tool_cycle" ? "Determine se uma ferramenta é necessária e preencha somente uma ação autorizada com argumentos completos." : "",
-            postToolPrompt: flow.lifecycle === "tool_cycle" ? "Responda usando exclusivamente o resultado real da ferramenta. Não invente sucesso, disponibilidade ou efeitos." : "",
+            preToolPrompt: flow.lifecycle === "tool_cycle" ? flow.preToolPrompt ?? "Determine se uma ferramenta é necessária e preencha somente uma ação autorizada com argumentos completos." : "",
+            postToolPrompt: flow.lifecycle === "tool_cycle" ? flow.postToolPrompt ?? "Responda usando exclusivamente o resultado real da ferramenta. Não invente sucesso, disponibilidade ou efeitos." : "",
             allowedTools: flow.allowedTools,
-            knowledgeContext: "Configure aqui somente informações confirmadas da clínica para este fluxo.",
+            knowledgeContext: flow.knowledgeContext,
             completionCriteria: flow.completionCriteria,
             allowedTransitions: flow.allowedTransitions,
             createdAt: now,
           }],
           createdAt: now,
           updatedAt: now,
+      });
+    } else if ((current.catalogRevision ?? 0) < flow.revision) {
+      await flows.updateOne(
+        { _id: current._id, currentVersion: current.currentVersion },
+        {
+          $set: {
+            catalogRevision: flow.revision,
+            name: flow.name,
+            description: flow.description,
+            currentVersion: nextVersion,
+            updatedAt: now,
+          },
+          $push: { versions: {
+            version: nextVersion,
+            prompt: flow.prompt,
+            lifecycle: flow.lifecycle,
+            preToolPrompt: flow.lifecycle === "tool_cycle" ? flow.preToolPrompt ?? "Determine se uma ferramenta é necessária e preencha somente uma ação autorizada com argumentos completos." : "",
+            postToolPrompt: flow.lifecycle === "tool_cycle" ? flow.postToolPrompt ?? "Responda usando exclusivamente o resultado real da ferramenta. Não invente sucesso, disponibilidade ou efeitos." : "",
+            allowedTools: flow.allowedTools,
+            knowledgeContext: flow.knowledgeContext,
+            completionCriteria: flow.completionCriteria,
+            allowedTransitions: flow.allowedTransitions,
+            createdAt: now,
+          } },
         },
-      },
-      { upsert: true },
-    ),
-  ));
+      );
+    }
+  }
   await Promise.all([
     flows.createIndex({ key: 1 }, { unique: true }),
     (await getAssignmentsCollection()).createIndex({ customerId: 1 }, { unique: true }),
@@ -474,6 +433,8 @@ async function ensureDefaultFlows() {
       { $setOnInsert: {
         key: "global",
         defaultFlowKey: DEFAULT_FLOW_KEY,
+        processingEnabled: true,
+        payment: DEFAULT_PAYMENT_SETTINGS,
         globalPrompt: DEFAULT_GLOBAL_PROMPT,
         offensePolicy: DEFAULT_OFFENSE_POLICY,
         handoffPolicy: DEFAULT_HANDOFF_POLICY,
@@ -483,6 +444,13 @@ async function ensureDefaultFlows() {
       { upsert: true },
     ),
   ]);
+  await (await getSettingsCollection()).updateOne(
+    { key: "global", globalPrompt: LEGACY_DEFAULT_GLOBAL_PROMPT },
+    {
+      $set: { globalPrompt: DEFAULT_GLOBAL_PROMPT, updatedAt: now },
+      $inc: { version: 1 },
+    },
+  );
 }
 
 function normalizeFlowDefinition(flow: FlowDefinitionDocument): FlowDefinitionDocument {
@@ -499,7 +467,7 @@ function normalizeFlowVersion(version: FlowVersion, flowKey: string): FlowVersio
     lifecycle: version.lifecycle ?? (toolEnabled ? "tool_cycle" : "single_call"),
     preToolPrompt: version.preToolPrompt ?? (toolEnabled ? "Determine se uma ferramenta é necessária e forneça argumentos completos." : ""),
     postToolPrompt: version.postToolPrompt ?? (toolEnabled ? "Use exclusivamente o resultado real da ferramenta na resposta final." : ""),
-    allowedTools: version.allowedTools ?? (toolEnabled ? ["calendar.check_availability", "calendar.book_appointment"] : []),
+    allowedTools: version.allowedTools ?? [],
   };
 }
 

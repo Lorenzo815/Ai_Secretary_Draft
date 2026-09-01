@@ -7,18 +7,10 @@ import { OriaLogo, OriaSymbol } from "@/components/oria-logo";
 import { useEffect, useState, useCallback } from "react";
 
 const mainNavItems = [
-  { href: "/dashboard", label: "Clientes", icon: CustomersIcon },
+  { href: "/dashboard", label: "Visão geral", icon: CustomersIcon },
   { href: "/dashboard/calendario", label: "Calendário", icon: CalendarIcon },
   { href: "/dashboard/fluxos", label: "Fluxos", icon: FlowIcon },
   { href: "/dashboard/settings", label: "Conta", icon: SettingsIcon },
-];
-
-const debugNavItems = [
-  {
-    href: "/dashboard/tmp-user-simulator",
-    label: "Simulador WhatsApp",
-    icon: WhatsAppIcon,
-  },
 ];
 
 const LG_BREAKPOINT = 1024;
@@ -132,33 +124,7 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Temporary debug tools */}
-      <div className="mx-4 mt-6 border-t border-burnt-coral/20 px-2 pb-2 pt-4">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-burnt-coral">
-          Debug · temporário
-        </span>
-      </div>
-      <nav className="flex-1 space-y-0.5 px-3">
-        {debugNavItems.map((item) => {
-          const isActive = isNavigationActive(pathname, item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-                isActive
-                  ? "bg-burnt-coral/10 text-burnt-coral"
-                  : "text-slate-ink/60 hover:bg-white/60 hover:text-slate-ink"
-              }`}
-            >
-              <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${isActive ? "bg-burnt-coral/10" : "text-stone"}`}>
-                <item.icon className="h-[18px] w-[18px]" />
-              </span>
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="flex-1" />
 
       {/* User section + Logout */}
       <div className="border-t border-mist/60 p-4">
@@ -262,14 +228,6 @@ function CalendarIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3.75 8.25h16.5m-15 12h13.5a1.5 1.5 0 0 0 1.5-1.5V6.75a1.5 1.5 0 0 0-1.5-1.5H5.25a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5Z" />
-    </svg>
-  );
-}
-
-function WhatsAppIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-8.25 7.5 1.14-3.42A8.25 8.25 0 1 1 7.5 20.1l-3.75.65Z" />
     </svg>
   );
 }

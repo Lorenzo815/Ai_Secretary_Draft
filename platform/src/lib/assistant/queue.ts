@@ -16,11 +16,6 @@ export interface AssistantJobDocument {
   leaseUntil?: Date;
   consecutiveFailures: number;
   lastError?: string;
-  triggerContext?: string;
-  followUpTriggerId?: ObjectId;
-  targetContactPhone?: string;
-  targetContactName?: string;
-  targetMessageSource?: "meta" | "simulator";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,11 +30,6 @@ async function getJobsCollection(): Promise<Collection<AssistantJobDocument>> {
 export async function scheduleAssistantResponse(input: {
   customerId: ObjectId;
   latestInboundAt: Date;
-  triggerContext?: string;
-  followUpTriggerId?: ObjectId;
-  targetContactPhone?: string;
-  targetContactName?: string;
-  targetMessageSource?: "meta" | "simulator";
 }) {
   const jobs = await getJobsCollection();
   await ensureAssistantJobIndexes();
@@ -59,11 +49,6 @@ export async function scheduleAssistantResponse(input: {
           revision: { $add: [{ $ifNull: ["$revision", 0] }, 1] },
           dueAt,
           latestInboundAt: input.latestInboundAt,
-          triggerContext: input.triggerContext ?? "$$REMOVE",
-          followUpTriggerId: input.followUpTriggerId ?? "$$REMOVE",
-          targetContactPhone: input.targetContactPhone ?? "$$REMOVE",
-          targetContactName: input.targetContactName ?? "$$REMOVE",
-          targetMessageSource: input.targetMessageSource ?? "$$REMOVE",
           consecutiveFailures: 0,
           lastError: "$$REMOVE",
           createdAt: { $ifNull: ["$createdAt", now] },

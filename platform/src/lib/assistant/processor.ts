@@ -1,15 +1,15 @@
 import "server-only";
 
-import { randomUUID } from "crypto";
 import { getAssistantConfig } from "./config";
 import { loadAssistantContext, saveAssistantContext } from "./context";
 import { generateAssistantResponse } from "./azure-openai";
-import { getSafeReply } from "./prompt";
+import { getSafeReply, redactToolCallsForAudit } from "./prompt";
 import {
-  assertCalendarToolCall,
-  executeCalendarAction,
-  getGroundedCalendarReply,
-  resolveCalendarAction,
+  assertRequiredToolCall,
+  executeToolCalls,
+  getGroundedToolReply,
+  getToolValidationRecoveryReply,
+  hasSuccessfulToolResult,
 } from "./tools";
 import {
   applyFlowResult,
@@ -26,9 +26,10 @@ import {
 } from "./queue";
 import { sendTextMessage } from "../whatsapp/client";
 import { saveWhatsAppMessage } from "../whatsapp/messages";
-import { updateCustomerServiceStatus } from "../crm";
-import { findCustomerById } from "../crm";
-import { completeAwaitingFollowUpTrigger, markFollowUpTriggerAwaitingResponse } from "../calendar";
+import { findCustomerById, getCustomerProfileSnapshot, updateCustomerServiceStatus } from "../crm";
+import { canContinueImmediately } from "./transition";
+import { ensureExplicitNextQuestion, preventPrematureJourneyCompletion } from "./dialogue";
+import { hasBookedFirstVisit } from "../calendar";
 
 export async function processNextAssistantJob() {
   const config = getAssistantConfig();
@@ -47,7 +48,7 @@ export async function processNextAssistantJob() {
       await completeAssistantJob(job._id, job.revision);
       return { processed: true as const, skipped: "customer_not_ai_active" };
     }
-    if (!runtime && latestInbound && !job.triggerContext) {
+    if (!runtime && latestInbound) {
       const settings = await getAssistantSettings();
       await assignCustomerFlow(
         job.customerId,
@@ -57,10 +58,9 @@ export async function processNextAssistantJob() {
       );
       runtime = await getFlowRuntime(job.customerId);
     }
-    const contactPhone = latestInbound?.contactPhone ?? job.targetContactPhone;
-    const contactName = latestInbound?.contactName ?? job.targetContactName;
-    const messageSource = latestInbound?.source ?? job.targetMessageSource;
-    if (!contactPhone || !messageSource || !runtime) {
+    const contactPhone = latestInbound?.contactPhone;
+    const contactName = latestInbound?.contactName;
+    if (!contactPhone || !runtime) {
       await completeAssistantJob(job._id, job.revision);
       return { processed: true as const, skipped: runtime ? "no_routing_data" : "flow_completed" };
     }
@@ -70,20 +70,21 @@ export async function processNextAssistantJob() {
       flow: runtime.definition,
       version: runtime.version,
       assignment: runtime.assignment,
-      triggerContext: job.triggerContext,
+      customerProfile: getCustomerProfileSnapshot(customer),
+      customerId: job.customerId,
     });
     let modelCallCount = 1;
     if (!(await isAssistantJobRevisionCurrent(job._id, job.revision))) {
       await completeAssistantJob(job._id, job.revision);
       return { processed: true as const, skipped: "newer_message_arrived" };
     }
-    while (
-      generation.transition.action === "transition" &&
-      generation.transition.continueImmediately === true &&
-      generation.transition.targetFlowKey &&
-      runtime.version.allowedTransitions.includes(generation.transition.targetFlowKey) &&
-      modelCallCount < 2
-    ) {
+    while (canContinueImmediately({
+      transition: generation.transition,
+      toolCalls: generation.toolCalls,
+      allowedTransitions: runtime.version.allowedTransitions,
+      modelCallCount,
+      maxModelCalls: 2,
+    })) {
       await recordFlowRun({
         customerId: job.customerId,
         jobRevision: job.revision,
@@ -94,7 +95,7 @@ export async function processNextAssistantJob() {
         reply: generation.reply,
         state: generation.state,
         transition: generation.transition,
-        calendarAction: generation.calendarAction,
+        toolCalls: redactToolCallsForAudit(generation.toolCalls),
       });
       await applyFlowResult({
         customerId: job.customerId,
@@ -110,95 +111,90 @@ export async function processNextAssistantJob() {
         flow: runtime.definition,
         version: runtime.version,
         assignment: runtime.assignment,
-        triggerContext: job.triggerContext,
+        customerProfile: getCustomerProfileSnapshot(customer),
+        customerId: job.customerId,
       });
       modelCallCount += 1;
     }
-    let calendarAction = resolveCalendarAction(generation, runtime.version.allowedTools);
-    let calendarToolResult: string | undefined;
+    let toolCalls = generation.toolCalls;
+    let toolResult: string | undefined;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      let execution = await executeCalendarAction({
-        action: calendarAction,
+      let execution = await executeToolCalls({
+        calls: toolCalls,
         allowedTools: runtime.version.allowedTools,
-        customerId: job.customerId,
-        customerName: contactName ?? contactPhone,
-        contactPhone,
-        messageSource,
+        context: {
+          customerId: job.customerId,
+          customerName: contactName ?? contactPhone,
+          contactPhone,
+        },
       });
-      execution ??= await assertCalendarToolCall({
+      execution ??= assertRequiredToolCall({
         generation,
         allowedTools: runtime.version.allowedTools,
+        completionIsGrounded: generation.transition.action === "complete"
+          && runtime.definition.key === "schedule_appointment"
+          && await hasBookedFirstVisit(job.customerId),
       });
       if (!execution) break;
 
-      calendarToolResult = execution.output;
+      toolResult = execution.output;
       if (modelCallCount >= 2) {
         if (execution.retryable) {
-          throw new Error("A IA não produziu uma chamada de ferramenta válida dentro do limite de duas chamadas.");
+          generation = {
+            ...generation,
+            decision: "reply",
+            reply: getToolValidationRecoveryReply(runtime.definition.key),
+            updatedSummary: `${generation.updatedSummary}\nAguardando o cliente reenviar ou confirmar a informação da etapa atual.`,
+            transition: {
+              action: "stay",
+              continueImmediately: false,
+              targetFlowKey: undefined,
+              reasonCode: "tool_validation_retry_exhausted",
+              reason: "A chamada de ferramenta permaneceu inválida após a correção permitida.",
+            },
+            toolCalls: [],
+          };
         }
         break;
       }
+      const refreshedCustomer = await findCustomerById(job.customerId.toString());
       generation = await generateAssistantResponse({
         ...context,
         flow: runtime.definition,
         version: runtime.version,
         assignment: runtime.assignment,
-        triggerContext: job.triggerContext,
-        calendarToolResult,
+        toolResult,
         phase: execution.retryable ? "pre_tool" : "post_tool",
+        customerProfile: getCustomerProfileSnapshot(refreshedCustomer ?? customer),
+        customerId: job.customerId,
       });
       modelCallCount += 1;
       if (!execution.retryable) break;
       if (attempt === 2) {
-        throw new Error("A IA excedeu o limite de correções da ferramenta de calendário.");
+        throw new Error("A IA excedeu o limite de correções de tools.");
       }
-      calendarAction = resolveCalendarAction(generation, runtime.version.allowedTools);
+      toolCalls = generation.toolCalls;
     }
-    const groundedCalendarReply = getGroundedCalendarReply(calendarToolResult);
-    if (groundedCalendarReply) {
+    const groundedToolReply = getGroundedToolReply(toolResult);
+    const firstVisitBooked = hasSuccessfulToolResult(toolResult, "calendar.book_first_visit");
+    if (firstVisitBooked) {
+      generation = {
+        ...generation,
+        transition: {
+          action: "complete",
+          continueImmediately: false,
+          targetFlowKey: undefined,
+          reasonCode: "first_visit_booked",
+          reason: "Bioimpedância e Consulta Dr. confirmadas pela ferramenta como um único grupo de visita.",
+        },
+      };
+    }
+    if (groundedToolReply) {
       generation = {
         ...generation,
         decision: "reply",
-        reply: groundedCalendarReply,
-        updatedSummary: `${generation.updatedSummary}\nResultado confirmado da agenda: ${groundedCalendarReply}`,
-      };
-    }
-    if (job.triggerContext && runtime.definition.key === "follow_up") {
-      generation = {
-        ...generation,
-        state: {
-          ...generation.state,
-          stage: "aguardando_confirmacao_cliente",
-          missingData: [...new Set([...generation.state.missingData, "customer_confirmation"])],
-          notes: [...generation.state.notes, "Lembrete enviado; aguardando resposta do cliente."],
-        },
-        transition: { action: "stay" },
-      };
-    }
-    if (
-      runtime.definition.key === "follow_up" &&
-      !job.triggerContext &&
-      generation.transition.action === "complete" &&
-      generation.decision !== "human_handoff" &&
-      generation.decision !== "emergency" &&
-      isAppointmentConfirmation(runtime.assignment.state) &&
-      !hasAffirmativeCustomerConfirmation(generation.state)
-    ) {
-      const confirmation = getCustomerConfirmation(generation.state);
-      generation = {
-        ...generation,
-        state: {
-          ...generation.state,
-          stage: confirmation
-            ? "aguardando_destino_apos_recusa"
-            : "aguardando_confirmacao_cliente",
-          missingData: [...new Set([
-            ...generation.state.missingData,
-            confirmation ? "next_action" : "customer_confirmation",
-          ])],
-          notes: [...generation.state.notes, "Follow-up mantido ativo até a confirmação afirmativa ou definição do próximo atendimento."],
-        },
-        transition: { action: "stay" },
+        reply: groundedToolReply,
+        updatedSummary: `${generation.updatedSummary}\nResultado confirmado por tool: ${groundedToolReply}`,
       };
     }
     if (!(await isAssistantJobRevisionCurrent(job._id, job.revision))) {
@@ -206,13 +202,31 @@ export async function processNextAssistantJob() {
       return { processed: true as const, skipped: "newer_message_arrived" };
     }
 
-    const body = getSafeReply(generation);
+    const finalCustomer = await findCustomerById(job.customerId.toString());
+    const finalProfile = getCustomerProfileSnapshot(finalCustomer ?? customer);
+    generation = {
+      ...generation,
+      transition: preventPrematureJourneyCompletion({
+        decision: generation.decision,
+        transition: generation.transition,
+        flowKey: runtime.definition.key,
+        relationshipStatus: finalProfile.relationshipStatus,
+        missingFields: finalProfile.missingFields,
+      }),
+    };
+    const body = ensureExplicitNextQuestion({
+      reply: getSafeReply(generation),
+      decision: generation.decision,
+      transitionAction: generation.transition.action,
+      targetFlowKey: generation.transition.targetFlowKey,
+      flowKey: runtime.definition.key,
+      missingFields: finalProfile.missingFields,
+      toolResult,
+    });
     if (generation.decision === "human_handoff" || generation.decision === "emergency") {
       await updateCustomerServiceStatus(job.customerId, "waiting_human");
     }
-    const sent = messageSource === "simulator"
-      ? { messageId: `wamid.simulated.ai.${randomUUID()}` }
-      : await sendTextMessage({ to: contactPhone, body });
+    const sent = await sendTextMessage({ to: contactPhone, body });
 
     await saveWhatsAppMessage({
       customerId: job.customerId,
@@ -220,7 +234,6 @@ export async function processNextAssistantJob() {
       contactPhone,
       contactName,
       direction: "outbound",
-      source: messageSource,
       type: "text",
       body,
       status: "sent",
@@ -231,9 +244,6 @@ export async function processNextAssistantJob() {
       summary: `${generation.updatedSummary}\nÚltima resposta enviada: ${body}`,
       summarizedThrough: job.latestInboundAt,
     });
-    if (job.followUpTriggerId) {
-      await markFollowUpTriggerAwaitingResponse(job.followUpTriggerId);
-    }
     await recordFlowRun({
       customerId: job.customerId,
       jobRevision: job.revision,
@@ -244,8 +254,8 @@ export async function processNextAssistantJob() {
       reply: body,
       state: generation.state,
       transition: generation.transition,
-      calendarAction,
-      calendarToolResult: calendarToolResult ?? undefined,
+      toolCalls: redactToolCallsForAudit(toolCalls),
+      toolResult: toolResult ?? undefined,
     });
     await applyFlowResult({
       customerId: job.customerId,
@@ -254,14 +264,21 @@ export async function processNextAssistantJob() {
       state: generation.state,
       transition: generation.transition,
     });
-    if (
-      runtime.definition.key === "follow_up" &&
-      !job.triggerContext &&
-      generation.transition.action === "complete"
-    ) {
-      await completeAwaitingFollowUpTrigger(job.customerId);
+    if (firstVisitBooked) {
+      await updateCustomerServiceStatus(job.customerId, "closed");
     }
     await completeAssistantJob(job._id, job.revision);
+    if (
+      finalProfile.missingFields.length === 0
+      && ["commercial_information", "payment_confirmation", "schedule_appointment"].includes(runtime.definition.key)
+    ) {
+      try {
+        const { analyzeAndSaveCustomerLeadQualification } = await import("../qualification/customer-lead");
+        await analyzeAndSaveCustomerLeadQualification(job.customerId);
+      } catch (qualificationError) {
+        console.error("Lead qualification refresh failed after assistant response", qualificationError);
+      }
+    }
     return {
       processed: true as const,
       decision: generation.decision,
@@ -272,21 +289,4 @@ export async function processNextAssistantJob() {
     await failAssistantJob(job, error);
     throw error;
   }
-}
-
-function isAppointmentConfirmation(state: { collectedData: Array<{ key: string }> }) {
-  return state.collectedData.some((item) => item.key === "appointmentId");
-}
-
-function getCustomerConfirmation(state: { collectedData: Array<{ key: string; value: string }> }) {
-  return state.collectedData.find((item) => item.key === "customer_confirmation")?.value.trim() ?? "";
-}
-
-function hasAffirmativeCustomerConfirmation(state: { collectedData: Array<{ key: string; value: string }> }) {
-  const normalized = getCustomerConfirmation(state)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  if (!normalized || /\b(nao|negativ|recus|cancel|reagend)\w*\b/.test(normalized)) return false;
-  return /\b(sim|confirmo|confirmad[oa]|presenca confirmada)\b/.test(normalized);
 }

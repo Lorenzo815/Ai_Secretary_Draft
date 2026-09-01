@@ -24,12 +24,8 @@ export async function GET(request: NextRequest) {
 
   const requestedLimit = Number(request.nextUrl.searchParams.get("limit") ?? "100");
   const limit = Number.isFinite(requestedLimit) ? requestedLimit : 100;
-  const requestedSource = request.nextUrl.searchParams.get("source");
-  const source = requestedSource === "meta" || requestedSource === "simulator"
-    ? requestedSource
-    : undefined;
   await ensureWhatsAppMessageIndexes();
-  const messages = await listWhatsAppMessages(limit, source);
+  const messages = await listWhatsAppMessages(limit);
 
   return NextResponse.json({ messages });
 }
@@ -58,7 +54,6 @@ export async function POST(request: NextRequest) {
         metaMessageId: result.messageId,
         contactPhone: result.to,
         direction: "outbound",
-        source: "meta",
         type: "text",
         body: result.body,
         status: "sent",
@@ -82,7 +77,6 @@ export async function POST(request: NextRequest) {
       contactPhone: result.to,
       contactName: input.customerName,
       direction: "outbound",
-      source: "meta",
       type: "template",
       body: `Confirmação do pedido ${input.orderNumber} para ${input.orderDate}`,
       status: "sent",

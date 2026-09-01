@@ -10,9 +10,11 @@
     "start:next": "next start",
     "worker:assistant": "node src/scripts/assistant-worker.mjs",
     "lint": "eslint",
+    "test": "vitest run",
     "seed": "npx tsx src/scripts/seed-user.ts"
   },
   "dependencies": {
+    "@upstash/qstash": "^2.11.3",
     "bcryptjs": "^3.0.3",
     "luxon": "^3.7.2",
     "mongodb": "^7.1.0",
@@ -20,7 +22,8 @@
     "next-auth": "^4.24.13",
     "openai": "^6.16.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -34,6 +37,7 @@
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }

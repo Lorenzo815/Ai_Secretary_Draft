@@ -74,20 +74,18 @@ export async function processWhatsAppWebhook(rawBody: string) {
           name: contact?.profile?.name,
           interactionAt: timestamp,
         });
-        const source = message.id.startsWith("wamid.simulated.") ? "simulator" : "meta";
         const saved = await saveWhatsAppMessage({
           customerId: customer._id,
           metaMessageId: message.id,
           contactPhone: message.from,
           contactName: contact?.profile?.name,
           direction: "inbound",
-          source,
           type: message.type ?? "unknown",
           body: getMessageBody(message),
           status: "received",
           timestamp,
         });
-        if (saved.inserted) {
+        if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
           await scheduleAssistantResponse({
             customerId: customer._id,
             latestInboundAt: timestamp,

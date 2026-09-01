@@ -15,7 +15,6 @@ acompanhamentos. Pagamentos via PIX não fazem parte desta etapa.
 - Envio de template pela WhatsApp Cloud API
 - Recebimento de mensagens e status por webhook
 - Histórico local de mensagens no MongoDB
-- Simulador temporário de múltiplos usuários e eventos do webhook
 - Clientes criados automaticamente a partir de mensagens recebidas
 - Lista de telefones e identificadores extensíveis por cliente
 - Histórico de conversa por cliente em modo somente leitura
@@ -81,7 +80,6 @@ Fluxo mínimo:
 
 - `crm_customers`: nome, lista de telefones, identificadores e datas de interação
 - `appointments`: cliente, início, duração, estado e origem
-- `followUps`: cliente, data prevista, motivo, estado e mensagem sugerida
 - `messages`: cliente, direção, conteúdo, identificador do provedor e data
 
 ## Ordem de implementação

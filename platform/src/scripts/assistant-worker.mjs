@@ -8,7 +8,7 @@ const enabled = (process.env.ASSISTANT_WORKER_ENABLED ?? "true").toLowerCase() =
 const secret = process.env.ASSISTANT_WORKER_SECRET;
 const baseUrl = process.env.ASSISTANT_WORKER_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000";
 const intervalMs = readBoundedInteger("ASSISTANT_WORKER_INTERVAL_MS", 3_000, 1_000, 60_000);
-const timeoutMs = readBoundedInteger("ASSISTANT_WORKER_REQUEST_TIMEOUT_MS", 30_000, 1_000, 120_000);
+const timeoutMs = readBoundedInteger("ASSISTANT_WORKER_REQUEST_TIMEOUT_MS", 210_000, 1_000, 300_000);
 const processUrl = new URL("/api/internal/assistant/process", baseUrl);
 
 if (!enabled) {
@@ -43,7 +43,12 @@ async function execute() {
       }
     }
   } catch (error) {
-    console.error("Assistant worker execution failed:", error instanceof Error ? error.message : error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      error instanceof Error && error.name === "TimeoutError"
+        ? `Assistant worker request exceeded ${timeoutMs}ms; the job remains protected by its lease.`
+        : `Assistant worker execution failed: ${message}`,
+    );
   } finally {
     if (!stopped) nextExecution = setTimeout(execute, intervalMs);
   }

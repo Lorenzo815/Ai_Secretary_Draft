@@ -1,10 +1,10 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { cancelAppointment } from "@/lib/calendar";
+import { cancelAppointment, deleteAppointment } from "@/lib/calendar";
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   if (!(await getServerSession(authOptions))) {
@@ -12,10 +12,14 @@ export async function DELETE(
   }
   try {
     const { id } = await params;
-    return NextResponse.json({ appointment: await cancelAppointment(id) });
+    const permanent = new URL(request.url).searchParams.get("permanent") === "true";
+    const appointment = permanent
+      ? await deleteAppointment(id)
+      : await cancelAppointment(id);
+    return NextResponse.json({ appointment });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Falha ao cancelar." },
+      { error: error instanceof Error ? error.message : "Falha ao alterar evento." },
       { status: 400 },
     );
   }

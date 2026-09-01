@@ -14,7 +14,8 @@ export function getAssistantConfig() {
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT ?? DEFAULT_DEPLOYMENT,
     apiVersion: process.env.AZURE_OPENAI_API_VERSION ?? DEFAULT_API_VERSION,
     debounceMs: readPositiveInteger("ASSISTANT_DEBOUNCE_MS", 8_000),
-    leaseMs: readPositiveInteger("ASSISTANT_LEASE_MS", 120_000),
+    leaseMs: readPositiveInteger("ASSISTANT_LEASE_MS", 240_000),
+    modelRequestTimeoutMs: readPositiveInteger("ASSISTANT_MODEL_REQUEST_TIMEOUT_MS", 90_000),
     recentMessageLimit: readPositiveInteger("ASSISTANT_CONTEXT_MESSAGE_LIMIT", 40),
   };
 }

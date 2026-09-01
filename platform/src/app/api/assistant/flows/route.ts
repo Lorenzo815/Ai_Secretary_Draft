@@ -2,17 +2,17 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getAssistantSettings, listFlowDefinitions, updateAssistantSettings, updateFlowDefinition } from "@/lib/assistant";
-import type { AssistantToolKey } from "@/lib/assistant";
 import { buildAssistantResponseSchema } from "@/lib/assistant/schema";
 import { buildDeveloperPrompt, SYSTEM_POLICY } from "@/lib/assistant/prompt";
-
-const availableTools: AssistantToolKey[] = ["calendar.check_availability", "calendar.book_appointment"];
+import { isAssistantToolKey, listToolMetadata, type AssistantToolKey } from "@/lib/assistant/tools";
 
 export async function GET() {
   if (!(await getServerSession(authOptions))) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
   const [flows, settings] = await Promise.all([listFlowDefinitions(), getAssistantSettings()]);
+  const availableTools = listToolMetadata();
+  const calendarEventTypes = [{ key: "{{eventTypeKey}}", name: "{{eventTypeName}}", durationMinutes: 30, resourceId: "{{resourceId}}" }];
   return NextResponse.json({
     settings,
     structuralPolicy: SYSTEM_POLICY,
@@ -23,11 +23,11 @@ export async function GET() {
         ...flow,
         promptPreviews: version.lifecycle === "tool_cycle"
           ? {
-              pre_tool: buildDeveloperPrompt({ flow, version, settings, phase: "pre_tool", calendarNow: "{{calendarNow}}" }),
-              post_tool: buildDeveloperPrompt({ flow, version, settings, phase: "post_tool", calendarNow: "{{calendarNow}}", calendarToolResult: "{{toolResult}}" }),
+              pre_tool: buildDeveloperPrompt({ flow, version, settings, phase: "pre_tool", calendarNow: "{{calendarNow}}", calendarEventTypes }),
+              post_tool: buildDeveloperPrompt({ flow, version, settings, phase: "post_tool", calendarNow: "{{calendarNow}}", calendarEventTypes, toolResult: "{{toolResult}}" }),
             }
           : {
-              single: buildDeveloperPrompt({ flow, version, settings, phase: "single", calendarNow: "{{calendarNow}}" }),
+              single: buildDeveloperPrompt({ flow, version, settings, phase: "single", calendarNow: "{{calendarNow}}", calendarEventTypes }),
             },
         outputSchemas: version.lifecycle === "tool_cycle"
           ? {
@@ -82,7 +82,7 @@ export async function PUT(request: Request) {
     typeof input.preToolPrompt !== "string" ||
     typeof input.postToolPrompt !== "string" ||
     !Array.isArray(input.allowedTools) ||
-    !input.allowedTools.every((item) => availableTools.includes(item as AssistantToolKey)) ||
+    !input.allowedTools.every((item) => typeof item === "string" && isAssistantToolKey(item)) ||
     typeof input.knowledgeContext !== "string" ||
     typeof input.completionCriteria !== "string" ||
     !Array.isArray(input.allowedTransitions) ||

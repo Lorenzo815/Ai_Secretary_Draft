@@ -113,7 +113,7 @@ export default function CustomerFlowPanel({
   }
 
   return (
-    <section aria-labelledby="customer-flow-title" className="border-y border-mist py-5">
+    <section aria-labelledby="customer-flow-title" className="rounded-lg border border-mist bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase text-deep-teal">Fluxo atual</p>
@@ -163,7 +163,7 @@ export default function CustomerFlowPanel({
               {conversationState.summary}
             </p>
             <p className="mt-2 text-xs text-stone">
-              Histórico considerado até {formatDateTime(conversationState.summarizedThrough)}
+              Resumo contempla mensagens até {formatDateTime(conversationState.summarizedThrough)}
             </p>
           </>
         ) : (
@@ -246,6 +246,6 @@ function formatDateTime(value: string) {
 function getNextStep(item: HistoryView, names: Map<string, string>) {
   if (item.nextFlowKey) return names.get(item.nextFlowKey) ?? item.nextFlowKey;
   if (item.completionCode === "appointment_confirmed") return names.get("schedule_appointment") ?? "Agendamento";
-  if (item.completionCode === "appointment_booked") return "Lembrete automático";
+  if (item.completionCode === "appointment_booked") return "Agendamento concluído";
   return "Fluxo finalizado";
 }

@@ -41,8 +41,15 @@ interface GlobalSettings {
 interface Payload {
   flows: FlowView[];
   settings: GlobalSettings;
-  availableTools: string[];
+  availableTools: ToolMetadata[];
   structuralPolicy: string;
+}
+
+interface ToolMetadata {
+  key: string;
+  label: string;
+  description: string;
+  mutates: boolean;
 }
 
 const tabs: Array<{ id: Tab; label: string }> = [
@@ -54,10 +61,6 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "versions", label: "Versões" },
 ];
 
-const toolLabels: Record<string, string> = {
-  "calendar.check_availability": "Consultar disponibilidade",
-  "calendar.book_appointment": "Confirmar agendamento",
-};
 const inputClass = "mt-2 w-full rounded-lg border border-mist bg-white px-3 py-2.5 font-normal outline-none focus:border-deep-teal";
 const textareaClass = "mt-2 w-full resize-y rounded-lg border border-mist bg-white px-3 py-3 text-sm font-normal leading-6 outline-none focus:border-deep-teal";
 
@@ -66,7 +69,7 @@ export default function FlowsPage() {
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<GlobalSettings | null>(null);
   const [structuralPolicy, setStructuralPolicy] = useState("");
-  const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [availableTools, setAvailableTools] = useState<ToolMetadata[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [draft, setDraft] = useState<FlowView | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
@@ -241,11 +244,11 @@ function Overview({ draft, version, isDefault, setDraft, updateVersion, openGlob
   </div>;
 }
 
-function LifecycleEditor({ version, tools, updateVersion }: { version: FlowVersionView; tools: string[]; updateVersion: (patch: Partial<FlowVersionView>) => void }) {
+function LifecycleEditor({ version, tools, updateVersion }: { version: FlowVersionView; tools: ToolMetadata[]; updateVersion: (patch: Partial<FlowVersionView>) => void }) {
   return <div className="space-y-6">
     <fieldset><legend className="text-sm font-semibold text-slate-ink">Modo de execução</legend><div className="mt-3 grid gap-3 md:grid-cols-2"><Choice title="Chamada única" description="Uma inferência produz estado, transição e resposta, sem ferramentas." checked={version.lifecycle === "single_call"} click={() => updateVersion({ lifecycle: "single_call", allowedTools: [] })} /><Choice title="Ciclo com tools" description="Pré-tool decide, o servidor executa e a pós-tool responde com o resultado." checked={version.lifecycle === "tool_cycle"} click={() => updateVersion({ lifecycle: "tool_cycle" })} /></div></fieldset>
     <div className="overflow-x-auto rounded-lg border border-mist bg-white p-4"><div className="flex min-w-[650px] items-center justify-between gap-2 text-center text-xs font-semibold"><Stage label="Contexto" active /><Arrow /><Stage label={version.lifecycle === "tool_cycle" ? "Pré-tool" : "Chamada única"} active /><Arrow /><Stage label="Execução server-side" active={version.lifecycle === "tool_cycle"} /><Arrow /><Stage label="Pós-tool" active={version.lifecycle === "tool_cycle"} /><Arrow /><Stage label="Resposta" active /></div></div>
-    {version.lifecycle === "tool_cycle" ? <fieldset><legend className="text-sm font-semibold text-slate-ink">Ferramentas autorizadas nesta versão</legend><div className="mt-3 grid gap-2 sm:grid-cols-2">{tools.map((tool) => { const checked = version.allowedTools.includes(tool); return <label key={tool} className="flex items-start gap-3 rounded-lg border border-mist bg-white p-3 text-sm"><input type="checkbox" checked={checked} onChange={() => updateVersion({ allowedTools: checked ? version.allowedTools.filter((item) => item !== tool) : [...version.allowedTools, tool] })} className="mt-0.5 accent-deep-teal" /><span><strong className="block text-slate-ink">{toolLabels[tool] ?? tool}</strong><span className="mt-1 block font-mono text-[11px] text-stone">{tool}</span></span></label>; })}</div></fieldset> : <p className="border-l-2 border-stone/40 bg-soft-ivory px-4 py-3 text-sm text-stone">Sem pré-chamada e sem tools. O schema restringe calendarAction a <code>none</code>.</p>}
+    {version.lifecycle === "tool_cycle" ? <fieldset><legend className="text-sm font-semibold text-slate-ink">Ferramentas autorizadas nesta versão</legend><div className="mt-3 grid gap-2 sm:grid-cols-2">{tools.map((tool) => { const checked = version.allowedTools.includes(tool.key); return <label key={tool.key} className="flex items-start gap-3 rounded-lg border border-mist bg-white p-3 text-sm"><input type="checkbox" checked={checked} onChange={() => updateVersion({ allowedTools: checked ? version.allowedTools.filter((item) => item !== tool.key) : [...version.allowedTools, tool.key] })} className="mt-0.5 accent-deep-teal" /><span><strong className="block text-slate-ink">{tool.label}</strong><span className="mt-1 block text-xs text-stone">{tool.description}</span><span className="mt-1 block font-mono text-[11px] text-stone">{tool.key}{tool.mutates ? " · altera dados" : ""}</span></span></label>; })}</div></fieldset> : <p className="border-l-2 border-stone/40 bg-soft-ivory px-4 py-3 text-sm text-stone">Sem pré-chamada e sem tools. O schema exige <code>toolCalls=[]</code>.</p>}
   </div>;
 }
 
@@ -253,7 +256,7 @@ function PromptEditor({ version, promptPreviews, structuralPolicy, updateVersion
   return <div className="space-y-5">
     <Field label="Prompt principal do fluxo"><textarea value={version.prompt} onChange={(event) => updateVersion({ prompt: event.target.value })} rows={8} className={`${textareaClass} font-mono text-xs`} /></Field>
     {version.lifecycle === "tool_cycle" && <div className="grid gap-4 lg:grid-cols-2"><Field label="Prompt de pré-tool"><textarea value={version.preToolPrompt} onChange={(event) => updateVersion({ preToolPrompt: event.target.value })} rows={7} className={`${textareaClass} font-mono text-xs`} /></Field><Field label="Prompt de pós-tool"><textarea value={version.postToolPrompt} onChange={(event) => updateVersion({ postToolPrompt: event.target.value })} rows={7} className={`${textareaClass} font-mono text-xs`} /></Field></div>}
-    <details className="rounded-lg border border-mist bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-ink">Ver prompts completos da versão publicada</summary><div className="space-y-5 border-t border-mist p-4"><PromptBlock role="system · protegido" content={structuralPolicy} />{Object.entries(promptPreviews).map(([phase, content]) => <PromptBlock key={phase} role={`developer · ${phaseLabel(phase)}`} content={content} />)}<PromptBlock role="user · dinâmico" content={'{"previousSummary":"{{resumo}}","currentFlowState":"{{estado}}","scheduledEvent":"{{evento}}","recentMessages":"{{mensagens}}"}'} /><p className="text-xs text-stone">Estes textos vêm do mesmo compilador usado em produção. Os placeholders são substituídos em cada execução.</p></div></details>
+    <details className="rounded-lg border border-mist bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-ink">Ver prompts completos da versão publicada</summary><div className="space-y-5 border-t border-mist p-4"><PromptBlock role="system · protegido" content={structuralPolicy} />{Object.entries(promptPreviews).map(([phase, content]) => <PromptBlock key={phase} role={`developer · ${phaseLabel(phase)}`} content={content} />)}<PromptBlock role="user · dinâmico" content={'{"previousSummary":"{{resumo}}","currentFlowState":"{{estado}}","recentMessages":"{{mensagens}}"}'} /><p className="text-xs text-stone">Estes textos vêm do mesmo compilador usado em produção. Os placeholders são substituídos em cada execução.</p></div></details>
   </div>;
 }
 
