@@ -55,9 +55,13 @@ export default function PaymentReviewPanel({
   } as const;
 
   return (
-    <section aria-labelledby="payment-review-title" className="rounded-lg border border-mist bg-white p-5">
+    <section
+      aria-labelledby="payment-review-title"
+      className={`rounded-lg border p-5 ${payment.status === "awaiting_human_confirmation" ? "border-burnt-coral bg-burnt-coral/[0.04]" : "border-mist bg-white"}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
+          {payment.status === "awaiting_human_confirmation" && <p className="mb-1 text-xs font-semibold uppercase text-burnt-coral">Ação necessária</p>}
           <h2 id="payment-review-title" className="font-heading text-sm font-semibold text-slate-ink">Sinal da consulta</h2>
           <p className="mt-1 text-sm text-stone">{amount} · solicitado em {formatDate(payment.createdAt)}</p>
         </div>

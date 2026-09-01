@@ -114,6 +114,10 @@ export default async function CustomerPage({
                 generatedAt: customer.leadQualification.generatedAt.toISOString(),
               } : null}
             />
+          </div>
+        )}
+        automation={(
+          <div className="space-y-5">
             <PaymentReviewPanel
               customerId={customer._id.toString()}
               payment={payment ? {
@@ -125,38 +129,36 @@ export default async function CustomerPage({
                 reviewedBy: payment.reviewedBy,
               } : null}
             />
+            <CustomerFlowPanel
+              customerId={customer._id.toString()}
+              initialServiceStatus={customer.serviceStatus ?? "ai_active"}
+              flows={flowOverview.flows.map((flow) => ({ key: flow.key, name: flow.name, currentVersion: flow.currentVersion }))}
+              assignment={{
+                flowKey: flowOverview.assignment.flowKey,
+                flowVersion: flowOverview.assignment.flowVersion,
+                status: flowOverview.assignment.status,
+                stage: flowOverview.assignment.state.stage,
+                missingData: flowOverview.assignment.state.missingData,
+                startedAt: flowOverview.assignment.startedAt.toISOString(),
+                completionReason: flowOverview.assignment.completionReason,
+              }}
+              history={flowOverview.history.map((item) => ({
+                id: item._id.toString(),
+                flowKey: item.flowKey,
+                flowVersion: item.flowVersion,
+                completedAt: item.completedAt.toISOString(),
+                completionReason: item.completionReason,
+                completionCode: item.completionCode,
+                nextFlowKey: item.nextFlowKey,
+                source: item.source,
+              }))}
+              conversationState={conversationState ? {
+                summary: conversationState.summary,
+                summarizedThrough: conversationState.summarizedThrough.toISOString(),
+                updatedAt: conversationState.updatedAt.toISOString(),
+              } : null}
+            />
           </div>
-        )}
-        automation={(
-          <CustomerFlowPanel
-            customerId={customer._id.toString()}
-            initialServiceStatus={customer.serviceStatus ?? "ai_active"}
-            flows={flowOverview.flows.map((flow) => ({ key: flow.key, name: flow.name, currentVersion: flow.currentVersion }))}
-            assignment={{
-              flowKey: flowOverview.assignment.flowKey,
-              flowVersion: flowOverview.assignment.flowVersion,
-              status: flowOverview.assignment.status,
-              stage: flowOverview.assignment.state.stage,
-              missingData: flowOverview.assignment.state.missingData,
-              startedAt: flowOverview.assignment.startedAt.toISOString(),
-              completionReason: flowOverview.assignment.completionReason,
-            }}
-            history={flowOverview.history.map((item) => ({
-              id: item._id.toString(),
-              flowKey: item.flowKey,
-              flowVersion: item.flowVersion,
-              completedAt: item.completedAt.toISOString(),
-              completionReason: item.completionReason,
-              completionCode: item.completionCode,
-              nextFlowKey: item.nextFlowKey,
-              source: item.source,
-            }))}
-            conversationState={conversationState ? {
-              summary: conversationState.summary,
-              summarizedThrough: conversationState.summarizedThrough.toISOString(),
-              updatedAt: conversationState.updatedAt.toISOString(),
-            } : null}
-          />
         )}
         conversation={(
           <section aria-labelledby="history-title">
