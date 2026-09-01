@@ -62,6 +62,9 @@ describe("flow catalog", () => {
     expect(profile?.prompt).toContain("profile.missingFields retornado pela tool");
     expect(commercial?.prompt).toContain("Revele detalhes progressivamente");
     expect(commercial?.prompt).toContain("pergunta direta");
+    expect(commercial?.prompt).toContain("continueImmediately=true");
+    expect(commercial?.prompt).toContain("sem responder nem pedir nova confirmação");
+    expect(commercial?.prompt).toContain("Nunca informe chave ou favorecido neste fluxo");
     expect(payment?.prompt).toContain("não peça a mesma confirmação duas vezes");
   });
 });

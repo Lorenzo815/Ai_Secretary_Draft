@@ -99,11 +99,15 @@ export function buildDeveloperPrompt(input: {
   calendarEventTypes: Array<{ key: string; name: string; durationMinutes: number; resourceId: string }>;
   toolResult?: string;
 }) {
+  const paymentConfiguration = input.flow.key === "payment_confirmation"
+    ? `CONFIGURAÇÃO PIX: chave=${input.settings.payment.pixKey || "{{PIX_KEY_NOT_CONFIGURED}}"}; favorecido=${input.settings.payment.recipientName || "{{PIX_RECIPIENT_NOT_CONFIGURED}}"}; sinalCentavos=${input.settings.payment.signalAmountCents}`
+    : "CONFIGURAÇÃO PIX: indisponível neste fluxo; chave e favorecido só podem ser obtidos pela tool do fluxo de pagamento.";
+
   return `FLUXO ATIVO: ${input.flow.name} (${input.flow.key}, versão ${input.version.version})
     POLÍTICA GLOBAL (versão ${input.settings.version}): ${input.settings.globalPrompt}
     CONDUTA DIANTE DE OFENSAS: ${input.settings.offensePolicy}
     ENCAMINHAMENTO HUMANO: ${input.settings.handoffPolicy}
-    CONFIGURAÇÃO PIX: chave=${input.settings.payment.pixKey || "{{PIX_KEY_NOT_CONFIGURED}}"}; favorecido=${input.settings.payment.recipientName || "{{PIX_RECIPIENT_NOT_CONFIGURED}}"}; sinalCentavos=${input.settings.payment.signalAmountCents}
+    ${paymentConfiguration}
 OBJETIVO E INSTRUÇÕES: ${input.version.prompt}
 CONTEXTO AUTORIZADO: ${input.version.knowledgeContext}
 CRITÉRIO DE CONCLUSÃO: ${input.version.completionCriteria}

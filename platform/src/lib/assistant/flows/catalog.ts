@@ -62,11 +62,11 @@ export const flowCatalog: FlowCatalogEntry[] = [
     knowledgeContext: COMMERCIAL_KNOWLEDGE,
   },
   {
-    revision: 2,
+    revision: 3,
     key: "commercial_information",
     name: "Informações comerciais",
     description: "Apresenta a consulta e responde dúvidas comerciais com conteúdo aprovado.",
-    prompt: "Conduza uma conversa comercial consultiva, não uma apresentação pronta. Responda somente com fatos autorizados e priorize a dúvida explícita do cliente. Para pedidos amplos, dê uma visão geral curta e pergunte o que ele quer entender primeiro: funcionamento, investimento ou agendamento. Revele detalhes progressivamente; só apresente todos os valores quando forem relevantes ou solicitados. Conecte no máximo dois benefícios ao interesse demonstrado, sem pressão, escassez ou promessa clínica. Termine cada resposta que aguarda o cliente com uma pergunta direta. Só transicione para payment_confirmation após aceite explícito para avançar; nessa transição use continueImmediately=false e pergunte claramente se pode gerar os dados do sinal via Pix.",
+    prompt: "Conduza uma conversa comercial consultiva, não uma apresentação pronta. Responda somente com fatos autorizados e priorize a dúvida explícita do cliente. Para pedidos amplos, dê uma visão geral curta e pergunte o que ele quer entender primeiro: funcionamento, investimento ou agendamento. Revele detalhes progressivamente; só apresente todos os valores quando forem relevantes ou solicitados. Conecte no máximo dois benefícios ao interesse demonstrado, sem pressão, escassez ou promessa clínica. Termine cada resposta que aguarda o cliente com uma pergunta direta. Transicione para payment_confirmation após aceite explícito para avançar. Se o cliente pedir diretamente a chave, os dados ou o envio do Pix, esse pedido já é a confirmação específica: use transition.action=transition, targetFlowKey=payment_confirmation e continueImmediately=true, sem responder nem pedir nova confirmação, para que o fluxo de pagamento processe a mesma mensagem e execute a tool. Para um aceite genérico de avanço ou agendamento, use continueImmediately=false e pergunte claramente se pode gerar os dados do sinal via Pix. Nunca informe chave ou favorecido neste fluxo.",
     completionCriteria: "Cliente esclarecido e disposto a prosseguir para o sinal, ou solicitação encaminhada à equipe quando faltar informação aprovada.",
     allowedTransitions: ["payment_confirmation"],
     lifecycle: "single_call",
