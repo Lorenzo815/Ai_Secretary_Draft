@@ -3,6 +3,7 @@ import "server-only";
 import { Collection, MongoServerError, ObjectId } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
+import { selectFirstVisitCandidate } from "./first-visit";
 
 export interface WeeklyAvailability {
   weekday: number;
@@ -78,16 +79,24 @@ interface BookAppointmentInput extends PersistAppointmentInput {
 
 export type FirstVisitPreference = "together" | "separate";
 
+export interface FirstVisitSearchCriteria {
+  fromDate: string;
+  toDate: string;
+  period: "morning" | "afternoon" | "any";
+  startTime: string | null;
+}
+
 export interface FirstVisitOptionDocument {
   _id: ObjectId;
   customerId: ObjectId;
   preference: FirstVisitPreference;
   bioimpedance: AvailableSlot;
   consultation: AvailableSlot;
-  status: "proposed" | "booked";
+  status: "proposed" | "superseded" | "booked";
   expiresAt: Date;
   createdAt: Date;
   bookedAt?: Date;
+  supersededAt?: Date;
   visitGroupId?: ObjectId;
 }
 
@@ -269,6 +278,7 @@ export async function findAvailableSlots(input: {
   toDate: string;
   eventType?: string;
   period?: "morning" | "afternoon" | "any";
+  startTime?: string | null;
   limit?: number;
   excludeAppointmentId?: ObjectId;
 }) {
@@ -316,7 +326,8 @@ export async function findAvailableSlots(input: {
           : input.period === "afternoon"
             ? cursor.hour >= 12
             : true;
-        if (cursor >= earliest && periodMatches && !occupied.some((item) => item.overlaps(slotInterval))) {
+        const timeMatches = !input.startTime || cursor.toFormat("HH:mm") === input.startTime;
+        if (cursor >= earliest && periodMatches && timeMatches && !occupied.some((item) => item.overlaps(slotInterval))) {
           slots.push({
             startAt: cursor.toISO()!,
             endAt: slotEnd.toISO()!,
@@ -332,51 +343,44 @@ export async function findAvailableSlots(input: {
 
 export async function findFirstVisitOption(input: {
   customerId: ObjectId;
-  fromDate: string;
-  toDate: string;
-  period: "morning" | "afternoon" | "any";
+  bioimpedance: FirstVisitSearchCriteria;
+  consultation: FirstVisitSearchCriteria;
   preference: FirstVisitPreference;
 }) {
   const [bioResult, consultationResult] = await Promise.all([
     findAvailableSlots({
-      fromDate: input.fromDate,
-      toDate: input.toDate,
-      period: input.period,
+      fromDate: input.bioimpedance.fromDate,
+      toDate: input.bioimpedance.toDate,
+      period: input.bioimpedance.period,
+      startTime: input.bioimpedance.startTime,
       eventType: "bioimpedance",
       limit: 50,
     }),
     findAvailableSlots({
-      fromDate: input.fromDate,
-      toDate: input.toDate,
-      period: input.period,
+      fromDate: input.consultation.fromDate,
+      toDate: input.consultation.toDate,
+      period: input.consultation.period,
+      startTime: input.consultation.startTime,
       eventType: "doctor_consultation",
       limit: 50,
     }),
   ]);
   const options = await getVisitOptionsCollection();
   const previouslyOffered = await options.find({ customerId: input.customerId }).toArray();
+  await options.updateMany(
+    { customerId: input.customerId, status: "proposed" },
+    { $set: { status: "superseded", supersededAt: new Date() } },
+  );
   const offeredPairs = new Set(previouslyOffered.map((option) => (
     `${option.bioimpedance.startAt}|${option.consultation.startAt}`
   )));
 
-  const candidates = bioResult.slots.flatMap((bioimpedance) => {
-    const bioEnd = DateTime.fromISO(bioimpedance.endAt);
-    return consultationResult.slots.flatMap((consultation) => {
-      const consultationStart = DateTime.fromISO(consultation.startAt);
-      if (bioEnd > consultationStart) return [];
-      const sameDay = bioEnd.toISODate() === consultationStart.toISODate();
-      const gapMinutes = consultationStart.diff(bioEnd, "minutes").minutes;
-      if (input.preference === "together" && (!sameDay || gapMinutes !== 0)) return [];
-      if (offeredPairs.has(`${bioimpedance.startAt}|${consultation.startAt}`)) return [];
-      return [{ bioimpedance, consultation, gapMinutes }];
-    });
-  }).sort((first, second) => (
-    input.preference === "together"
-      ? DateTime.fromISO(first.bioimpedance.startAt).toMillis() - DateTime.fromISO(second.bioimpedance.startAt).toMillis()
-      : first.gapMinutes - second.gapMinutes || DateTime.fromISO(first.bioimpedance.startAt).toMillis() - DateTime.fromISO(second.bioimpedance.startAt).toMillis()
-  ));
-
-  const candidate = candidates[0];
+  const candidate = selectFirstVisitCandidate({
+    bioimpedanceSlots: bioResult.slots,
+    consultationSlots: consultationResult.slots,
+    preference: input.preference,
+    offeredPairs,
+  });
   if (!candidate) return { settings: bioResult.settings, option: null };
   const now = new Date();
   const option: FirstVisitOptionDocument = {
@@ -395,9 +399,11 @@ export async function findFirstVisitOption(input: {
   return { settings: bioResult.settings, option };
 }
 
-export async function getActiveFirstVisitOption(customerId: ObjectId) {
+export async function getActiveFirstVisitOption(customerId: ObjectId, optionId?: ObjectId) {
+  if (!optionId) return null;
   const option = await (await getVisitOptionsCollection()).findOne(
     {
+      _id: optionId,
       customerId,
       status: "proposed",
       expiresAt: { $gt: new Date() },

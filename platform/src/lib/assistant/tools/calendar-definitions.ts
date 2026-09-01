@@ -1,23 +1,29 @@
 import type { ToolDefinition } from "./contracts";
 
 const nullableString = { type: ["string", "null"] };
+const firstVisitCriteria = strictArguments(["dateIntent", "fromDate", "toDate", "period", "startTime"], {
+  dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
+  fromDate: { type: "string" },
+  toDate: { type: "string" },
+  period: { type: "string", enum: ["morning", "afternoon", "any"] },
+  startTime: nullableString,
+});
 
 export const calendarToolDefinitions = {
   "calendar.find_first_visit_option": defineTool({
     label: "Sugerir primeira consulta",
     description: "Encontra uma única combinação de Bioimpedância antes da Consulta Dr.",
     mutates: false,
-    argumentsSchema: strictArguments(["dateIntent", "fromDate", "toDate", "period", "preference"], {
-      dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
-      fromDate: { type: "string" },
-      toDate: { type: "string" },
-      period: { type: "string", enum: ["morning", "afternoon", "any"] },
+    argumentsSchema: strictArguments(["bioimpedance", "consultation", "preference"], {
+      bioimpedance: firstVisitCriteria,
+      consultation: firstVisitCriteria,
       preference: { type: "string", enum: ["together", "separate"] },
     }),
-    promptInstructions: `calendar.find_first_visit_option exige dateIntent, fromDate e toDate em YYYY-MM-DD, período e preference=together ou separate.
-- together procura Bioimpedância de 30 minutos imediatamente antes da Consulta Dr. de 90 minutos.
+    promptInstructions: `calendar.find_first_visit_option exige preference e critérios independentes em bioimpedance e consultation. Cada critério contém dateIntent, fromDate, toDate em YYYY-MM-DD, period=morning, afternoon ou any e startTime em HH:mm ou null.
+  - Traduza separadamente as preferências de data e horário de cada atendimento. Exemplo: bioimpedância no fim desta semana e consulta segunda às 09:00 usa janelas distintas e consultation.startTime="09:00"; não amplie nem iguale um critério ao outro.
+- together procura Bioimpedância de 30 minutos imediatamente antes da Consulta Dr. de 90 minutos; use critérios compatíveis para os dois eventos.
 - separate permite dias ou horários diferentes, sempre com Bioimpedância terminando antes da consulta.
-  - Para next_available, fromDate é a data local atual da agenda e toDate fica de 7 a 31 dias depois. Esse intervalo é o tamanho da janela de busca, não uma espera antes de começar a busca.
+- Para next_available, fromDate é a data local atual da agenda e toDate fica de 7 a 31 dias depois. Esse intervalo é o tamanho da janela de busca, não uma espera antes de começar a busca.
 - A tool retorna somente uma sugestão e exclui opções já oferecidas. Preserve optionId em state.notes até o cliente confirmar ou rejeitar. Chame novamente apenas quando houver rejeição ou mudança de preferências.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_first_visit_option", context, args),
     getGroundedReply: lazyGroundedReply,

@@ -3,6 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { bookAppointment, bookFirstVisit, findAvailableSlots, findCustomerAppointments, findFirstVisitOption, getCalendarSettings, updateCustomerAppointment } from "../../calendar";
+import { isCurrentFirstVisitOption } from "../../calendar/first-visit";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 interface CalendarToolArguments {
@@ -19,6 +20,16 @@ interface CalendarToolArguments {
   confirmedByCustomer: boolean;
   notes: string | null;
   preference: "together" | "separate" | null;
+  bioimpedance: FirstVisitToolCriteria | null;
+  consultation: FirstVisitToolCriteria | null;
+}
+
+interface FirstVisitToolCriteria {
+  dateIntent: "exact_date" | "date_range" | "next_available";
+  fromDate: string;
+  toDate: string;
+  period: "morning" | "afternoon" | "any";
+  startTime: string | null;
 }
 
 async function executeCalendarAction(input: {
@@ -26,6 +37,7 @@ async function executeCalendarAction(input: {
   customerId: ObjectId;
   customerName: string;
   contactPhone: string;
+  activeFirstVisitOptionId?: string;
 }): Promise<ToolExecution | null> {
   if (input.action.action === "find_first_visit_option") {
     const validation = await validateFirstVisitAvailability(input.action);
@@ -33,9 +45,8 @@ async function executeCalendarAction(input: {
     try {
       const result = await findFirstVisitOption({
         customerId: input.customerId,
-        fromDate: input.action.fromDate!,
-        toDate: input.action.toDate!,
-        period: input.action.period!,
+        bioimpedance: input.action.bioimpedance!,
+        consultation: input.action.consultation!,
         preference: input.action.preference!,
       });
       return {
@@ -59,6 +70,11 @@ async function executeCalendarAction(input: {
     if (!input.action.optionId || !ObjectId.isValid(input.action.optionId) || !input.action.confirmedByCustomer) {
       return validationError("calendar.book_first_visit", [
         invalid("arguments", "Informe optionId válido e confirmação explícita do cliente."),
+      ]);
+    }
+    if (!isCurrentFirstVisitOption(input.action.optionId, input.activeFirstVisitOptionId)) {
+      return validationError("calendar.book_first_visit", [
+        invalid("optionId", "A opção confirmada não é a proposta atual. Consulte novamente a agenda."),
       ]);
     }
     try {
@@ -240,20 +256,35 @@ async function validateAvailabilityInput(action: CalendarToolArguments) {
 async function validateFirstVisitAvailability(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
-  const fromDate = parseDate(action.fromDate, settings.timezone);
-  const toDate = parseDate(action.toDate, settings.timezone);
-  if (!action.dateIntent) errors.push(required("arguments.dateIntent", "Informe como a data foi interpretada."));
-  if (!fromDate) errors.push(required("arguments.fromDate", "Informe a data inicial em YYYY-MM-DD."));
-  if (!toDate) errors.push(required("arguments.toDate", "Informe a data final em YYYY-MM-DD."));
-  if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
   if (!action.preference) errors.push(required("arguments.preference", "Informe together ou separate."));
+  validateFirstVisitCriteria(action.bioimpedance, "bioimpedance", settings.timezone, errors);
+  validateFirstVisitCriteria(action.consultation, "consultation", settings.timezone, errors);
+  return errors.length > 0 ? validationError("calendar.find_first_visit_option", errors) : null;
+}
+
+function validateFirstVisitCriteria(
+  criteria: FirstVisitToolCriteria | null,
+  field: "bioimpedance" | "consultation",
+  timezone: string,
+  errors: ToolValidationIssue[],
+) {
+  if (!criteria) {
+    errors.push(required(`arguments.${field}`, `Informe os critérios de ${field}.`));
+    return;
+  }
+  const fromDate = parseDate(criteria.fromDate, timezone);
+  const toDate = parseDate(criteria.toDate, timezone);
+  if (!fromDate) errors.push(required(`arguments.${field}.fromDate`, "Informe a data inicial em YYYY-MM-DD."));
+  if (!toDate) errors.push(required(`arguments.${field}.toDate`, "Informe a data final em YYYY-MM-DD."));
+  if (criteria.startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(criteria.startTime)) {
+    errors.push(invalid(`arguments.${field}.startTime`, "Use HH:mm ou null."));
+  }
   if (fromDate && toDate) {
     const rangeDays = toDate.diff(fromDate, "days").days;
-    if (rangeDays < 0 || rangeDays > 31) errors.push(invalid("arguments.toDate", "Use uma janela válida de até 31 dias."));
-    if (action.dateIntent === "exact_date" && rangeDays !== 0) errors.push(invalid("arguments.toDate", "Para exact_date, use datas iguais."));
-    if (action.dateIntent === "next_available" && rangeDays < 7) errors.push(invalid("arguments.toDate", "Para next_available, use de 7 a 31 dias."));
+    if (rangeDays < 0 || rangeDays > 31) errors.push(invalid(`arguments.${field}.toDate`, "Use uma janela válida de até 31 dias."));
+    if (criteria.dateIntent === "exact_date" && rangeDays !== 0) errors.push(invalid(`arguments.${field}.toDate`, "Para exact_date, use datas iguais."));
+    if (criteria.dateIntent === "next_available" && rangeDays < 7) errors.push(invalid(`arguments.${field}.toDate`, "Para next_available, use de 7 a 31 dias."));
   }
-  return errors.length > 0 ? validationError("calendar.find_first_visit_option", errors) : null;
 }
 
 async function validateBookingInput(action: CalendarToolArguments) {
@@ -403,8 +434,23 @@ export function executeRegisteredCalendarTool(
       confirmedByCustomer: args.confirmedByCustomer === true,
       notes: asString(args.notes),
       preference: asValue(args.preference, ["together", "separate"]),
+      bioimpedance: asFirstVisitCriteria(args.bioimpedance),
+      consultation: asFirstVisitCriteria(args.consultation),
     },
   });
+}
+
+function asFirstVisitCriteria(value: unknown): FirstVisitToolCriteria | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const criteria = value as Record<string, unknown>;
+  const dateIntent = asValue(criteria.dateIntent, ["exact_date", "date_range", "next_available"]);
+  const fromDate = asString(criteria.fromDate);
+  const toDate = asString(criteria.toDate);
+  const period = asValue(criteria.period, ["morning", "afternoon", "any"]);
+  const startTime = asString(criteria.startTime);
+  return dateIntent && fromDate && toDate && period
+    ? { dateIntent, fromDate, toDate, period, startTime }
+    : null;
 }
 
 function asString(value: unknown) {

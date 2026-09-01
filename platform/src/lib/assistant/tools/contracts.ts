@@ -14,6 +14,7 @@ export interface ToolExecutionContext {
   customerId: ObjectId;
   customerName: string;
   contactPhone: string;
+  activeFirstVisitOptionId?: string;
 }
 
 export interface ToolExecution {

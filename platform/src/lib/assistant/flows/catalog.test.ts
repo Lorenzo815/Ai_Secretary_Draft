@@ -34,20 +34,19 @@ describe("flow catalog", () => {
     expect(payment?.allowedTransitions).toEqual([]);
 
     const scheduling = flowCatalog.find((flow) => flow.key === "schedule_appointment");
+    expect(scheduling?.revision).toBe(10);
     expect(scheduling?.allowedTools).toEqual([
       "calendar.find_first_visit_option",
       "calendar.book_first_visit",
     ]);
     expect(scheduling?.prompt).toContain("optionId");
     expect(scheduling?.prompt).toContain("memória cumulativa");
-    expect(scheduling?.prompt).toContain("Nunca pergunte novamente uma dimensão já respondida");
-    expect(scheduling?.prompt).toContain("chame calendar.find_first_visit_option na mesma resposta");
-    expect(scheduling?.prompt).toContain("significa preference=together");
-    expect(scheduling?.prompt).toContain("use como fromDate a data local");
-    expect(scheduling?.prompt).toContain("recalcule-a do zero");
-    expect(scheduling?.prompt).toContain("nunca podem se contradizer");
-    expect(scheduling?.prompt).toContain("sem incluir essa toolCall");
-    expect(scheduling?.prompt).toContain("Exemplo semântico");
+    expect(scheduling?.prompt).toContain("de modo independente para bioimpedance e consultation");
+    expect(scheduling?.prompt).toContain("sem perguntar se pode consultar a agenda");
+    expect(scheduling?.prompt).toContain("faça uma nova calendar.find_first_visit_option no mesmo turno");
+    expect(scheduling?.prompt).toContain("Não diga que buscou, encontrou ou ajustou horários sem a toolCall");
+    expect(scheduling?.prompt).toContain("confirmação explícita do par exato atualmente proposto");
+    expect(scheduling?.prompt).toContain("ambas são confirmadas pelo mesmo optionId");
   });
 
   it("requires explicit questions and progressive commercial dialogue", () => {

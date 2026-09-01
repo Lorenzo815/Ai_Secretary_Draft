@@ -31,6 +31,30 @@ describe("tool registry", () => {
     expect(toolRegistry["customer.update_profile"].promptInstructions).toContain("mesmo que outros campos");
   });
 
+  it("requires independent strict criteria for both first-visit events", () => {
+    const schema = toolRegistry["calendar.find_first_visit_option"].argumentsSchema as {
+      required: string[];
+      additionalProperties: boolean;
+      properties: Record<string, {
+        required?: string[];
+        additionalProperties?: boolean;
+        properties?: Record<string, { enum?: string[] }>;
+      }>;
+    };
+
+    expect(schema.required).toEqual(["bioimpedance", "consultation", "preference"]);
+    expect(schema.additionalProperties).toBe(false);
+    for (const event of ["bioimpedance", "consultation"]) {
+      const criteria = schema.properties[event];
+      expect(criteria.required).toEqual(["dateIntent", "fromDate", "toDate", "period", "startTime"]);
+      expect(criteria.additionalProperties).toBe(false);
+      expect(criteria.properties?.dateIntent.enum).toContain("exact_date");
+      expect(criteria.properties?.period.enum).toEqual(["morning", "afternoon", "any"]);
+    }
+    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain("janelas distintas");
+    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain('consultation.startTime="09:00"');
+  });
+
   it("builds pre-tool schema only from tools allowed by the flow", () => {
     const schema = buildAssistantResponseSchema(baseVersion, "pre_tool") as {
       properties: { toolCalls: { maxItems: number; items: { anyOf: Array<{ properties: { tool: { enum: string[] } } }> } } };

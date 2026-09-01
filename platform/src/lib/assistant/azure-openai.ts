@@ -11,8 +11,10 @@ import type { CustomerProfileSnapshot } from "../crm";
 import { getAssistantSettings, type CustomerFlowDocument, type FlowDefinitionDocument, type FlowVersion } from "./flows";
 import { DateTime } from "luxon";
 import { getActiveFirstVisitOption, getCalendarSettings } from "../calendar";
+import { getReferencedFirstVisitOptionId } from "../calendar/first-visit";
 import { buildAssistantResponseSchema, type AssistantCallPhase } from "./schema";
 import type { ObjectId } from "mongodb";
+import { ObjectId as MongoObjectId } from "mongodb";
 import { completeAssistantModelTrace, failAssistantModelTrace, startAssistantModelTrace } from "./model-trace";
 
 let client: AzureOpenAI | undefined;
@@ -36,10 +38,14 @@ export async function generateAssistantResponse(input: {
     flowVersion: input.version.version,
     phase: input.phase ?? (input.version.lifecycle === "tool_cycle" ? "pre_tool" : "single"),
   };
+  const referencedOptionId = getReferencedFirstVisitOptionId(input.assignment.state.notes);
   const [calendarSettings, assistantSettings, activeFirstVisitOption] = await Promise.all([
     getCalendarSettings(),
     getAssistantSettings(),
-    getActiveFirstVisitOption(input.customerId),
+    getActiveFirstVisitOption(
+      input.customerId,
+      referencedOptionId ? new MongoObjectId(referencedOptionId) : undefined,
+    ),
   ]);
   const phase = input.phase ?? (input.version.lifecycle === "tool_cycle" ? "pre_tool" : "single");
   client ??= new AzureOpenAI({

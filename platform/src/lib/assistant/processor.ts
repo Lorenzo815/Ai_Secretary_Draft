@@ -30,6 +30,7 @@ import { findCustomerById, getCustomerProfileSnapshot, updateCustomerServiceStat
 import { canContinueImmediately } from "./transition";
 import { ensureExplicitNextQuestion, preventPrematureJourneyCompletion } from "./dialogue";
 import { hasBookedFirstVisit } from "../calendar";
+import { getReferencedFirstVisitOptionId } from "../calendar/first-visit";
 
 export async function processNextAssistantJob() {
   const config = getAssistantConfig();
@@ -126,6 +127,7 @@ export async function processNextAssistantJob() {
           customerId: job.customerId,
           customerName: contactName ?? contactPhone,
           contactPhone,
+          activeFirstVisitOptionId: getReferencedFirstVisitOptionId(runtime.assignment.state.notes),
         },
       });
       execution ??= assertRequiredToolCall({
