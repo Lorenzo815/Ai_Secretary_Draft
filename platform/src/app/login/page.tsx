@@ -42,7 +42,6 @@ function LoginForm() {
         setError("Email ou senha inválidos.");
       } else if (result?.ok) {
         router.push(callbackUrl);
-        router.refresh();
       } else {
         setError("Não foi possível iniciar a sessão.");
       }

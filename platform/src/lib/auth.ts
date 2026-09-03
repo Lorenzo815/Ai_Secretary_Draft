@@ -4,6 +4,7 @@ import { compare } from "bcryptjs";
 import { findUserByEmail } from "@/lib/users";
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
   providers: [
     CredentialsProvider({
       name: "Credentials",
