@@ -56,6 +56,16 @@ constraints only; they never override resource availability. Read-only search
 runs immediately when the request is clear, while booking and rescheduling
 still require explicit customer confirmation.
 
+Availability conflicts are scoped to the configured resource. Appointments
+using different professionals or resources may overlap; for example, a
+technician may perform bioimpedance while the doctor attends another patient.
+
+Configured plan constraints such as required steps and ordering remain hard
+business rules. Rankings such as `compact`, `earliest` and `latest` are soft
+selection strategies: consecutive steps are preferred by default, but explicit
+customer dates, periods and times take priority. A compact search may return a
+non-adjacent valid combination when no consecutive combination exists.
+
 ## Why
 
 The previous `calendarActions` envelope required synchronized changes in the

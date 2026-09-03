@@ -244,8 +244,8 @@ export async function findAvailableSlots(input: {
   if (!startDay.isValid || !endDay.isValid || endDay < startDay) {
     throw new Error("Período de busca inválido.");
   }
-  if (endDay.diff(startDay, "days").days > 31) {
-    throw new Error("A busca de disponibilidade deve cobrir no máximo 31 dias.");
+  if (endDay.diff(startDay, "days").days > 60) {
+    throw new Error("A busca de disponibilidade deve cobrir no máximo 60 dias.");
   }
 
   const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];

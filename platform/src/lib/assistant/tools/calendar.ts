@@ -429,8 +429,6 @@ function validateFindSlotsInput(
     errors.push(invalid("arguments.horizonDays", "Use um horizonte entre 1 e 60 dias."));
   } else if (action.dateIntent === "exact_date" && action.horizonDays !== 1) {
     errors.push(invalid("arguments.horizonDays", "Para exact_date, use horizonDays=1."));
-  } else if (action.dateIntent === "next_available" && action.horizonDays! < 7) {
-    errors.push(invalid("arguments.horizonDays", "Para next_available, use um horizonte entre 7 e 60 dias."));
   }
   if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
   if (!action.ranking) errors.push(required("arguments.ranking", "Informe a preferência de ordenação."));
@@ -466,8 +464,6 @@ function validateStepCriterion(criterion: PlanStepCriteria, timezone: string, er
     errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Use um horizonte entre 1 e 60 dias."));
   } else if (criterion.dateIntent === "exact_date" && criterion.horizonDays !== 1) {
     errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Para exact_date, use horizonDays=1."));
-  } else if (criterion.dateIntent === "next_available" && criterion.horizonDays < 7) {
-    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Para next_available, use de 7 a 60 dias."));
   }
   if (criterion.startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(criterion.startTime)) {
     errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.startTime`, "Use HH:mm ou null."));

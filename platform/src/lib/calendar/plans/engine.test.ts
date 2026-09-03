@@ -85,12 +85,16 @@ describe("scheduling plan selection", () => {
     expect(candidate?.[1].slot.startAt).toContain("2026-09-04");
   });
 
-  it("requires adjacency only for compact preference", () => {
+  it("prefers adjacency but keeps a non-adjacent compact fallback", () => {
     const assessment = [slot("2026-09-04T09:00:00-03:00", "2026-09-04T09:30:00-03:00")];
-    const consultation = [slot("2026-09-04T10:00:00-03:00", "2026-09-04T11:00:00-03:00")];
+    const consultation = [
+      slot("2026-09-04T10:00:00-03:00", "2026-09-04T11:00:00-03:00"),
+      slot("2026-09-04T09:30:00-03:00", "2026-09-04T10:30:00-03:00"),
+    ];
 
-    expect(select(basePlan, assessment, consultation, "compact")).toBeNull();
-    expect(select(basePlan, assessment, consultation, "flexible")?.[1].slot.startAt).toContain("10:00");
+    expect(select(basePlan, assessment, consultation, "compact")?.[1].slot.startAt).toContain("09:30");
+    expect(select(basePlan, assessment, consultation.slice(0, 1), "compact")?.[1].slot.startAt).toContain("10:00");
+    expect(select(basePlan, assessment, consultation, "flexible")?.[1].slot.startAt).toContain("09:30");
   });
 
   it("orders the latest candidates first", () => {
@@ -106,6 +110,28 @@ describe("scheduling plan selection", () => {
     });
 
     expect(candidates[0][0].slot.startAt).toContain("16:00");
+  });
+
+  it("orders each plan step by its earliest time instead of minimizing cross-day span", () => {
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, constraints: [{ type: "ordered", before: "assessment", after: "consultation" }] },
+      slotsByStep: new Map([
+        ["assessment", [
+          slot("2026-09-07T09:00:00-03:00", "2026-09-07T09:30:00-03:00"),
+          slot("2026-09-07T18:30:00-03:00", "2026-09-07T19:00:00-03:00"),
+        ]],
+        ["consultation", [
+          slot("2026-09-09T09:00:00-03:00", "2026-09-09T10:30:00-03:00"),
+          slot("2026-09-09T14:00:00-03:00", "2026-09-09T15:30:00-03:00"),
+        ]],
+      ]),
+      preference: "earliest",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates[0][0].slot.startAt).toContain("2026-09-07T09:00");
+    expect(candidates[0][1].slot.startAt).toContain("2026-09-09T09:00");
   });
 
   it("orders candidates closest to the customer's preferred time", () => {

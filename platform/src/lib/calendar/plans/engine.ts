@@ -36,7 +36,7 @@ export function selectSchedulingPlanCandidates(input: {
   const candidates: PlanCandidateStep[][] = [];
   buildCandidates(input.plan, input.slotsByStep, 0, [], candidates, 10_000);
   return candidates
-    .filter((candidate) => satisfiesConstraints(input.plan, candidate, input.preference))
+    .filter((candidate) => satisfiesConstraints(input.plan, candidate))
     .filter((candidate) => !input.offeredSignatures.has(candidateSignature(candidate)))
     .sort((first, second) => compareCandidates(first, second, input.preference, input.preferredTime))
     .slice(0, Math.min(Math.max(input.limit, 1), 5));
@@ -80,7 +80,6 @@ function buildCandidates(
 function satisfiesConstraints(
   plan: SchedulingPlan,
   candidate: PlanCandidateStep[],
-  preference: SchedulingPreference,
 ) {
   const byKey = new Map(candidate.map((step) => [step.stepKey, step]));
   for (const constraint of plan.constraints) {
@@ -101,17 +100,6 @@ function satisfiesConstraints(
     if (constraint.type === "ordered" && gap < 0) return false;
     if (constraint.type === "gap" && (gap < constraint.minMinutes || gap > constraint.maxMinutes)) return false;
   }
-  if (preference === "compact") {
-    const ordered = plan.steps.flatMap((definition) => {
-      const step = byKey.get(definition.key);
-      return step ? [step] : [];
-    });
-    for (let index = 1; index < ordered.length; index += 1) {
-      const previousEnd = DateTime.fromISO(ordered[index - 1].slot.endAt);
-      const currentStart = DateTime.fromISO(ordered[index].slot.startAt);
-      if (previousEnd.toMillis() !== currentStart.toMillis()) return false;
-    }
-  }
   return true;
 }
 
@@ -123,7 +111,18 @@ function compareCandidates(
 ) {
   const firstStart = Math.min(...first.map((step) => DateTime.fromISO(step.slot.startAt).toMillis()));
   const secondStart = Math.min(...second.map((step) => DateTime.fromISO(step.slot.startAt).toMillis()));
-  if (preference === "latest") return secondStart - firstStart;
+  if (preference === "earliest" || preference === "latest") {
+    for (let index = 0; index < Math.min(first.length, second.length); index += 1) {
+      const firstStepStart = DateTime.fromISO(first[index].slot.startAt).toMillis();
+      const secondStepStart = DateTime.fromISO(second[index].slot.startAt).toMillis();
+      if (firstStepStart !== secondStepStart) {
+        return preference === "earliest"
+          ? firstStepStart - secondStepStart
+          : secondStepStart - firstStepStart;
+      }
+    }
+    return first.length - second.length;
+  }
   if (preference === "closest_to_time" && preferredTime) {
     const [hour, minute] = preferredTime.split(":").map(Number);
     const preferredMinutes = hour * 60 + minute;
@@ -140,7 +139,7 @@ function compareCandidates(
     );
     return waste(first) - waste(second) || firstStart - secondStart;
   }
-  if (preference === "compact") return firstStart - secondStart;
+  if (preference === "compact") return spanMinutes(first) - spanMinutes(second) || firstStart - secondStart;
   const firstSpan = spanMinutes(first);
   const secondSpan = spanMinutes(second);
   return firstSpan - secondSpan || firstStart - secondStart;

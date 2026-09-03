@@ -76,7 +76,7 @@ export function createDefaultAgentConfiguration(): AgentConfigurationDocument {
     schedulingPlans: [{
       key: "first_visit",
       name: "Primeira consulta",
-      description: "Agenda a avaliação de bioimpedância e a consulta médica.",
+      description: "Agenda a avaliação de bioimpedância e a consulta médica. Prefira horários consecutivos quando o cliente não indicar outra necessidade; se ele pedir dias, períodos ou horários separados, priorize a vontade dele e mantenha apenas a ordem obrigatória da bioimpedância antes da consulta.",
       enabled: true,
       steps: [
         { key: "assessment", eventTypeKey: "bioimpedance", label: "Bioimpedância", required: true },

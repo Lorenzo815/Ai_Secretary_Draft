@@ -53,6 +53,14 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("Pedido apenas para cancelar deve usar human_handoff");
   });
 
+  it("prefers consecutive first-visit steps without overriding the customer", () => {
+    const plan = createDefaultAgentConfiguration().schedulingPlans[0];
+
+    expect(plan.description).toContain("Prefira horários consecutivos");
+    expect(plan.description).toContain("priorize a vontade dele");
+    expect(plan.constraints).toEqual([{ type: "ordered", before: "assessment", after: "consultation" }]);
+  });
+
   it("supports legacy configurations without tool guidance", () => {
     const configuration = createDefaultAgentConfiguration();
     delete (configuration as Partial<typeof configuration>).toolGuidance;

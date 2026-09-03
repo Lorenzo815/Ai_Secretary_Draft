@@ -5,7 +5,6 @@ import clientPromise from "../../mongodb";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
 import { bookAppointment, findAvailableSlots, getCalendarSettings, updateCustomerAppointments } from "../calendar";
 import {
-  candidateSignature,
   selectSchedulingPlanCandidates,
   type PlanCandidateStep,
   type SchedulingPreference,
@@ -85,7 +84,6 @@ export async function findSchedulingPlanOptions(input: {
     return [step.key, result.slots] as const;
   }));
   const options = await getOptionsCollection();
-  const previous = await options.find({ customerId: input.customerId, planKey: input.plan.key }).toArray();
   await options.updateMany(
     { customerId: input.customerId, planKey: input.plan.key, status: "proposed" },
     { $set: { status: "superseded", supersededAt: new Date() } },
@@ -95,7 +93,7 @@ export async function findSchedulingPlanOptions(input: {
     slotsByStep: new Map(slotEntries),
     preference: input.preference,
     preferredTime: input.preferredTime,
-    offeredSignatures: new Set(previous.map((option) => candidateSignature(option.steps))),
+    offeredSignatures: new Set(),
     limit: input.candidateCount,
   });
   if (candidates.length === 0) return { settings, options: [] };
