@@ -58,6 +58,12 @@ export interface AppointmentDocument {
 export interface AvailableSlot {
   startAt: string;
   endAt: string;
+  localDate: string;
+  localTime: string;
+  weekday: number;
+  weekdayLabel: string;
+  timezone: string;
+  gapWasteMinutes: number;
   label: string;
 }
 
@@ -279,9 +285,23 @@ export async function findAvailableSlots(input: {
             : true;
         const timeMatches = !input.startTime || cursor.toFormat("HH:mm") === input.startTime;
         if (cursor >= earliest && periodMatches && timeMatches && !occupied.some((item) => item.overlaps(slotInterval))) {
+          const previousBoundary = occupied
+            .filter((item) => item.end && item.end <= cursor.toUTC())
+            .reduce((latest, item) => item.end! > latest ? item.end! : latest, cursor.startOf("day").toUTC());
+          const nextBoundary = occupied
+            .filter((item) => item.start && item.start >= slotEnd.toUTC())
+            .reduce((earliestBoundary, item) => item.start! < earliestBoundary ? item.start! : earliestBoundary, cursor.endOf("day").toUTC());
+          const openStart = DateTime.max(atLocalTime(day, interval.startTime).toUTC(), previousBoundary);
+          const openEnd = DateTime.min(intervalEnd.toUTC(), nextBoundary);
           slots.push({
             startAt: cursor.toISO()!,
             endAt: slotEnd.toISO()!,
+            localDate: cursor.toISODate()!,
+            localTime: cursor.toFormat("HH:mm"),
+            weekday: cursor.weekday,
+            weekdayLabel: cursor.setLocale("pt-BR").toFormat("cccc"),
+            timezone: settings.timezone,
+            gapWasteMinutes: Math.max(0, openEnd.diff(openStart, "minutes").minutes - durationMinutes),
             label: cursor.setLocale("pt-BR").toFormat("ccc, dd/LL 'às' HH:mm"),
           });
         }
@@ -368,7 +388,14 @@ export async function updateCustomerAppointments(input: {
   }).toArray();
   if (currentAppointments.length !== appointmentIds.length) throw new Error("Um ou mais eventos não foram encontrados para este cliente.");
   const currentById = new Map(currentAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
-  const prepared = [];
+  const prepared: Array<{
+    current: AppointmentDocument;
+    update: (typeof input.appointments)[number];
+    eventType: string;
+    providerId: string;
+    nextStart: DateTime;
+    nextEnd: DateTime;
+  }> = [];
 
   for (const update of input.appointments) {
     const current = currentById.get(update.appointmentId.toHexString())!;
@@ -412,31 +439,38 @@ export async function updateCustomerAppointments(input: {
   }
 
   const now = new Date();
+  const client = await clientPromise;
+  const session = client.startSession();
+  let updatedAppointments: AppointmentDocument[] = [];
   try {
-    const result = await appointments.bulkWrite(prepared.map(({ current, update, eventType, providerId, nextStart, nextEnd }) => ({
-      updateOne: {
-        filter: { _id: current._id, customerId: input.customerId, status: "scheduled", updatedAt: current.updatedAt },
-        update: {
-          $set: {
-            startAt: nextStart.toJSDate(),
-            endAt: nextEnd.toJSDate(),
-            eventType,
-            providerId,
-            ...(update.notes?.trim() ? { notes: update.notes.trim().slice(0, 1_000) } : {}),
-            updatedAt: now,
+    await session.withTransaction(async () => {
+      const result = await appointments.bulkWrite(prepared.map(({ current, update, eventType, providerId, nextStart, nextEnd }) => ({
+        updateOne: {
+          filter: { _id: current._id, customerId: input.customerId, status: "scheduled", updatedAt: current.updatedAt },
+          update: {
+            $set: {
+              startAt: nextStart.toJSDate(),
+              endAt: nextEnd.toJSDate(),
+              eventType,
+              providerId,
+              ...(update.notes?.trim() ? { notes: update.notes.trim().slice(0, 1_000) } : {}),
+              updatedAt: now,
+            },
+            ...(update.notes !== undefined && !update.notes?.trim() ? { $unset: { notes: "" } } : {}),
           },
-          ...(update.notes !== undefined && !update.notes?.trim() ? { $unset: { notes: "" } } : {}),
         },
-      },
-    })), { ordered: true });
-    if (result.modifiedCount !== prepared.length) throw new Error("Um ou mais eventos foram alterados por outra operação.");
+      })), { ordered: true, session });
+      if (result.modifiedCount !== prepared.length) throw new Error("Um ou mais eventos foram alterados por outra operação.");
+      updatedAppointments = await appointments.find({ _id: { $in: appointmentIds } }, { session }).toArray();
+    });
   } catch (error) {
     if (error instanceof MongoServerError && error.code === 11000) {
       throw new Error("Já existe um evento deste tipo no novo horário.");
     }
     throw error;
+  } finally {
+    await session.endSession();
   }
-  const updatedAppointments = await appointments.find({ _id: { $in: appointmentIds } }).toArray();
   const updatedById = new Map(updatedAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
   return appointmentIds.map((appointmentId) => updatedById.get(appointmentId.toHexString())!);
 }

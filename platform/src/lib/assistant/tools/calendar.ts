@@ -3,7 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointments } from "../../calendar";
-import { bookSchedulingPlanOption, findSchedulingPlanOption, getActiveSchedulingPlanOption } from "../../calendar/plans";
+import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
 import { getLatestPaymentRequest } from "../../payments";
@@ -12,11 +12,17 @@ import { getConfiguredMissingFields } from "../agent/runtime-context";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 interface CalendarToolArguments {
-  action: "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  action: "find_slots" | "book" | "reschedule" | "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  purpose: "book" | "reschedule" | null;
   dateIntent: "exact_date" | "date_range" | "next_available" | null;
   fromDate: string | null;
   toDate: string | null;
+  horizonDays: number | null;
   period: "morning" | "afternoon" | "any" | null;
+  preferredTime: string | null;
+  ranking: Exclude<SchedulingPreference, "flexible"> | null;
+  candidateCount: number | null;
+  candidateId: string | null;
   appointmentId: string | null;
   optionId: string | null;
   eventType: string | null;
@@ -55,8 +61,121 @@ async function executeCalendarAction(input: {
   customerName: string;
   contactPhone: string;
   activeSchedulingOptionId?: string;
+  isMutationAllowed?: () => Promise<boolean>;
   configuration: AgentConfigurationDocument;
 }): Promise<ToolExecution | null> {
+  if (input.action.action === "find_slots") {
+    const settings = await getCalendarSettings();
+    const validation = validateFindSlotsInput(input.action, input.configuration, settings);
+    if (validation.length > 0) return validationError("calendar.find_slots", validation);
+    const plan = resolveSchedulingPlan(input.action, input.configuration, settings);
+    if (!plan) return validationError("calendar.find_slots", [invalid("arguments", "Informe eventType ou planKey habilitado, mas não ambos.")]);
+    if (!plan.key.startsWith("event:")) {
+      const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, input.configuration, "calendar.find_slots");
+      if (prerequisiteError) return prerequisiteError;
+    }
+    const targetAppointmentIds = input.action.purpose === "reschedule"
+      ? await resolveRescheduleTargets(input.customerId, plan, settings.timezone)
+      : [];
+    if (input.action.purpose === "reschedule" && targetAppointmentIds.length === 0) {
+      return validationError("calendar.find_slots", [invalid("currentAppointments", "Não foi possível identificar um único agendamento atual compatível. Encaminhe para a equipe.")]);
+    }
+    const fromDate = DateTime.fromISO(input.action.fromDate!, { zone: settings.timezone }).startOf("day");
+    const toDate = fromDate.plus({ days: input.action.horizonDays! - 1 }).toISODate()!;
+    try {
+      const result = await findSchedulingPlanOptions({
+        customerId: input.customerId,
+        plan,
+        configRevision: input.configuration.revision,
+        preference: input.action.ranking!,
+        preferredTime: input.action.preferredTime,
+        candidateCount: input.action.candidateCount!,
+        purpose: input.action.purpose!,
+        targetAppointmentIds,
+        criteria: plan.steps.map((step) => ({
+          stepKey: step.key,
+          dateIntent: input.action.dateIntent!,
+          fromDate: input.action.fromDate!,
+          toDate,
+          period: input.action.period!,
+          startTime: null,
+        })),
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool: "calendar.find_slots",
+          purpose: input.action.purpose,
+          timezone: result.settings.timezone,
+          range: { fromDate: input.action.fromDate, toDate },
+          configuredWindowsSource: "event_type_resource_weekly_availability",
+          candidates: result.options.map((option) => serializeCandidate(option, plan)),
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError("calendar.find_slots", error, "Falha na consulta da agenda.");
+    }
+  }
+
+  if (input.action.action === "book" || input.action.action === "reschedule") {
+    const tool = `calendar.${input.action.action}`;
+    if (!input.action.candidateId || !ObjectId.isValid(input.action.candidateId) || !input.action.confirmedByCustomer) {
+      return validationError(tool, [invalid("arguments", "Informe candidateId válido e confirmação explícita do cliente.")]);
+    }
+    const option = await getSchedulingPlanOption(input.customerId, new ObjectId(input.action.candidateId));
+    if (!option) return validationError(tool, [invalid("candidateId", "A proposta expirou ou foi substituída. Consulte novos horários.")]);
+    const settings = await getCalendarSettings();
+    const plan = resolveOptionPlan(option, input.configuration, settings);
+    if (!plan) return validationError(tool, [invalid("candidateId", "A proposta usa uma configuração que não está mais ativa.")]);
+    if (!plan.key.startsWith("event:")) {
+      const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, input.configuration, tool);
+      if (prerequisiteError) return prerequisiteError;
+    }
+    if (input.isMutationAllowed && !(await input.isMutationAllowed())) {
+      return validationError(tool, [invalid("job", "Uma mensagem mais recente chegou antes da alteração. Nenhum agendamento foi modificado.")]);
+    }
+    try {
+      if (input.action.action === "book") {
+        const result = await bookSchedulingPlanOption({
+          customerId: input.customerId,
+          customerName: input.customerName,
+          contactPhone: input.contactPhone,
+          optionId: option._id,
+          plan,
+          configRevision: input.configuration.revision,
+        });
+        return {
+          output: JSON.stringify({
+            ok: true,
+            tool,
+            appointmentGroupId: result.appointmentGroupId.toString(),
+            timezone: result.settings.timezone,
+            steps: serializeCandidate(result.option, plan).steps,
+          }),
+          retryable: false,
+        };
+      }
+      const result = await rescheduleSchedulingPlanOption({
+        customerId: input.customerId,
+        optionId: option._id,
+        plan,
+        configRevision: input.configuration.revision,
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool,
+          timezone: result.settings.timezone,
+          steps: serializeCandidate(result.option, plan).steps,
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError(tool, error, input.action.action === "book" ? "Falha na reserva." : "Falha no reagendamento.");
+    }
+  }
+
   if (input.action.action === "find_plan_option") {
     const configuration = input.configuration;
     const plan = configuration.schedulingPlans.find((item) => item.enabled && item.key === input.action.planKey);
@@ -273,6 +392,128 @@ async function executeCalendarAction(input: {
   }
 }
 
+function validateFindSlotsInput(
+  action: CalendarToolArguments,
+  configuration: AgentConfigurationDocument,
+  settings: Awaited<ReturnType<typeof getCalendarSettings>>,
+) {
+  const errors: ToolValidationIssue[] = [];
+  const hasEventType = Boolean(action.eventType);
+  const hasPlan = Boolean(action.planKey);
+  if (hasEventType === hasPlan) errors.push(invalid("arguments", "Informe eventType ou planKey, mas não ambos."));
+  if (hasEventType) validateEventType(action.eventType, settings, errors, "arguments.eventType");
+  if (hasPlan && !configuration.schedulingPlans.some((plan) => plan.enabled && plan.key === action.planKey)) {
+    errors.push(invalid("arguments.planKey", "Informe a chave de um plano habilitado."));
+  }
+  if (!action.purpose) errors.push(required("arguments.purpose", "Informe book ou reschedule."));
+  if (!action.dateIntent) errors.push(required("arguments.dateIntent", "Informe como a data foi interpretada."));
+  if (!parseDate(action.fromDate, settings.timezone)) errors.push(required("arguments.fromDate", "Informe a data inicial local em YYYY-MM-DD."));
+  if (!Number.isInteger(action.horizonDays) || action.horizonDays! < 1 || action.horizonDays! > 31) {
+    errors.push(invalid("arguments.horizonDays", "Use um horizonte entre 1 e 31 dias."));
+  } else if (action.dateIntent === "exact_date" && action.horizonDays !== 1) {
+    errors.push(invalid("arguments.horizonDays", "Para exact_date, use horizonDays=1."));
+  } else if (action.dateIntent === "next_available" && action.horizonDays! < 7) {
+    errors.push(invalid("arguments.horizonDays", "Para next_available, use um horizonte entre 7 e 31 dias."));
+  }
+  if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
+  if (!action.ranking) errors.push(required("arguments.ranking", "Informe a preferência de ordenação."));
+  if (!Number.isInteger(action.candidateCount) || action.candidateCount! < 1 || action.candidateCount! > 5) {
+    errors.push(invalid("arguments.candidateCount", "Solicite de uma a cinco opções."));
+  }
+  if (action.preferredTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(action.preferredTime)) {
+    errors.push(invalid("arguments.preferredTime", "Use HH:mm ou null."));
+  }
+  if (action.ranking === "closest_to_time" && !action.preferredTime) {
+    errors.push(required("arguments.preferredTime", "closest_to_time exige o horário preferido do cliente."));
+  }
+  return errors;
+}
+
+function resolveSchedulingPlan(
+  action: CalendarToolArguments,
+  configuration: AgentConfigurationDocument,
+  settings: Awaited<ReturnType<typeof getCalendarSettings>>,
+) {
+  if (action.planKey) return configuration.schedulingPlans.find((plan) => plan.enabled && plan.key === action.planKey) ?? null;
+  const eventType = settings.eventTypes.find((item) => item.key === action.eventType);
+  return eventType ? singleEventPlan(eventType.key, eventType.name) : null;
+}
+
+function resolveOptionPlan(
+  option: SchedulingPlanOptionDocument,
+  configuration: AgentConfigurationDocument,
+  settings: Awaited<ReturnType<typeof getCalendarSettings>>,
+) {
+  if (!option.planKey.startsWith("event:")) {
+    return configuration.schedulingPlans.find((plan) => plan.enabled && plan.key === option.planKey) ?? null;
+  }
+  const eventType = settings.eventTypes.find((item) => `event:${item.key}` === option.planKey);
+  return eventType ? singleEventPlan(eventType.key, eventType.name) : null;
+}
+
+function singleEventPlan(eventType: string, name: string): SchedulingPlan {
+  return {
+    key: `event:${eventType}`,
+    name,
+    description: "Agendamento de evento único.",
+    enabled: true,
+    steps: [{ key: "appointment", eventTypeKey: eventType, label: name, required: true }],
+    constraints: [],
+    prerequisites: {},
+    proposalExpiryMinutes: 30,
+  };
+}
+
+async function resolveRescheduleTargets(customerId: ObjectId, plan: SchedulingPlan, timezone: string) {
+  const now = DateTime.now().setZone(timezone);
+  const result = await findCustomerAppointments({
+    customerId,
+    fromDate: now.toISODate()!,
+    toDate: now.plus({ days: 365 }).toISODate()!,
+    eventTypes: [...new Set(plan.steps.map((step) => step.eventTypeKey))],
+    limit: 50,
+  });
+  const groups = new Map<string, typeof result.appointments>();
+  for (const appointment of result.appointments) {
+    const key = appointment.visitGroupId?.toHexString() ?? appointment._id.toHexString();
+    groups.set(key, [...(groups.get(key) ?? []), appointment]);
+  }
+  const matchingGroups = [...groups.values()].flatMap((appointments) => {
+    const remaining = [...appointments];
+    const ids = plan.steps.flatMap((step) => {
+      const index = remaining.findIndex((appointment) => appointment.eventType === step.eventTypeKey);
+      if (index < 0) return [];
+      return [remaining.splice(index, 1)[0]._id];
+    });
+    return ids.length === plan.steps.length ? [ids] : [];
+  });
+  return matchingGroups.length === 1 ? matchingGroups[0] : [];
+}
+
+function serializeCandidate(option: SchedulingPlanOptionDocument, plan: SchedulingPlan) {
+  return {
+    candidateId: option._id.toHexString(),
+    planKey: plan.key.startsWith("event:") ? null : plan.key,
+    planName: plan.name,
+    expiresAt: option.expiresAt.toISOString(),
+    steps: option.steps.map((step) => {
+      const local = DateTime.fromISO(step.slot.startAt, { setZone: true });
+      return {
+        stepKey: step.stepKey,
+        eventType: step.eventTypeKey,
+        label: plan.steps.find((definition) => definition.key === step.stepKey)?.label ?? step.stepKey,
+        startAt: step.slot.startAt,
+        endAt: step.slot.endAt,
+        localDate: local.toISODate(),
+        localTime: local.toFormat("HH:mm"),
+        weekday: local.weekday,
+        weekdayLabel: local.setLocale("pt-BR").toFormat("cccc"),
+        timezone: local.zoneName,
+      };
+    }),
+  };
+}
+
 async function validateAvailabilityInput(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
@@ -349,12 +590,13 @@ async function validatePlanPrerequisites(
   customerId: ObjectId,
   plan: SchedulingPlan,
   configuration: AgentConfigurationDocument,
+  tool = "calendar.find_plan_option",
 ) {
   const [customer, payment] = await Promise.all([
     findCustomerById(customerId.toString()),
     getLatestPaymentRequest(customerId),
   ]);
-  if (!customer) return validationError("calendar.find_plan_option", [invalid("customer", "Cliente não encontrado.")]);
+  if (!customer) return validationError(tool, [invalid("customer", "Cliente não encontrado.")]);
   const profile = getCustomerProfileSnapshot(customer);
   const missingFields = getConfiguredMissingFields(profile, configuration.dataCollectionRules);
   const facts = {
@@ -363,7 +605,7 @@ async function validatePlanPrerequisites(
   };
   return matchesConditions(facts, plan.prerequisites)
     ? null
-    : validationError("calendar.find_plan_option", [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
+    : validationError(tool, [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
 }
 
 async function validateBookingInput(action: CalendarToolArguments) {
@@ -512,10 +754,16 @@ export function executeRegisteredCalendarTool(
     ...context,
     action: {
       action,
+      purpose: asValue(args.purpose, ["book", "reschedule"]),
       dateIntent: asValue(args.dateIntent, ["exact_date", "date_range", "next_available"]),
       fromDate: asString(args.fromDate),
       toDate: asString(args.toDate),
+      horizonDays: asInteger(args.horizonDays),
       period: asValue(args.period, ["morning", "afternoon", "any"]),
+      preferredTime: asString(args.preferredTime),
+      ranking: asValue(args.ranking, ["earliest", "latest", "compact", "closest_to_time", "fill_gap"]),
+      candidateCount: asInteger(args.candidateCount),
+      candidateId: asString(args.candidateId),
       appointmentId: asString(args.appointmentId),
       optionId: asString(args.optionId),
       eventType: asString(args.eventType),
@@ -571,6 +819,10 @@ function asPlanSearchCriteria(value: unknown): PlanSearchCriteria | null {
 
 function asString(value: unknown) {
   return typeof value === "string" ? value : null;
+}
+
+function asInteger(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
 function asValue<const Value extends string>(value: unknown, allowed: readonly Value[]) {

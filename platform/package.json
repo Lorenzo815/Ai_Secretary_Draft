@@ -9,6 +9,7 @@
     "start": "node src/scripts/run-app.mjs start",
     "start:next": "next start",
     "worker:assistant": "node src/scripts/assistant-worker.mjs",
+    "audit:conversations": "node src/scripts/export-conversation-audit.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "seed": "npx tsx src/scripts/seed-user.ts"

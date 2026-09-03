@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultAgentConfiguration } from "../agent/defaults";
 import { buildAgentActionSchema } from "../agent/schema";
-import { getGroundedToolReply } from "./execution";
+import { getGroundedToolReply, wasToolSuccessfullyExecuted } from "./execution";
 import { isAssistantToolKey, listToolMetadata, toolRegistry } from "./registry";
 
 describe("tool registry", () => {
@@ -10,24 +10,26 @@ describe("tool registry", () => {
 
     expect(metadata.map((tool) => tool.key)).toEqual(Object.keys(toolRegistry));
     expect(metadata.every((tool) => tool.label && tool.description)).toBe(true);
-    expect(metadata.find((tool) => tool.key === "calendar.book_plan_option")?.mutates).toBe(true);
-    expect(isAssistantToolKey("calendar.find_plan_option")).toBe(true);
-    expect(isAssistantToolKey("calendar.find_first_visit_option")).toBe(false);
+    expect(metadata.find((tool) => tool.key === "calendar.book")?.mutates).toBe(true);
+    expect(metadata.find((tool) => tool.key === "calendar.reschedule")?.mutates).toBe(true);
+    expect(isAssistantToolKey("calendar.find_slots")).toBe(true);
+    expect(isAssistantToolKey("calendar.find_plan_option")).toBe(false);
   });
 
-  it("requires strict independent criteria for generic plan steps", () => {
-    const schema = toolRegistry["calendar.find_plan_option"].argumentsSchema as {
+  it("keeps operating windows and customer identity out of search arguments", () => {
+    const schema = toolRegistry["calendar.find_slots"].argumentsSchema as {
       required: string[];
       additionalProperties: boolean;
-      properties: { criteria: { items: { required: string[]; additionalProperties: boolean } } };
+      properties: Record<string, unknown>;
     };
 
-    expect(schema.required).toEqual(["planKey", "preference", "criteria"]);
-    expect(schema.additionalProperties).toBe(false);
-    expect(schema.properties.criteria.items.required).toEqual([
-      "stepKey", "dateIntent", "fromDate", "toDate", "period", "startTime",
+    expect(schema.required).toEqual([
+      "purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount",
     ]);
-    expect(schema.properties.criteria.items.additionalProperties).toBe(false);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties).not.toHaveProperty("timeWindow");
+    expect(schema.properties).not.toHaveProperty("toDate");
+    expect(schema.properties).not.toHaveProperty("customerId");
   });
 
   it("can persist an explicit relationship with the customer profile", () => {
@@ -41,24 +43,33 @@ describe("tool registry", () => {
     expect(schema.properties).toHaveProperty("relationshipStatus");
   });
 
-  it("updates every confirmed appointment in one strict mutation", () => {
-    const schema = toolRegistry["calendar.update_appointment"].argumentsSchema as {
+  it.each(["calendar.book", "calendar.reschedule"] as const)("confirms %s from one server candidate", (key) => {
+    const schema = toolRegistry[key].argumentsSchema as {
       required: string[];
-      properties: { appointments: { maxItems: number; items: { required: string[]; additionalProperties: boolean } } };
+      additionalProperties: boolean;
+      properties: Record<string, unknown>;
     };
 
-    expect(schema.required).toEqual(["appointments", "confirmedByCustomer"]);
-    expect(schema.properties.appointments.maxItems).toBe(10);
-    expect(schema.properties.appointments.items.required).toEqual(["appointmentId", "startAt", "eventType", "notes"]);
-    expect(schema.properties.appointments.items.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(["candidateId", "confirmedByCustomer"]);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties).not.toHaveProperty("appointmentId");
+    expect(schema.properties).not.toHaveProperty("customerId");
+  });
+
+  it("distinguishes displayed positions from chronological availability", () => {
+    const instructions = toolRegistry["calendar.find_slots"].promptInstructions;
+
+    expect(instructions).toContain("isChronologicallyEarliest");
+    expect(instructions).toContain("isChronologicallyLatest");
+    expect(instructions).toContain("independentemente da ordem de ranking ou de exibição");
   });
 
   it("offers exactly one tool request or one final response", () => {
     const configuration = createDefaultAgentConfiguration();
-    const iterative = buildAgentActionSchema(configuration, true) as {
+    const iterative = buildAgentActionSchema(configuration, true) as unknown as {
       properties: { action: { anyOf: unknown[] } };
     };
-    const final = buildAgentActionSchema(configuration, false) as {
+    const final = buildAgentActionSchema(configuration, false) as unknown as {
       properties: { action: { properties: { type: { enum: string[] } } } };
     };
 
@@ -66,37 +77,64 @@ describe("tool registry", () => {
     expect(final.properties.action.properties.type.enum).toEqual(["final"]);
   });
 
-  it("renders grounded replies for arbitrary configured plan steps", () => {
+  it("renders ranked candidates with arbitrary configured plan steps", () => {
     const reply = getGroundedToolReply(JSON.stringify({
-      executedTools: ["calendar.find_plan_option"],
+      executedTools: ["calendar.find_slots"],
       results: [{
         ok: true,
-        tool: "calendar.find_plan_option",
-        optionId: "option-1",
-        planName: "Atendimento inicial",
+        tool: "calendar.find_slots",
         timezone: "America/Sao_Paulo",
-        steps: [
-          { label: "Avaliação", startAt: "2026-09-04T09:00:00-03:00" },
-          { label: "Consulta", startAt: "2026-09-04T09:30:00-03:00" },
-        ],
+        candidates: [{ steps: [
+          { label: "Avaliação", startAt: "2026-09-04T09:00:00-03:00", weekdayLabel: "sexta-feira" },
+          { label: "Consulta", startAt: "2026-09-04T09:30:00-03:00", weekdayLabel: "sexta-feira" },
+        ] }],
       }],
     }));
 
-    expect(reply).toContain("Atendimento inicial");
     expect(reply).toContain("Avaliação");
     expect(reply).toContain(" e Consulta");
+    expect(reply).toContain("sexta-feira");
   });
 
-  it("renders every event changed by a batch reschedule", () => {
+  it("shows at most two schedule options as bullets", () => {
+    const candidate = (hour: string) => ({ steps: [
+      { label: "Consulta", startAt: `2026-09-04T${hour}:00:00-03:00` },
+    ] });
     const reply = getGroundedToolReply(JSON.stringify({
-      executedTools: ["calendar.update_appointment"],
+      executedTools: ["calendar.find_slots"],
       results: [{
         ok: true,
-        tool: "calendar.update_appointment",
+        tool: "calendar.find_slots",
         timezone: "America/Sao_Paulo",
-        appointments: [
-          { eventTypeName: "Bioimpedância", startAt: "2026-09-08T09:00:00-03:00" },
-          { eventTypeName: "Consulta Dr.", startAt: "2026-09-08T09:30:00-03:00" },
+        candidates: [candidate("09"), candidate("10"), candidate("11")],
+      }],
+    }));
+
+    expect(reply).toContain("- Opção 1:");
+    expect(reply).toContain("- Opção 2:");
+    expect(reply).not.toContain("Opção 3");
+    expect(reply).not.toContain("11:00");
+  });
+
+  it("counts only a successful tool result as executed", () => {
+    const success = JSON.stringify({ executedTools: ["calendar.reschedule"], results: [{ ok: true }] });
+    const failure = JSON.stringify({ executedTools: ["calendar.reschedule"], results: [{ ok: false }] });
+
+    expect(wasToolSuccessfullyExecuted(success, "calendar.reschedule")).toBe(true);
+    expect(wasToolSuccessfullyExecuted(failure, "calendar.reschedule")).toBe(false);
+    expect(wasToolSuccessfullyExecuted("invalid", "calendar.reschedule")).toBe(false);
+  });
+
+  it("renders every event changed by an atomic reschedule", () => {
+    const reply = getGroundedToolReply(JSON.stringify({
+      executedTools: ["calendar.reschedule"],
+      results: [{
+        ok: true,
+        tool: "calendar.reschedule",
+        timezone: "America/Sao_Paulo",
+        steps: [
+          { label: "Bioimpedância", startAt: "2026-09-08T09:00:00-03:00" },
+          { label: "Consulta Dr.", startAt: "2026-09-08T09:30:00-03:00" },
         ],
       }],
     }));

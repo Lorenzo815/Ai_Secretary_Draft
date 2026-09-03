@@ -101,6 +101,7 @@ function createConfigurationSnapshot(configuration: AgentConfigurationDocument):
     dataCollectionRules: configuration.dataCollectionRules,
     schedulingPlans: configuration.schedulingPlans,
     enabledTools: configuration.enabledTools,
+    toolGuidance: configuration.toolGuidance,
     loopPolicy: configuration.loopPolicy,
     payment: {
       signalAmountCents: configuration.payment.signalAmountCents,

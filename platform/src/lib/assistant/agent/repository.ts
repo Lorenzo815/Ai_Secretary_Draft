@@ -20,17 +20,27 @@ export async function getAgentConfiguration() {
   const existing = await collection.findOne({ _id: "active" });
   if (existing) {
     const enabledTools = migrateLegacyToolKeys(existing.enabledTools);
-    if (enabledTools.join("|") === existing.enabledTools.join("|")) return existing;
+    const toolGuidance = normalizeToolGuidance(existing.toolGuidance);
+    if (
+      enabledTools.join("|") === existing.enabledTools.join("|") &&
+      existing.toolGuidance !== undefined &&
+      JSON.stringify(toolGuidance) === JSON.stringify(existing.toolGuidance)
+    ) return existing;
     const migrated = withContentHash({
       ...existing,
       enabledTools,
+      toolGuidance,
       revision: existing.revision + 1,
       contentHash: "",
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
     const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, migrated);
-    return result.matchedCount > 0 ? migrated : (await collection.findOne({ _id: "active" })) ?? migrated;
+    if (result.matchedCount > 0) return migrated;
+    const concurrent = await collection.findOne({ _id: "active" });
+    return concurrent
+      ? { ...concurrent, enabledTools: migrateLegacyToolKeys(concurrent.enabledTools), toolGuidance: normalizeToolGuidance(concurrent.toolGuidance) }
+      : migrated;
   }
 
   const initial = withContentHash(createDefaultAgentConfiguration());
@@ -47,11 +57,15 @@ export async function updateAgentConfiguration(input: {
   updatedBy: string;
   configuration: Omit<AgentConfigurationDocument, "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy">;
 }) {
-  validateConfiguration(input.configuration);
+  const configuration = {
+    ...input.configuration,
+    toolGuidance: normalizeToolGuidance(input.configuration.toolGuidance),
+  };
+  validateConfiguration(configuration);
   const collection = await getCollection();
   const next = withContentHash({
     _id: "active" as const,
-    ...input.configuration,
+    ...configuration,
     revision: input.expectedRevision + 1,
     contentHash: "",
     updatedAt: new Date(),
@@ -108,6 +122,7 @@ function withoutMetadata(document: AgentConfigurationDocument) {
     dataCollectionRules: document.dataCollectionRules,
     schedulingPlans: document.schedulingPlans,
     enabledTools: document.enabledTools,
+    toolGuidance: document.toolGuidance ?? {},
     loopPolicy: document.loopPolicy,
     payment: document.payment,
   };
@@ -129,6 +144,9 @@ function validateConfiguration(
   }
   if (!configuration.enabledTools.every(isAssistantToolKey)) {
     throw new Error("A configuração contém uma ferramenta desconhecida.");
+  }
+  if (Object.entries(configuration.toolGuidance ?? {}).some(([key, guidance]) => !isAssistantToolKey(key) || typeof guidance !== "string" || guidance.length > 2_000)) {
+    throw new Error("As orientações adicionais das ferramentas são inválidas.");
   }
   if (new Set(configuration.dataCollectionRules.map((rule) => rule.fieldKey)).size !== configuration.dataCollectionRules.length) {
     throw new Error("Campos de coleta não podem ser duplicados.");
@@ -156,7 +174,7 @@ function validateConfiguration(
   if (
     !Number.isInteger(loop.maxModelIterations) || loop.maxModelIterations < 2 || loop.maxModelIterations > 10 ||
     !Number.isInteger(loop.maxToolExecutions) || loop.maxToolExecutions < 1 || loop.maxToolExecutions > 8 ||
-    !Number.isInteger(loop.maxMutations) || loop.maxMutations < 0 || loop.maxMutations > 2 ||
+    !Number.isInteger(loop.maxMutations) || loop.maxMutations < 0 || loop.maxMutations > 4 ||
     !Number.isInteger(loop.maxRepeatedInvalidCalls) || loop.maxRepeatedInvalidCalls < 0 || loop.maxRepeatedInvalidCalls > 3
   ) {
     throw new Error("Limites do loop do agente são inválidos.");
@@ -169,9 +187,22 @@ function validateConfiguration(
 function migrateLegacyToolKeys(keys: readonly string[]) {
   const migrated = new Set<AssistantToolKey>();
   for (const key of keys) {
-    if (key === "calendar.find_first_visit_option") migrated.add("calendar.find_plan_option");
-    else if (key === "calendar.book_first_visit") migrated.add("calendar.book_plan_option");
+    if (["calendar.find_first_visit_option", "calendar.find_plan_option", "calendar.list_appointments", "calendar.check_availability"].includes(key)) {
+      migrated.add("calendar.find_slots");
+    } else if (["calendar.book_first_visit", "calendar.book_plan_option", "calendar.book_appointment"].includes(key)) {
+      migrated.add("calendar.book");
+    } else if (key === "calendar.update_appointment") {
+      migrated.add("calendar.reschedule");
+    }
     else if (isAssistantToolKey(key)) migrated.add(key);
   }
   return [...migrated];
+}
+
+function normalizeToolGuidance(guidance: AgentConfigurationDocument["toolGuidance"] | undefined) {
+  return Object.fromEntries(Object.entries(guidance ?? {}).flatMap(([key, value]) => (
+    isAssistantToolKey(key) && typeof value === "string" && value.trim()
+      ? [[key, value.trim().slice(0, 2_000)]]
+      : []
+  ))) as AgentConfigurationDocument["toolGuidance"];
 }

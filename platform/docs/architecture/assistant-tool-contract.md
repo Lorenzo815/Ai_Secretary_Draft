@@ -13,13 +13,18 @@ Each model iteration uses a generic, namespaced `tool_request` action:
   "type": "tool_request",
   "reasonCode": "need_authoritative_data",
   "toolCall": {
-      "name": "calendar.check_availability",
+      "tool": "calendar.find_slots",
       "arguments": {
+        "purpose": "book",
         "dateIntent": "exact_date",
         "fromDate": "2026-09-02",
-        "toDate": "2026-09-02",
+        "horizonDays": 1,
         "period": "morning",
-        "eventType": "consultation"
+        "preferredTime": null,
+        "ranking": "earliest",
+        "candidateCount": 3,
+        "eventType": "consultation",
+        "planKey": null
       }
   }
 }
@@ -28,6 +33,20 @@ Each model iteration uses a generic, namespaced `tool_request` action:
 The TypeScript registry is the source of truth for keys, metadata, argument
 schemas, prompt instructions, mutation classification and execution. The active
 agent configuration persists only the tool keys it authorizes.
+
+Calendar behavior is exposed through three intent-level tools:
+
+- `calendar.find_slots` returns server-persisted candidates for one event or a
+  configured multi-step plan.
+- `calendar.book` consumes a confirmed booking candidate.
+- `calendar.reschedule` moves the existing event or group using a confirmed
+  rescheduling candidate in one mutation.
+
+The model cannot provide a customer ID, operating window, appointment ID or
+end date. The server derives customer ownership from execution context, the
+search end from `horizonDays`, and valid operating intervals from event type to
+resource to weekly availability. Search results include ISO 8601 values with
+offset plus local date, local time, weekday and timezone.
 
 ## Why
 
@@ -41,6 +60,10 @@ without adding domain branches to orchestration.
 - Agent configuration authorizes registered tools without processor changes.
 - Definitions lazy-load infrastructure so the registry remains import-safe.
 - Arguments are schema-validated and validated again by the executor.
+- Calendar mutation candidates are claimed before use and cannot be consumed
+  twice. Grouped rescheduling is transactional.
+- Fixed tool instructions are protected registry metadata. Agent Studio may
+  append bounded additional guidance but cannot replace schemas or safety rules.
 - Results contain `executedTools` and `results`.
 - `$previous.<path>` references to arrays require a single-item result.
 - There is no compatibility parser for `calendarActions`; the database was

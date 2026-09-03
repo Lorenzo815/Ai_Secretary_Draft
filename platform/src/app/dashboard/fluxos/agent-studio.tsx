@@ -39,6 +39,7 @@ interface AgentConfiguration {
     proposalExpiryMinutes: number;
   }>;
   enabledTools: string[];
+  toolGuidance: Record<string, string>;
   loopPolicy: {
     maxModelIterations: number;
     maxToolExecutions: number;
@@ -78,7 +79,7 @@ interface StudioPayload {
   configuration: AgentConfiguration;
   qualification: QualificationConfiguration;
   automationRules: AutomationRule[];
-  availableTools: Array<{ key: string; label: string; description: string; mutates: boolean }>;
+  availableTools: Array<{ key: string; label: string; description: string; mutates: boolean; protectedInstructions: string }>;
   calendarEventTypes: Array<{ key: string; name: string; durationMinutes: number; resourceId: string }>;
   previews: { structuralPolicy: string; developerPrompt: string; iterativeSchema: unknown; finalSchema: unknown };
 }
@@ -229,7 +230,7 @@ export function AgentStudio() {
       {tab === "knowledge" && <Field label="Conhecimento autorizado"><textarea rows={22} value={agent.knowledge} onChange={(event) => setAgent({ ...agent, knowledge: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></Field>}
       {tab === "data" && <DataEditor rules={agent.dataCollectionRules} change={(dataCollectionRules) => setAgent({ ...agent, dataCollectionRules })} />}
       {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} eventTypes={payload.calendarEventTypes} change={(schedulingPlans) => setAgent({ ...agent, schedulingPlans })} />}
-      {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} change={(enabledTools) => setAgent({ ...agent, enabledTools })} />}
+      {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} guidance={agent.toolGuidance} change={(enabledTools, toolGuidance) => setAgent({ ...agent, enabledTools, toolGuidance })} />}
       {tab === "limits" && <LimitsEditor value={agent} change={setAgent} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
       {tab === "automation" && <AutomationEditor rules={automation} change={setAutomation} />}
@@ -319,9 +320,13 @@ function StepSelect({ value, steps, change }: { value: string; steps: AgentConfi
   return <select value={value} onChange={(event) => change(event.target.value)} className={inputClass}>{steps.map((step) => <option key={step.key} value={step.key}>{step.label}</option>)}</select>;
 }
 
-function ToolsEditor({ tools, enabled, change }: { tools: StudioPayload["availableTools"]; enabled: string[]; change: (enabled: string[]) => void }) {
-  return <div className="space-y-3"><SectionHeader title="Ferramentas autorizadas" description="A autorização do modelo não substitui a validação server-side de cada ação." />
-    <div className="grid gap-3 lg:grid-cols-2">{tools.map((tool) => <label key={tool.key} className="flex items-start gap-3 rounded-lg border border-mist bg-white p-4"><input type="checkbox" checked={enabled.includes(tool.key)} onChange={() => change(enabled.includes(tool.key) ? enabled.filter((key) => key !== tool.key) : [...enabled, tool.key])} className="mt-1 accent-deep-teal" /><span><strong className="text-sm text-slate-ink">{tool.label}</strong><span className="mt-1 block text-xs leading-5 text-stone">{tool.description}</span><span className="mt-1 block font-mono text-[11px] text-stone">{tool.key}{tool.mutates ? " · altera dados" : ""}</span></span></label>)}</div>
+function ToolsEditor({ tools, enabled, guidance, change }: { tools: StudioPayload["availableTools"]; enabled: string[]; guidance: Record<string, string>; change: (enabled: string[], guidance: Record<string, string>) => void }) {
+  return <div className="space-y-3"><SectionHeader title="Ferramentas autorizadas" description="Schema, segurança e regras de propriedade são protegidos. A orientação adicional apenas ajusta o uso pelo modelo." />
+    <div className="grid gap-3 lg:grid-cols-2">{tools.map((tool) => <section key={tool.key} className="space-y-3 rounded-lg border border-mist bg-white p-4">
+      <label className="flex items-start gap-3"><input type="checkbox" checked={enabled.includes(tool.key)} onChange={() => change(enabled.includes(tool.key) ? enabled.filter((key) => key !== tool.key) : [...enabled, tool.key], guidance)} className="mt-1 accent-deep-teal" /><span><strong className="text-sm text-slate-ink">{tool.label}</strong><span className="mt-1 block text-xs leading-5 text-stone">{tool.description}</span><span className="mt-1 block font-mono text-[11px] text-stone">{tool.key}{tool.mutates ? " · altera dados" : ""}</span></span></label>
+      <Field label="Orientação adicional"><textarea rows={3} maxLength={2000} disabled={!enabled.includes(tool.key)} value={guidance[tool.key] ?? ""} onChange={(event) => change(enabled, { ...guidance, [tool.key]: event.target.value })} className={`${textareaClass} text-xs`} /></Field>
+      <details><summary className="cursor-pointer text-xs font-semibold text-deep-teal">Instruções protegidas</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap border-l-2 border-mist pl-3 font-mono text-[11px] leading-5 text-stone">{tool.protectedInstructions}</pre></details>
+    </section>)}</div>
   </div>;
 }
 
@@ -329,7 +334,7 @@ function LimitsEditor({ value, change }: { value: AgentConfiguration; change: (v
   const fields: Array<{ key: keyof AgentConfiguration["loopPolicy"]; label: string; min: number; max: number }> = [
     { key: "maxModelIterations", label: "Iterações do modelo", min: 2, max: 10 },
     { key: "maxToolExecutions", label: "Execuções de ferramentas", min: 1, max: 8 },
-    { key: "maxMutations", label: "Mutações por job", min: 0, max: 2 },
+    { key: "maxMutations", label: "Mutações por job", min: 0, max: 4 },
     { key: "maxRepeatedInvalidCalls", label: "Chamadas inválidas repetidas", min: 0, max: 3 },
   ];
   return <div className="space-y-7"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{fields.map((field) => <Field key={field.key} label={field.label}><input type="number" min={field.min} max={field.max} value={value.loopPolicy[field.key]} onChange={(event) => change({ ...value, loopPolicy: { ...value.loopPolicy, [field.key]: Number(event.target.value) } })} className={inputClass} /><small className="mt-1 block text-xs font-normal text-stone">Permitido: {field.min} a {field.max}</small></Field>)}</div>
@@ -369,4 +374,4 @@ function Field({ label, children }: { label: string; children: ReactNode }) { re
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) { return <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-ink"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-deep-teal" />{label}</label>; }
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
-function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }
+function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }

@@ -16,6 +16,7 @@ export interface ToolExecutionContext {
   customerName: string;
   contactPhone: string;
   activeSchedulingOptionId?: string;
+  isMutationAllowed?: () => Promise<boolean>;
   configuration: AgentConfigurationDocument;
 }
 
@@ -39,4 +40,5 @@ export interface ToolMetadata {
   label: string;
   description: string;
   mutates: boolean;
+  protectedInstructions: string;
 }

@@ -38,7 +38,12 @@ export async function executeToolCalls(input: {
       customerId: input.context.customerId.toString(),
       argumentKeys: Object.keys(resolved.value),
     });
-    const execution = await getToolDefinition(call.tool).execute(input.context, resolved.value);
+    const definition = getToolDefinition(call.tool);
+    if (definition.mutates && input.context.isMutationAllowed && !(await input.context.isMutationAllowed())) {
+      results.push(errorResult(call.tool, "superseded_job", "Uma mensagem mais recente chegou antes da alteração. Nenhum dado foi modificado."));
+      break;
+    }
+    const execution = await definition.execute(input.context, resolved.value);
     console.info("Assistant tool call completed", {
       tool: call.tool,
       customerId: input.context.customerId.toString(),
@@ -74,6 +79,21 @@ export function getGroundedToolReply(output?: string) {
     return null;
   }
   return null;
+}
+
+export function wasToolSuccessfullyExecuted(output: string | undefined, tool: string) {
+  if (!output) return false;
+  try {
+    const envelope = JSON.parse(output) as { executedTools?: unknown; results?: unknown };
+    if (!Array.isArray(envelope.executedTools) || !Array.isArray(envelope.results)) return false;
+    const results = envelope.results;
+    return envelope.executedTools.some((executedTool, index) => {
+      const result = results[index];
+      return executedTool === tool && result !== null && typeof result === "object" && (result as { ok?: unknown }).ok === true;
+    });
+  } catch {
+    return false;
+  }
 }
 
 function executionError(code: string, message: string): ToolExecution {

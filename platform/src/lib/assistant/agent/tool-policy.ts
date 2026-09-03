@@ -1,6 +1,6 @@
 import "server-only";
 
-import { executeToolCalls } from "../tools/execution";
+import { executeToolCalls, wasToolSuccessfullyExecuted } from "../tools/execution";
 import { getToolDefinition, isAssistantToolKey } from "../tools/registry";
 import type { ToolExecutionContext } from "../tools/contracts";
 import type { AgentConfigurationDocument, AgentToolRequest } from "./contracts";
@@ -31,7 +31,7 @@ export async function executeAgentTool(input: {
   return {
     output: execution?.output ?? JSON.stringify({ executedTools: [], results: [] }),
     retryable: execution?.retryable ?? false,
-    mutation,
+    mutation: mutation && wasToolSuccessfullyExecuted(execution?.output, key),
     denied: false,
   };
 }

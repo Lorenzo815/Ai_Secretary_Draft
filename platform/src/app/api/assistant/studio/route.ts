@@ -133,6 +133,7 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument) {
     dataCollectionRules: configuration.dataCollectionRules,
     schedulingPlans: configuration.schedulingPlans,
     enabledTools: configuration.enabledTools,
+    toolGuidance: configuration.toolGuidance ?? {},
     loopPolicy: configuration.loopPolicy,
     updatedAt: configuration.updatedAt,
     updatedBy: configuration.updatedBy,

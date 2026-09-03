@@ -4,8 +4,11 @@ import type { SchedulingPlan } from "../../assistant/agent/contracts";
 export interface PlanSlot {
   startAt: string;
   endAt: string;
+  gapWasteMinutes?: number;
   label: string;
 }
+
+export type SchedulingPreference = "earliest" | "latest" | "compact" | "closest_to_time" | "fill_gap" | "flexible";
 
 export interface PlanCandidateStep {
   stepKey: string;
@@ -16,15 +19,27 @@ export interface PlanCandidateStep {
 export function selectSchedulingPlanCandidate(input: {
   plan: SchedulingPlan;
   slotsByStep: Map<string, PlanSlot[]>;
-  preference: "compact" | "flexible";
+  preference: SchedulingPreference;
   offeredSignatures: Set<string>;
+}) {
+  return selectSchedulingPlanCandidates({ ...input, limit: 1 })[0] ?? null;
+}
+
+export function selectSchedulingPlanCandidates(input: {
+  plan: SchedulingPlan;
+  slotsByStep: Map<string, PlanSlot[]>;
+  preference: SchedulingPreference;
+  offeredSignatures: Set<string>;
+  preferredTime?: string | null;
+  limit: number;
 }) {
   const candidates: PlanCandidateStep[][] = [];
   buildCandidates(input.plan, input.slotsByStep, 0, [], candidates, 10_000);
   return candidates
     .filter((candidate) => satisfiesConstraints(input.plan, candidate, input.preference))
     .filter((candidate) => !input.offeredSignatures.has(candidateSignature(candidate)))
-    .sort((first, second) => compareCandidates(first, second, input.preference))[0] ?? null;
+    .sort((first, second) => compareCandidates(first, second, input.preference, input.preferredTime))
+    .slice(0, Math.min(Math.max(input.limit, 1), 5));
 }
 
 export function candidateSignature(candidate: PlanCandidateStep[]) {
@@ -65,7 +80,7 @@ function buildCandidates(
 function satisfiesConstraints(
   plan: SchedulingPlan,
   candidate: PlanCandidateStep[],
-  preference: "compact" | "flexible",
+  preference: SchedulingPreference,
 ) {
   const byKey = new Map(candidate.map((step) => [step.stepKey, step]));
   for (const constraint of plan.constraints) {
@@ -103,10 +118,28 @@ function satisfiesConstraints(
 function compareCandidates(
   first: PlanCandidateStep[],
   second: PlanCandidateStep[],
-  preference: "compact" | "flexible",
+  preference: SchedulingPreference,
+  preferredTime?: string | null,
 ) {
   const firstStart = Math.min(...first.map((step) => DateTime.fromISO(step.slot.startAt).toMillis()));
   const secondStart = Math.min(...second.map((step) => DateTime.fromISO(step.slot.startAt).toMillis()));
+  if (preference === "latest") return secondStart - firstStart;
+  if (preference === "closest_to_time" && preferredTime) {
+    const [hour, minute] = preferredTime.split(":").map(Number);
+    const preferredMinutes = hour * 60 + minute;
+    const distance = (candidate: PlanCandidateStep[]) => candidate.reduce((total, step) => {
+      const start = DateTime.fromISO(step.slot.startAt);
+      return total + Math.abs(start.hour * 60 + start.minute - preferredMinutes);
+    }, 0);
+    return distance(first) - distance(second) || firstStart - secondStart;
+  }
+  if (preference === "fill_gap") {
+    const waste = (candidate: PlanCandidateStep[]) => candidate.reduce(
+      (total, step) => total + (step.slot.gapWasteMinutes ?? Number.MAX_SAFE_INTEGER / candidate.length),
+      0,
+    );
+    return waste(first) - waste(second) || firstStart - secondStart;
+  }
   if (preference === "compact") return firstStart - secondStart;
   const firstSpan = spanMinutes(first);
   const secondSpan = spanMinutes(second);

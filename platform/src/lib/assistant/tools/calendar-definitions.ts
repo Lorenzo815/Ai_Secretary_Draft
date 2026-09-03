@@ -1,114 +1,66 @@
 import type { ToolDefinition } from "./contracts";
 
 const nullableString = { type: ["string", "null"] };
-const planCriteria = strictArguments(["stepKey", "dateIntent", "fromDate", "toDate", "period", "startTime"], {
-  stepKey: { type: "string" },
-  dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
-  fromDate: { type: "string" },
-  toDate: { type: "string" },
-  period: { type: "string", enum: ["morning", "afternoon", "any"] },
-  startTime: nullableString,
-});
-const appointmentUpdate = strictArguments(["appointmentId", "startAt", "eventType", "notes"], {
-  appointmentId: { type: "string" },
-  startAt: nullableString,
-  eventType: nullableString,
-  notes: nullableString,
-});
 
 export const calendarToolDefinitions = {
-  "calendar.find_plan_option": defineTool({
-    label: "Sugerir plano de agendamento",
-    description: "Encontra uma combinação que respeita as etapas e restrições de um plano configurado.",
+  "calendar.find_slots": defineTool({
+    label: "Buscar horários",
+    description: "Encontra opções para um evento ou plano usando as janelas configuradas de cada recurso.",
     mutates: false,
-    argumentsSchema: strictArguments(["planKey", "preference", "criteria"], {
-      planKey: { type: "string" },
-      preference: { type: "string", enum: ["compact", "flexible"] },
-      criteria: { type: "array", minItems: 1, maxItems: 10, items: planCriteria },
-    }),
-    promptInstructions: `calendar.find_plan_option exige planKey, preference e um critério independente para cada etapa obrigatória do plano.
-- Use preference=compact quando o cliente quiser etapas consecutivas e flexible quando aceitar intervalos, dias ou horários diferentes.
-- Cada item de criteria usa o stepKey do plano, dateIntent, fromDate, toDate, period e startTime.
-- As restrições configuradas do plano são obrigatórias e validadas pelo servidor.
-- Para next_available, use a data local atual e uma janela entre 7 e 31 dias.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_plan_option", context, args),
-    getGroundedReply: lazyGroundedReply,
-  }),
-  "calendar.book_plan_option": defineTool({
-    label: "Confirmar plano de agendamento",
-    description: "Reserva todas as etapas de uma proposta de plano confirmada pelo cliente.",
-    mutates: true,
-    argumentsSchema: strictArguments(["optionId", "confirmedByCustomer"], {
-      optionId: { type: "string" },
-      confirmedByCustomer: { type: "boolean" },
-    }),
-    promptInstructions: `calendar.book_plan_option exige optionId e confirmedByCustomer=true.
-- Use somente após confirmação explícita de todas as etapas e horários da proposta ativa.
-- Nunca monte horários manualmente nem reutilize uma proposta recusada, expirada ou criada sob regras antigas.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book_plan_option", context, args),
-    getGroundedReply: lazyGroundedReply,
-  }),
-  "calendar.list_appointments": defineTool({
-    label: "Consultar eventos do cliente",
-    description: "Lista eventos do cliente atual dentro de um período.",
-    mutates: false,
-    argumentsSchema: strictArguments(["fromDate", "toDate", "eventTypes"], {
-      fromDate: { type: "string" },
-      toDate: { type: "string" },
-      eventTypes: { type: "array", items: { type: "string" }, maxItems: 20 },
-    }),
-    promptInstructions: `calendar.list_appointments exige fromDate e toDate em YYYY-MM-DD.
-- A consulta é sempre limitada ao cliente atual. Use eventTypes para filtrar por zero ou mais chaves; array vazio inclui todos os tipos.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("list_appointments", context, args),
-    getGroundedReply: lazyGroundedReply,
-  }),
-  "calendar.check_availability": defineTool({
-    label: "Consultar disponibilidade",
-    description: "Consulta horários disponíveis por período e tipo de evento.",
-    mutates: false,
-    argumentsSchema: strictArguments(["dateIntent", "fromDate", "toDate", "period", "eventType"], {
+    argumentsSchema: strictArguments(["purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount"], {
+      purpose: { type: "string", enum: ["book", "reschedule"] },
+      eventType: nullableString,
+      planKey: nullableString,
       dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
       fromDate: { type: "string" },
-      toDate: { type: "string" },
+      horizonDays: { type: "integer", minimum: 1, maximum: 31 },
       period: { type: "string", enum: ["morning", "afternoon", "any"] },
-      eventType: { type: "string" },
+      preferredTime: nullableString,
+      ranking: { type: "string", enum: ["earliest", "latest", "compact", "closest_to_time", "fill_gap"] },
+      candidateCount: { type: "integer", minimum: 1, maximum: 5 },
     }),
-    promptInstructions: `calendar.check_availability exige dateIntent, fromDate, toDate, period e eventType.
-- exact_date usa datas iguais em YYYY-MM-DD; date_range usa intervalo explícito; next_available usa janela de 7 a 31 dias.
-- period deve ser morning, afternoon ou any. Converta expressões do cliente usando a data atual da agenda.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("check_availability", context, args),
+    promptInstructions: `calendar.find_slots busca um evento (eventType) ou um plano (planKey), nunca ambos.
+- purpose=book busca um novo agendamento; purpose=reschedule busca uma nova opção para o único agendamento atual compatível identificado pelo servidor.
+- A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> disponibilidade semanal. Nunca informe, invente ou tente ampliar a janela de funcionamento.
+- period e preferredTime representam apenas preferências expressas pelo cliente e sempre ficam subordinados à configuração da agenda.
+- Use horizonDays=1 para exact_date. Para next_available, use de 7 a 31 dias; o servidor calcula a data final, portanto não calcule toDate.
+- ranking=earliest ou latest ordena cronologicamente; compact prioriza etapas consecutivas; closest_to_time exige preferredTime; fill_gap só desempata opções que já atendem às restrições do cliente.
+- O resultado retorna de um a cinco candidateId emitidos pelo servidor, com ISO 8601, data local, hora local, dia da semana e timezone. Não remonte horários manualmente.
+- Mesmo que o resultado contenha mais candidatos, apresente somente uma ou duas opções por mensagem, sempre em bullets numerados e com todas as etapas de cada opção. Isso reduz a carga de decisão do cliente.
+- Em uma confirmação posterior, “Opção 1” e “Opção 2” referem-se à posição em runtime.operations.activeSchedulingOption.presentedCandidates. Já “primeiro horário disponível” e “último horário disponível” referem-se, respectivamente, aos candidatos marcados com isChronologicallyEarliest e isChronologicallyLatest entre todos os candidatos internos, independentemente da ordem de ranking ou de exibição.
+- Se o cliente disser apenas “a última”, use o contexto: após uma lista numerada, significa a última opção mostrada; em um pedido sobre disponibilidade, significa o horário cronologicamente mais tarde. Pergunte somente se houver ambiguidade real. Nunca tente candidatos em sequência.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_slots", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
-  "calendar.book_appointment": defineTool({
-    label: "Confirmar agendamento",
-    description: "Cria um agendamento após confirmação explícita do cliente.",
+  "calendar.book": defineTool({
+    label: "Reservar horário",
+    description: "Reserva um candidato de evento ou plano após confirmação explícita.",
     mutates: true,
-    argumentsSchema: strictArguments(["eventType", "startAt", "confirmedByCustomer", "notes"], {
-      eventType: { type: "string" },
-      startAt: { type: "string" },
+    argumentsSchema: strictArguments(["candidateId", "confirmedByCustomer"], {
+      candidateId: { type: "string" },
       confirmedByCustomer: { type: "boolean" },
-      notes: nullableString,
     }),
-    promptInstructions: `calendar.book_appointment exige eventType, startAt ISO 8601 com offset e confirmedByCustomer=true.
-- Use somente após o cliente confirmar um horário exato retornado pela agenda.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book_appointment", context, args),
+    promptInstructions: `calendar.book exige candidateId retornado por calendar.find_slots com purpose=book e confirmedByCustomer=true.
+- Use somente após o cliente confirmar explicitamente todas as etapas e horários daquele candidato.
+- Nunca use esta ferramenta para reagendar e nunca monte horários, customerId ou IDs manualmente.
+- Uma proposta expirada, substituída ou já consumida deve ser pesquisada novamente.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
-  "calendar.update_appointment": defineTool({
-    label: "Alterar eventos do cliente",
-    description: "Altera horário, tipo ou observações de um ou mais eventos existentes em uma única operação.",
+  "calendar.reschedule": defineTool({
+    label: "Reagendar horário",
+    description: "Move o evento ou grupo existente para um candidato confirmado, sem criar duplicatas.",
     mutates: true,
-    argumentsSchema: strictArguments(["appointments", "confirmedByCustomer"], {
-      appointments: { type: "array", minItems: 1, maxItems: 10, items: appointmentUpdate },
+    argumentsSchema: strictArguments(["candidateId", "confirmedByCustomer"], {
+      candidateId: { type: "string" },
       confirmedByCustomer: { type: "boolean" },
     }),
-    promptInstructions: `calendar.update_appointment exige appointments e confirmedByCustomer=true.
-- Cada item exige appointmentId obtido por calendar.list_appointments no job atual; nunca use placeholders como "unknown" e nunca invente IDs.
-- Inclua em uma única chamada todos os eventos confirmados para remarcação, preenchendo startAt e/ou eventType e/ou notes.
-- Reagendamento altera eventos existentes: nunca use calendar.book_appointment ou calendar.book_plan_option para reagendar, pois criariam duplicatas.
-- Para remarcar um plano com várias etapas, proponha a combinação com calendar.find_plan_option; após a confirmação, liste os eventos existentes e atualize todos de uma vez.
-- Esta ferramenta não cancela nem exclui eventos. Pedido para apenas desmarcar ou cancelar deve ser encaminhado à equipe sem chamar ferramenta de agenda.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("update_appointment", context, args),
+    promptInstructions: `calendar.reschedule exige candidateId retornado por calendar.find_slots com purpose=reschedule e confirmedByCustomer=true.
+- O servidor associa o candidato aos eventos atuais do cliente e move todas as etapas juntas em uma única mutação.
+- Execute exatamente uma vez para o candidato escolhido. Depois de um resultado ok=true, considere o reagendamento concluído e nunca tente outro candidateId.
+- Nunca chame calendar.book antes ou depois para concluir um reagendamento; isso criaria duplicatas.
+- Esta ferramenta não cancela nem exclui eventos. Pedido apenas para cancelar deve usar human_handoff sem ferramenta de agenda.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("reschedule", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
 } satisfies Record<string, ToolDefinition>;
@@ -122,7 +74,30 @@ function strictArguments(required: string[], properties: Record<string, unknown>
 }
 
 function lazyGroundedReply(output: string) {
-  const parsed = JSON.parse(output) as { ok?: boolean; tool?: string; type?: string; optionId?: string; preference?: string; planName?: string; steps?: Array<{ label?: string; startAt?: string }>; slots?: Array<{ label?: string }>; appointments?: Array<{ startAt?: string; eventTypeName?: string }>; startAt?: string; timezone?: string };
+  const parsed = JSON.parse(output) as { ok?: boolean; tool?: string; type?: string; optionId?: string; preference?: string; planName?: string; candidates?: Array<{ steps?: Array<{ label?: string; startAt?: string; weekdayLabel?: string; localDate?: string; localTime?: string }> }>; steps?: Array<{ label?: string; startAt?: string }>; slots?: Array<{ label?: string }>; appointments?: Array<{ startAt?: string; eventTypeName?: string }>; startAt?: string; timezone?: string };
+  if (parsed.ok && parsed.tool === "calendar.find_slots") {
+    const candidates = parsed.candidates?.slice(0, 2).flatMap((candidate) => {
+      const steps = candidate.steps?.flatMap((step) => step.startAt
+        ? [`${step.label ?? "Evento"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
+        : []) ?? [];
+      return steps.length > 0 ? [joinRequiredSteps(steps)] : [];
+    }) ?? [];
+    return candidates.length > 1
+      ? `Encontrei estas opções:\n${candidates.map((candidate, index) => `- Opção ${index + 1}: ${candidate}`).join("\n")}\nQual delas você prefere?`
+      : candidates.length === 1
+        ? `Encontrei esta opção:\n- Opção 1: ${candidates[0]}\nEsse horário funciona para você?`
+      : "Não encontrei horários disponíveis com essas preferências. Você gostaria de ampliar o período ou escolher outro período do dia?";
+  }
+  if (parsed.ok && (parsed.tool === "calendar.book" || parsed.tool === "calendar.reschedule")) {
+    const labels = parsed.steps?.flatMap((step) => step.startAt
+      ? [`${step.label ?? "Evento"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
+      : []) ?? [];
+    if (labels.length > 0) {
+      return parsed.tool === "calendar.book"
+        ? `Seu agendamento foi confirmado: ${joinRequiredSteps(labels)}.`
+        : `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;
+    }
+  }
   if (parsed.ok && parsed.tool === "calendar.find_plan_option") {
     const labels = parsed.steps?.flatMap((step) => step.startAt
       ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
@@ -159,15 +134,19 @@ function lazyGroundedReply(output: string) {
     if (labels.length > 0) return `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;
   }
   if (parsed.type === "operational_error") {
-    return "Não consegui acessar a agenda agora. Encaminhei a solicitação para continuidade pela equipe.";
+    return "Não consegui acessar a agenda agora. Vou precisar que a equipe continue esta solicitação.";
   }
   return null;
 }
 
 function formatDateTime(value: string, timezone?: string) {
   return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
     timeZone: timezone,
   }).format(new Date(value));
 }

@@ -27,5 +27,6 @@ export function listToolMetadata(): ToolMetadata[] {
     label: definition.label,
     description: definition.description,
     mutates: definition.mutates,
+    protectedInstructions: definition.promptInstructions,
   }));
 }

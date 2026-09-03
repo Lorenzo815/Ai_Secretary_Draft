@@ -13,7 +13,7 @@ import {
 } from "../../automation/queue";
 import { loadAssistantContext, saveAssistantContext } from "../context";
 import { getAssistantConfig } from "../config";
-import { getGroundedToolReply } from "../tools/execution";
+import { getGroundedToolReply, wasToolSuccessfullyExecuted } from "../tools/execution";
 import { generateAgentAction } from "./model";
 import { getAgentConfiguration } from "./repository";
 import { buildAgentRuntimeContext } from "./runtime-context";
@@ -105,6 +105,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
             customerName: latestInbound.contactName ?? latestInbound.contactPhone,
             contactPhone: latestInbound.contactPhone,
             activeSchedulingOptionId: activeOption?.optionId,
+            isMutationAllowed: () => isAutomationJobCurrent(job._id, job.revision),
           },
           toolExecutions,
           mutationsExecuted,
@@ -121,6 +122,36 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
           action,
           toolResult: { resultId, result: parsedResult },
         });
+
+        const groundedReply = getGroundedToolReply(execution.output);
+        if (
+          groundedReply &&
+          (action.toolCall.tool === "calendar.book" || action.toolCall.tool === "calendar.reschedule") &&
+          wasToolSuccessfullyExecuted(execution.output, action.toolCall.tool)
+        ) {
+          return finalize({
+            response: {
+              type: "final",
+              decision: "reply",
+              message: groundedReply,
+              groundingResultIds: [resultId],
+              memory: {
+                summary: `${context.summary}\n${groundedReply}`.trim(),
+                pendingQuestion: null,
+                nonSensitiveFacts: [groundedReply],
+              },
+            },
+            groundedReply,
+            latestInbound,
+            context,
+            job,
+            run,
+            modelIterations,
+            toolExecutions,
+            mutationsExecuted,
+            iteration: iteration + 1,
+          });
+        }
 
         if (execution.retryable) {
           const fingerprint = JSON.stringify(action.toolCall);

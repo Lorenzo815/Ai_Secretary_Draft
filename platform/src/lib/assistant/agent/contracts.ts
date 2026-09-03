@@ -66,6 +66,7 @@ export interface AgentConfigurationDocument {
   dataCollectionRules: DataCollectionRule[];
   schedulingPlans: SchedulingPlan[];
   enabledTools: AssistantToolKey[];
+  toolGuidance: Partial<Record<AssistantToolKey, string>>;
   loopPolicy: AgentLoopPolicy;
   payment: {
     pixKey: string;

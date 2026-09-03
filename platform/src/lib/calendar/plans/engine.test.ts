@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
-import { selectSchedulingPlanCandidate, type PlanSlot } from "./engine";
+import { selectSchedulingPlanCandidate, selectSchedulingPlanCandidates, type PlanSlot } from "./engine";
 
 const slot = (startAt: string, endAt: string): PlanSlot => ({ startAt, endAt, label: startAt });
 
@@ -79,5 +79,50 @@ describe("scheduling plan selection", () => {
 
     expect(select(basePlan, assessment, consultation, "compact")).toBeNull();
     expect(select(basePlan, assessment, consultation, "flexible")?.[1].slot.startAt).toContain("10:00");
+  });
+
+  it("orders the latest candidates first", () => {
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, steps: [basePlan.steps[0]] },
+      slotsByStep: new Map([["assessment", [
+        slot("2026-09-04T09:00:00-03:00", "2026-09-04T09:30:00-03:00"),
+        slot("2026-09-04T16:00:00-03:00", "2026-09-04T16:30:00-03:00"),
+      ]]]),
+      preference: "latest",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates[0][0].slot.startAt).toContain("16:00");
+  });
+
+  it("orders candidates closest to the customer's preferred time", () => {
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, steps: [basePlan.steps[0]] },
+      slotsByStep: new Map([["assessment", [
+        slot("2026-09-04T09:00:00-03:00", "2026-09-04T09:30:00-03:00"),
+        slot("2026-09-04T14:30:00-03:00", "2026-09-04T15:00:00-03:00"),
+      ]]]),
+      preference: "closest_to_time",
+      preferredTime: "15:00",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates[0][0].slot.startAt).toContain("14:30");
+  });
+
+  it("uses configured-gap waste only as a ranking tie-breaker", () => {
+    const roomy = { ...slot("2026-09-04T09:00:00-03:00", "2026-09-04T09:30:00-03:00"), gapWasteMinutes: 120 };
+    const fitted = { ...slot("2026-09-04T11:00:00-03:00", "2026-09-04T11:30:00-03:00"), gapWasteMinutes: 0 };
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, steps: [basePlan.steps[0]] },
+      slotsByStep: new Map([["assessment", [roomy, fitted]]]),
+      preference: "fill_gap",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates[0][0].slot.startAt).toContain("11:00");
   });
 });
