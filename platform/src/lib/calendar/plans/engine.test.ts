@@ -45,6 +45,18 @@ describe("scheduling plan selection", () => {
     expect(candidate?.[1].slot.startAt).toContain("10:30");
   });
 
+  it("allows ordered steps on different days when same-day is not configured", () => {
+    const candidate = select(
+      { ...basePlan, constraints: [{ type: "ordered", before: "assessment", after: "consultation" }] },
+      [slot("2026-09-08T18:00:00-03:00", "2026-09-08T18:30:00-03:00")],
+      [slot("2026-09-09T09:00:00-03:00", "2026-09-09T10:30:00-03:00")],
+      "flexible",
+    );
+
+    expect(candidate?.[0].slot.startAt).toContain("2026-09-08T18:00");
+    expect(candidate?.[1].slot.startAt).toContain("2026-09-09T09:00");
+  });
+
   it("enforces minimum and maximum gaps", () => {
     const candidate = select(
       { ...basePlan, constraints: [{ type: "gap", from: "assessment", to: "consultation", minMinutes: 30, maxMinutes: 60 }] },

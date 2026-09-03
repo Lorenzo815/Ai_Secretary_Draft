@@ -108,7 +108,8 @@ REGRAS DE EXECUÇÃO:
 - Respeite os pré-requisitos e as restrições dos planos. Uma regra descrita no prompt nunca autoriza ignorar validação do servidor.
 - Chave Pix e favorecido só podem vir do resultado de payment.request_deposit.
 - Datas relativas usam runtime.time.clinicLocalNow e runtime.time.clinicTimezone.
-- A janela operacional vem da configuração do tipo de evento e de seu recurso. period, preferredTime e ranking expressam preferência do cliente; nunca os trate como autorização para ampliar a disponibilidade configurada.
+- A janela operacional vem da configuração do tipo de evento e de seu recurso. period, preferredTime, ranking e stepCriteria expressam restrições ou preferências do cliente; nunca os trate como autorização para ampliar a disponibilidade configurada.
+- Consultas somente leitura não exigem confirmação. Se o cliente já informou o que deseja buscar, use a ferramenta imediatamente e peça confirmação apenas antes de uma alteração persistente.
 - Quando depender do cliente, envie type=final com uma única pergunta direta.
 ${finalIteration ? "- ESTA É A ÚLTIMA ITERAÇÃO. Retorne obrigatoriamente type=final. Se não puder concluir com segurança, use human_handoff." : "- Escolha exatamente um resultado: type=tool_request ou type=final."}`;
 }

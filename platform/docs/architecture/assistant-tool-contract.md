@@ -24,7 +24,8 @@ Each model iteration uses a generic, namespaced `tool_request` action:
         "ranking": "earliest",
         "candidateCount": 3,
         "eventType": "consultation",
-        "planKey": null
+        "planKey": null,
+        "stepCriteria": []
       }
   }
 }
@@ -47,6 +48,13 @@ end date. The server derives customer ownership from execution context, the
 search end from `horizonDays`, and valid operating intervals from event type to
 resource to weekly availability. Search results include ISO 8601 values with
 offset plus local date, local time, weekday and timezone.
+
+For multi-step plans, `stepCriteria` may override the global date, horizon,
+period and exact start time for individual configured step keys. Unspecified
+steps inherit the global search criteria. These values express customer
+constraints only; they never override resource availability. Read-only search
+runs immediately when the request is clear, while booking and rescheduling
+still require explicit customer confirmation.
 
 ## Why
 

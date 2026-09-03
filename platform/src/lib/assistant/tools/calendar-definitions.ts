@@ -7,23 +7,38 @@ export const calendarToolDefinitions = {
     label: "Buscar horários",
     description: "Encontra opções para um evento ou plano usando as janelas configuradas de cada recurso.",
     mutates: false,
-    argumentsSchema: strictArguments(["purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount"], {
+    argumentsSchema: strictArguments(["purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount", "stepCriteria"], {
       purpose: { type: "string", enum: ["book", "reschedule"] },
       eventType: nullableString,
       planKey: nullableString,
       dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
       fromDate: { type: "string" },
-      horizonDays: { type: "integer", minimum: 1, maximum: 31 },
+      horizonDays: { type: "integer", minimum: 1, maximum: 60 },
       period: { type: "string", enum: ["morning", "afternoon", "any"] },
       preferredTime: nullableString,
       ranking: { type: "string", enum: ["earliest", "latest", "compact", "closest_to_time", "fill_gap"] },
       candidateCount: { type: "integer", minimum: 1, maximum: 5 },
+      stepCriteria: {
+        type: "array",
+        maxItems: 10,
+        items: strictArguments(["stepKey", "dateIntent", "fromDate", "horizonDays", "period", "startTime"], {
+          stepKey: { type: "string" },
+          dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
+          fromDate: { type: "string" },
+          horizonDays: { type: "integer", minimum: 1, maximum: 60 },
+          period: { type: "string", enum: ["morning", "afternoon", "any"] },
+          startTime: nullableString,
+        }),
+      },
     }),
     promptInstructions: `calendar.find_slots busca um evento (eventType) ou um plano (planKey), nunca ambos.
 - purpose=book busca um novo agendamento; purpose=reschedule busca uma nova opção para o único agendamento atual compatível identificado pelo servidor.
+- A busca é somente leitura. Quando o pedido e as preferências estiverem claros, execute-a imediatamente; não peça autorização para apenas consultar horários. Confirmação explícita é exigida somente antes de calendar.book ou calendar.reschedule.
 - A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> disponibilidade semanal. Nunca informe, invente ou tente ampliar a janela de funcionamento.
 - period e preferredTime representam apenas preferências expressas pelo cliente e sempre ficam subordinados à configuração da agenda.
-- Use horizonDays=1 para exact_date. Para next_available, use de 7 a 31 dias; o servidor calcula a data final, portanto não calcule toDate.
+- Use horizonDays=1 para exact_date. Para next_available, use de 7 a 60 dias; o servidor calcula a data final, portanto não calcule toDate.
+- stepCriteria permite definir data, período e horário exato diferentes por etapa de um plano. Informe somente as etapas que precisam sobrescrever os filtros globais; as demais herdam dateIntent, fromDate, horizonDays e period globais. Use os stepKey presentes no plano configurado e [] quando não houver sobrescritas.
+- Exemplo: para bioimpedância na terça às 18:00 e consulta na quarta de manhã, use um critério exact_date com startTime=18:00 para assessment e outro exact_date com period=morning e startTime=null para consultation. Preserve todas as restrições explícitas do cliente; não as amplie silenciosamente.
 - ranking=earliest ou latest ordena cronologicamente; compact prioriza etapas consecutivas; closest_to_time exige preferredTime; fill_gap só desempata opções que já atendem às restrições do cliente.
 - O resultado retorna de um a cinco candidateId emitidos pelo servidor, com ISO 8601, data local, hora local, dia da semana e timezone. Não remonte horários manualmente.
 - Mesmo que o resultado contenha mais candidatos, apresente somente uma ou duas opções por mensagem, sempre em bullets numerados e com todas as etapas de cada opção. Isso reduz a carga de decisão do cliente.

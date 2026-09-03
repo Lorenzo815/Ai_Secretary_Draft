@@ -24,12 +24,35 @@ describe("tool registry", () => {
     };
 
     expect(schema.required).toEqual([
-      "purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount",
+      "purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount", "stepCriteria",
     ]);
     expect(schema.additionalProperties).toBe(false);
     expect(schema.properties).not.toHaveProperty("timeWindow");
     expect(schema.properties).not.toHaveProperty("toDate");
     expect(schema.properties).not.toHaveProperty("customerId");
+  });
+
+  it("supports different customer constraints for each plan step", () => {
+    const schema = toolRegistry["calendar.find_slots"].argumentsSchema as {
+      properties: {
+        horizonDays: { maximum: number };
+        stepCriteria: { maxItems: number; items: { required: string[]; properties: Record<string, unknown> } };
+      };
+    };
+
+    expect(schema.properties.horizonDays.maximum).toBe(60);
+    expect(schema.properties.stepCriteria.maxItems).toBe(10);
+    expect(schema.properties.stepCriteria.items.required).toEqual([
+      "stepKey", "dateIntent", "fromDate", "horizonDays", "period", "startTime",
+    ]);
+    expect(schema.properties.stepCriteria.items.properties).not.toHaveProperty("timeWindow");
+  });
+
+  it("searches autonomously but requires confirmation for calendar mutations", () => {
+    const searchInstructions = toolRegistry["calendar.find_slots"].promptInstructions;
+
+    expect(searchInstructions).toContain("execute-a imediatamente");
+    expect(searchInstructions).toContain("Confirmação explícita é exigida somente antes");
   });
 
   it("can persist an explicit relationship with the customer profile", () => {

@@ -22,6 +22,7 @@ interface CalendarToolArguments {
   preferredTime: string | null;
   ranking: Exclude<SchedulingPreference, "flexible"> | null;
   candidateCount: number | null;
+  stepCriteria: PlanStepCriteria[];
   candidateId: string | null;
   appointmentId: string | null;
   optionId: string | null;
@@ -55,6 +56,15 @@ interface PlanToolCriteria extends PlanSearchCriteria {
   stepKey: string;
 }
 
+interface PlanStepCriteria {
+  stepKey: string;
+  dateIntent: "exact_date" | "date_range" | "next_available";
+  fromDate: string;
+  horizonDays: number;
+  period: "morning" | "afternoon" | "any";
+  startTime: string | null;
+}
+
 async function executeCalendarAction(input: {
   action: CalendarToolArguments;
   customerId: ObjectId;
@@ -80,8 +90,21 @@ async function executeCalendarAction(input: {
     if (input.action.purpose === "reschedule" && targetAppointmentIds.length === 0) {
       return validationError("calendar.find_slots", [invalid("currentAppointments", "Não foi possível identificar um único agendamento atual compatível. Encaminhe para a equipe.")]);
     }
-    const fromDate = DateTime.fromISO(input.action.fromDate!, { zone: settings.timezone }).startOf("day");
-    const toDate = fromDate.plus({ days: input.action.horizonDays! - 1 }).toISODate()!;
+    const appliedCriteria = plan.steps.map((step) => {
+      const criterion = input.action.stepCriteria.find((item) => item.stepKey === step.key);
+      const fromDate = criterion?.fromDate ?? input.action.fromDate!;
+      const horizonDays = criterion?.horizonDays ?? input.action.horizonDays!;
+      return {
+        stepKey: step.key,
+        dateIntent: criterion?.dateIntent ?? input.action.dateIntent!,
+        fromDate,
+        toDate: DateTime.fromISO(fromDate, { zone: settings.timezone }).plus({ days: horizonDays - 1 }).toISODate()!,
+        period: criterion?.period ?? input.action.period!,
+        startTime: criterion?.startTime ?? null,
+      };
+    });
+    const globalToDate = DateTime.fromISO(input.action.fromDate!, { zone: settings.timezone })
+      .plus({ days: input.action.horizonDays! - 1 }).toISODate()!;
     try {
       const result = await findSchedulingPlanOptions({
         customerId: input.customerId,
@@ -92,14 +115,7 @@ async function executeCalendarAction(input: {
         candidateCount: input.action.candidateCount!,
         purpose: input.action.purpose!,
         targetAppointmentIds,
-        criteria: plan.steps.map((step) => ({
-          stepKey: step.key,
-          dateIntent: input.action.dateIntent!,
-          fromDate: input.action.fromDate!,
-          toDate,
-          period: input.action.period!,
-          startTime: null,
-        })),
+        criteria: appliedCriteria,
       });
       return {
         output: JSON.stringify({
@@ -107,7 +123,8 @@ async function executeCalendarAction(input: {
           tool: "calendar.find_slots",
           purpose: input.action.purpose,
           timezone: result.settings.timezone,
-          range: { fromDate: input.action.fromDate, toDate },
+          range: { fromDate: input.action.fromDate, toDate: globalToDate },
+          appliedCriteria,
           configuredWindowsSource: "event_type_resource_weekly_availability",
           candidates: result.options.map((option) => serializeCandidate(option, plan)),
         }),
@@ -408,12 +425,12 @@ function validateFindSlotsInput(
   if (!action.purpose) errors.push(required("arguments.purpose", "Informe book ou reschedule."));
   if (!action.dateIntent) errors.push(required("arguments.dateIntent", "Informe como a data foi interpretada."));
   if (!parseDate(action.fromDate, settings.timezone)) errors.push(required("arguments.fromDate", "Informe a data inicial local em YYYY-MM-DD."));
-  if (!Number.isInteger(action.horizonDays) || action.horizonDays! < 1 || action.horizonDays! > 31) {
-    errors.push(invalid("arguments.horizonDays", "Use um horizonte entre 1 e 31 dias."));
+  if (!Number.isInteger(action.horizonDays) || action.horizonDays! < 1 || action.horizonDays! > 60) {
+    errors.push(invalid("arguments.horizonDays", "Use um horizonte entre 1 e 60 dias."));
   } else if (action.dateIntent === "exact_date" && action.horizonDays !== 1) {
     errors.push(invalid("arguments.horizonDays", "Para exact_date, use horizonDays=1."));
   } else if (action.dateIntent === "next_available" && action.horizonDays! < 7) {
-    errors.push(invalid("arguments.horizonDays", "Para next_available, use um horizonte entre 7 e 31 dias."));
+    errors.push(invalid("arguments.horizonDays", "Para next_available, use um horizonte entre 7 e 60 dias."));
   }
   if (!action.period) errors.push(required("arguments.period", "Informe morning, afternoon ou any."));
   if (!action.ranking) errors.push(required("arguments.ranking", "Informe a preferência de ordenação."));
@@ -426,7 +443,35 @@ function validateFindSlotsInput(
   if (action.ranking === "closest_to_time" && !action.preferredTime) {
     errors.push(required("arguments.preferredTime", "closest_to_time exige o horário preferido do cliente."));
   }
+  const plan = action.planKey
+    ? configuration.schedulingPlans.find((item) => item.enabled && item.key === action.planKey)
+    : null;
+  if (action.stepCriteria.length > 0 && !plan) {
+    errors.push(invalid("arguments.stepCriteria", "Use critérios por etapa somente com um planKey habilitado."));
+  } else if (plan) {
+    const stepKeys = new Set(action.stepCriteria.map((criterion) => criterion.stepKey));
+    if (stepKeys.size !== action.stepCriteria.length || action.stepCriteria.some((criterion) => !plan.steps.some((step) => step.key === criterion.stepKey))) {
+      errors.push(invalid("arguments.stepCriteria", "Use cada stepKey configurado no plano no máximo uma vez."));
+    }
+    for (const criterion of action.stepCriteria) validateStepCriterion(criterion, settings.timezone, errors);
+  }
   return errors;
+}
+
+function validateStepCriterion(criterion: PlanStepCriteria, timezone: string, errors: ToolValidationIssue[]) {
+  if (!parseDate(criterion.fromDate, timezone)) {
+    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.fromDate`, "Use uma data local válida em YYYY-MM-DD."));
+  }
+  if (!Number.isInteger(criterion.horizonDays) || criterion.horizonDays < 1 || criterion.horizonDays > 60) {
+    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Use um horizonte entre 1 e 60 dias."));
+  } else if (criterion.dateIntent === "exact_date" && criterion.horizonDays !== 1) {
+    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Para exact_date, use horizonDays=1."));
+  } else if (criterion.dateIntent === "next_available" && criterion.horizonDays < 7) {
+    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.horizonDays`, "Para next_available, use de 7 a 60 dias."));
+  }
+  if (criterion.startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(criterion.startTime)) {
+    errors.push(invalid(`arguments.stepCriteria.${criterion.stepKey}.startTime`, "Use HH:mm ou null."));
+  }
 }
 
 function resolveSchedulingPlan(
@@ -763,6 +808,7 @@ export function executeRegisteredCalendarTool(
       preferredTime: asString(args.preferredTime),
       ranking: asValue(args.ranking, ["earliest", "latest", "compact", "closest_to_time", "fill_gap"]),
       candidateCount: asInteger(args.candidateCount),
+      stepCriteria: asStepCriteria(args.stepCriteria),
       candidateId: asString(args.candidateId),
       appointmentId: asString(args.appointmentId),
       optionId: asString(args.optionId),
@@ -776,6 +822,21 @@ export function executeRegisteredCalendarTool(
       criteria: asPlanCriteria(args.criteria),
       appointmentUpdates: asAppointmentUpdates(args.appointments),
     },
+  });
+}
+
+function asStepCriteria(value: unknown): PlanStepCriteria[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const criterion = item as Record<string, unknown>;
+    const stepKey = asString(criterion.stepKey);
+    const dateIntent = asValue(criterion.dateIntent, ["exact_date", "date_range", "next_available"]);
+    const fromDate = asString(criterion.fromDate);
+    const horizonDays = asInteger(criterion.horizonDays);
+    const period = asValue(criterion.period, ["morning", "afternoon", "any"]);
+    if (!stepKey || !dateIntent || !fromDate || horizonDays === null || !period) return [];
+    return [{ stepKey, dateIntent, fromDate, horizonDays, period, startTime: asString(criterion.startTime) }];
   });
 }
 
