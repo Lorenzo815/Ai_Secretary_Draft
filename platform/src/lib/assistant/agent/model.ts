@@ -36,7 +36,11 @@ export async function generateAgentAction(input: {
 type AgentRunCustomerId = import("mongodb").ObjectId;
 
 function parseAgentAction(content: string): AgentAction {
-  const value = JSON.parse(content) as Partial<AgentAction>;
+  const envelope = JSON.parse(content) as { action?: Partial<AgentAction> };
+  const value = envelope.action;
+  if (!value || typeof value !== "object") {
+    throw new Error("O agente retornou um envelope de ação inválido.");
+  }
   if (value.type === "tool_request") {
     const call = value.toolCall as { name?: unknown; arguments?: unknown } | undefined;
     if (

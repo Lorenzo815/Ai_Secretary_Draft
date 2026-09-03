@@ -27,7 +27,7 @@ export function buildAgentActionSchema(
       },
     },
   };
-  if (!allowToolRequest) return finalAction;
+  if (!allowToolRequest) return wrapActionSchema(finalAction);
 
   const toolSchemas = configuration.enabledTools.filter(isAssistantToolKey).map((key) => ({
     type: "object",
@@ -63,5 +63,14 @@ export function buildAgentActionSchema(
       },
     },
   };
-  return { anyOf: [toolRequest, finalAction] };
+  return wrapActionSchema({ anyOf: [toolRequest, finalAction] });
+}
+
+function wrapActionSchema(actionSchema: Record<string, unknown>) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["action"],
+    properties: { action: actionSchema },
+  };
 }
