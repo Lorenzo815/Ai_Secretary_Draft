@@ -230,6 +230,7 @@ export async function findAvailableSlots(input: {
   startTime?: string | null;
   limit?: number;
   excludeAppointmentId?: ObjectId;
+  excludeAppointmentIds?: ObjectId[];
 }) {
   const settings = await getCalendarSettings();
   const startDay = DateTime.fromISO(input.fromDate, { zone: settings.timezone }).startOf("day");
@@ -243,11 +244,12 @@ export async function findAvailableSlots(input: {
 
   const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];
   const appointments = await listAppointments(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate());
+  const excludedAppointmentIds = input.excludeAppointmentIds ?? (input.excludeAppointmentId ? [input.excludeAppointmentId] : []);
   const occupied = appointments
     .filter((appointment) => (
       appointment.status === "scheduled" &&
       appointment.providerId === eventType.resourceId &&
-      !appointment._id.equals(input.excludeAppointmentId)
+      !excludedAppointmentIds.some((appointmentId) => appointment._id.equals(appointmentId))
     ))
     .map((appointment) => Interval.fromDateTimes(
       DateTime.fromJSDate(appointment.startAt),
@@ -329,81 +331,114 @@ export async function updateCustomerAppointment(input: {
   eventType?: string;
   notes?: string | null;
 }) {
+  const [appointment] = await updateCustomerAppointments({
+    customerId: input.customerId,
+    appointments: [{
+      appointmentId: input.appointmentId,
+      startAt: input.startAt,
+      eventType: input.eventType,
+      notes: input.notes,
+    }],
+  });
+  return appointment;
+}
+
+export async function updateCustomerAppointments(input: {
+  customerId: ObjectId;
+  appointments: Array<{
+    appointmentId: ObjectId;
+    startAt?: string;
+    eventType?: string;
+    notes?: string | null;
+  }>;
+}) {
+  if (input.appointments.length === 0 || input.appointments.length > 10) {
+    throw new Error("Informe de um a dez eventos para alteração.");
+  }
   const settings = await getCalendarSettings();
   const appointments = await getAppointmentsCollection();
-  const current = await appointments.findOne({
-    _id: input.appointmentId,
+  const appointmentIds = input.appointments.map((appointment) => appointment.appointmentId);
+  if (new Set(appointmentIds.map((appointmentId) => appointmentId.toHexString())).size !== appointmentIds.length) {
+    throw new Error("Cada evento deve aparecer uma única vez na alteração.");
+  }
+  const currentAppointments = await appointments.find({
+    _id: { $in: appointmentIds },
     customerId: input.customerId,
     status: "scheduled",
-  });
-  if (!current) throw new Error("Evento não encontrado para este cliente.");
+  }).toArray();
+  if (currentAppointments.length !== appointmentIds.length) throw new Error("Um ou mais eventos não foram encontrados para este cliente.");
+  const currentById = new Map(currentAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
+  const prepared = [];
 
-  const eventType = input.eventType ?? current.eventType;
-  if (!settings.eventTypes.some((item) => item.key === eventType)) {
-    throw new Error("Tipo de evento inválido.");
+  for (const update of input.appointments) {
+    const current = currentById.get(update.appointmentId.toHexString())!;
+    const eventType = update.eventType ?? current.eventType;
+    const eventDefinition = settings.eventTypes.find((item) => item.key === eventType);
+    if (!eventDefinition) throw new Error("Tipo de evento inválido.");
+    const requested = update.startAt
+      ? DateTime.fromISO(update.startAt, { setZone: true }).setZone(settings.timezone)
+      : DateTime.fromJSDate(current.startAt).setZone(settings.timezone);
+    if (!requested.isValid || requested <= DateTime.now().setZone(settings.timezone)) {
+      throw new Error("O novo horário deve ser uma data futura válida.");
+    }
+    let nextStart = DateTime.fromJSDate(current.startAt).toUTC();
+    let nextEnd = DateTime.fromJSDate(current.endAt).toUTC();
+    if (update.startAt || eventType !== current.eventType) {
+      const available = await findAvailableSlots({
+        fromDate: requested.toISODate()!,
+        toDate: requested.toISODate()!,
+        eventType,
+        limit: 50,
+        excludeAppointmentIds: appointmentIds,
+      });
+      const slot = available.slots.find((item) => (
+        DateTime.fromISO(item.startAt).toUTC().toMillis() === requested.toUTC().toMillis()
+      ));
+      if (!slot) throw new Error(`O novo horário de ${eventDefinition.name} não está disponível.`);
+      nextStart = DateTime.fromISO(slot.startAt).toUTC();
+      nextEnd = DateTime.fromISO(slot.endAt).toUTC();
+    }
+    prepared.push({ current, update, eventType, providerId: eventDefinition.resourceId, nextStart, nextEnd });
   }
-  const requested = input.startAt
-    ? DateTime.fromISO(input.startAt, { setZone: true }).setZone(settings.timezone)
-    : DateTime.fromJSDate(current.startAt).setZone(settings.timezone);
-  if (!requested.isValid || requested <= DateTime.now().setZone(settings.timezone)) {
-    throw new Error("O novo horário deve ser uma data futura válida.");
-  }
-  let nextStart = DateTime.fromJSDate(current.startAt).toUTC();
-  let nextEnd = DateTime.fromJSDate(current.endAt).toUTC();
-  if (input.startAt) {
-    const date = requested.toISODate();
-    const available = await findAvailableSlots({
-      fromDate: date!,
-      toDate: date!,
-      eventType,
-      limit: 50,
-      excludeAppointmentId: current._id,
-    });
-    const slot = available.slots.find((item) => (
-      DateTime.fromISO(item.startAt).toUTC().toMillis() === requested.toUTC().toMillis()
-    ));
-    if (!slot) throw new Error("O novo horário não está disponível.");
-    nextStart = DateTime.fromISO(slot.startAt).toUTC();
-    nextEnd = DateTime.fromISO(slot.endAt).toUTC();
-  } else if (eventType !== current.eventType) {
-    const definition = settings.eventTypes.find((item) => item.key === eventType)!;
-    nextEnd = nextStart.plus({ minutes: definition.durationMinutes });
-    const conflict = await appointments.findOne({
-      _id: { $ne: current._id },
-      providerId: current.providerId,
-      status: "scheduled",
-      eventType,
-      startAt: { $lt: nextEnd.toJSDate() },
-      endAt: { $gt: nextStart.toJSDate() },
-    });
-    if (conflict) throw new Error("Já existe um evento deste tipo neste horário.");
+
+  for (let firstIndex = 0; firstIndex < prepared.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < prepared.length; secondIndex += 1) {
+      const first = prepared[firstIndex];
+      const second = prepared[secondIndex];
+      if (first.providerId === second.providerId && first.nextStart < second.nextEnd && first.nextEnd > second.nextStart) {
+        throw new Error("Os novos horários informados têm conflito entre si.");
+      }
+    }
   }
 
   const now = new Date();
-  let appointment: AppointmentDocument | null;
   try {
-    appointment = await appointments.findOneAndUpdate(
-      { _id: current._id, customerId: input.customerId, status: "scheduled" },
-      {
-        $set: {
-          startAt: nextStart.toJSDate(),
-          endAt: nextEnd.toJSDate(),
-          eventType,
-          ...(input.notes?.trim() ? { notes: input.notes.trim().slice(0, 1_000) } : {}),
-          updatedAt: now,
+    const result = await appointments.bulkWrite(prepared.map(({ current, update, eventType, providerId, nextStart, nextEnd }) => ({
+      updateOne: {
+        filter: { _id: current._id, customerId: input.customerId, status: "scheduled", updatedAt: current.updatedAt },
+        update: {
+          $set: {
+            startAt: nextStart.toJSDate(),
+            endAt: nextEnd.toJSDate(),
+            eventType,
+            providerId,
+            ...(update.notes?.trim() ? { notes: update.notes.trim().slice(0, 1_000) } : {}),
+            updatedAt: now,
+          },
+          ...(update.notes !== undefined && !update.notes?.trim() ? { $unset: { notes: "" } } : {}),
         },
-        ...(input.notes !== undefined && !input.notes?.trim() ? { $unset: { notes: "" } } : {}),
       },
-      { returnDocument: "after" },
-    );
+    })), { ordered: true });
+    if (result.modifiedCount !== prepared.length) throw new Error("Um ou mais eventos foram alterados por outra operação.");
   } catch (error) {
     if (error instanceof MongoServerError && error.code === 11000) {
       throw new Error("Já existe um evento deste tipo no novo horário.");
     }
     throw error;
   }
-  if (!appointment) throw new Error("O evento foi alterado por outra operação.");
-  return appointment;
+  const updatedAppointments = await appointments.find({ _id: { $in: appointmentIds } }).toArray();
+  const updatedById = new Map(updatedAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
+  return appointmentIds.map((appointmentId) => updatedById.get(appointmentId.toHexString())!);
 }
 
 async function persistAppointment(

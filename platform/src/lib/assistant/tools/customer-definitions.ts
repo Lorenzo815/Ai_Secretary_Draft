@@ -21,9 +21,12 @@ export const customerToolDefinitions = {
     description: "Valida e salva gradualmente os dados cadastrais confirmados pelo cliente.",
     mutates: true,
     argumentsSchema: strictArguments([
+      "relationshipStatus", "relationshipConfirmedByCustomer",
       "fullName", "birthDate", "cpf", "postalCode", "addressNumber",
       "addressComplement", "secondaryPhones", "profession",
     ], {
+      relationshipStatus: { type: ["string", "null"], enum: ["new", "returning", null] },
+      relationshipConfirmedByCustomer: { type: "boolean" },
       fullName: nullableString,
       birthDate: nullableString,
       cpf: nullableString,
@@ -34,6 +37,7 @@ export const customerToolDefinitions = {
       profession: nullableString,
     }),
     promptInstructions: `customer.update_profile salva somente dados explicitamente informados pelo cliente; envie null nos campos ausentes.
+  - Quando o cliente informar se é novo ou retorno, envie relationshipStatus e relationshipConfirmedByCustomer=true. Caso contrário, envie relationshipStatus=null e relationshipConfirmedByCustomer=false.
 - birthDate usa AAAA-MM-DD. CPF e telefones são validados pelo servidor.
 - Ao receber CEP, envie postalCode; o servidor consulta o endereço. Depois pergunte número e complemento, sem exigir complemento quando não houver.
 - Pergunte um tópico por vez, mas salve juntos os dados que o cliente oferecer espontaneamente.

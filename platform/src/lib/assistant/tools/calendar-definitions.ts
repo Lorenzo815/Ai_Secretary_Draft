@@ -9,6 +9,12 @@ const planCriteria = strictArguments(["stepKey", "dateIntent", "fromDate", "toDa
   period: { type: "string", enum: ["morning", "afternoon", "any"] },
   startTime: nullableString,
 });
+const appointmentUpdate = strictArguments(["appointmentId", "startAt", "eventType", "notes"], {
+  appointmentId: { type: "string" },
+  startAt: nullableString,
+  eventType: nullableString,
+  notes: nullableString,
+});
 
 export const calendarToolDefinitions = {
   "calendar.find_plan_option": defineTool({
@@ -89,18 +95,19 @@ export const calendarToolDefinitions = {
     getGroundedReply: lazyGroundedReply,
   }),
   "calendar.update_appointment": defineTool({
-    label: "Alterar evento do cliente",
-    description: "Altera horário, tipo ou observações de um evento existente.",
+    label: "Alterar eventos do cliente",
+    description: "Altera horário, tipo ou observações de um ou mais eventos existentes em uma única operação.",
     mutates: true,
-    argumentsSchema: strictArguments(["appointmentId", "startAt", "eventType", "confirmedByCustomer", "notes"], {
-      appointmentId: { type: "string" },
-      startAt: nullableString,
-      eventType: nullableString,
+    argumentsSchema: strictArguments(["appointments", "confirmedByCustomer"], {
+      appointments: { type: "array", minItems: 1, maxItems: 10, items: appointmentUpdate },
       confirmedByCustomer: { type: "boolean" },
-      notes: nullableString,
     }),
-    promptInstructions: `calendar.update_appointment exige appointmentId obtido por calendar.list_appointments e confirmedByCustomer=true.
-- Preencha startAt e/ou eventType e/ou notes. Nunca invente appointmentId e nunca exclua eventos.`,
+    promptInstructions: `calendar.update_appointment exige appointments e confirmedByCustomer=true.
+- Cada item exige appointmentId obtido por calendar.list_appointments no job atual; nunca use placeholders como "unknown" e nunca invente IDs.
+- Inclua em uma única chamada todos os eventos confirmados para remarcação, preenchendo startAt e/ou eventType e/ou notes.
+- Reagendamento altera eventos existentes: nunca use calendar.book_appointment ou calendar.book_plan_option para reagendar, pois criariam duplicatas.
+- Para remarcar um plano com várias etapas, proponha a combinação com calendar.find_plan_option; após a confirmação, liste os eventos existentes e atualize todos de uma vez.
+- Esta ferramenta não cancela nem exclui eventos. Pedido para apenas desmarcar ou cancelar deve ser encaminhado à equipe sem chamar ferramenta de agenda.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("update_appointment", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
@@ -121,14 +128,14 @@ function lazyGroundedReply(output: string) {
       ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
       : []) ?? [];
     return parsed.optionId && labels.length > 0
-      ? `Minha sugestão para ${parsed.planName ?? "o atendimento"} é ${joinLabels(labels)}. Posso reservar esses horários?`
+      ? `Minha sugestão para ${parsed.planName ?? "o atendimento"} é ${joinRequiredSteps(labels)}. Posso reservar esses horários?`
       : "Não encontrei uma combinação disponível com essas preferências. Você gostaria de ampliar o período ou flexibilizar os horários?";
   }
   if (parsed.ok && parsed.tool === "calendar.book_plan_option") {
     const labels = parsed.steps?.flatMap((step) => step.startAt
       ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
       : []) ?? [];
-    if (labels.length > 0) return `Seu agendamento foi confirmado: ${joinLabels(labels)}.`;
+    if (labels.length > 0) return `Seu agendamento foi confirmado: ${joinRequiredSteps(labels)}.`;
   }
   if (parsed.ok && parsed.tool === "calendar.check_availability") {
     const labels = parsed.slots?.flatMap((slot) => slot.label ? [slot.label] : []) ?? [];
@@ -145,8 +152,11 @@ function lazyGroundedReply(output: string) {
   if (parsed.ok && parsed.tool === "calendar.book_appointment" && parsed.startAt) {
     return `Seu agendamento foi confirmado para ${formatDateTime(parsed.startAt, parsed.timezone)}.`;
   }
-  if (parsed.ok && parsed.tool === "calendar.update_appointment" && parsed.startAt) {
-    return `Seu evento foi alterado para ${formatDateTime(parsed.startAt, parsed.timezone)}.`;
+  if (parsed.ok && parsed.tool === "calendar.update_appointment") {
+    const labels = parsed.appointments?.flatMap((appointment) => appointment.startAt
+      ? [`${appointment.eventTypeName ?? "Evento"} em ${formatDateTime(appointment.startAt, parsed.timezone)}`]
+      : []) ?? [];
+    if (labels.length > 0) return `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;
   }
   if (parsed.type === "operational_error") {
     return "Não consegui acessar a agenda agora. Encaminhei a solicitação para continuidade pela equipe.";
@@ -165,4 +175,9 @@ function formatDateTime(value: string, timezone?: string) {
 function joinLabels(labels: string[]) {
   if (labels.length === 1) return labels[0];
   return `${labels.slice(0, -1).join(", ")} ou ${labels.at(-1)}`;
+}
+
+function joinRequiredSteps(labels: string[]) {
+  if (labels.length === 1) return labels[0];
+  return `${labels.slice(0, -1).join(", ")} e ${labels.at(-1)}`;
 }

@@ -217,6 +217,7 @@ export async function classifyCustomerRelationship(
 }
 
 export async function updateCustomerProfile(id: ObjectId, input: {
+  relationshipStatus?: CustomerRelationshipStatus;
   fullName?: string;
   birthDate?: string;
   cpf?: string;
@@ -232,6 +233,10 @@ export async function updateCustomerProfile(id: ObjectId, input: {
   const now = new Date();
   const fields: Record<string, unknown> = { "profile.updatedAt": now, updatedAt: now };
 
+  if (input.relationshipStatus !== undefined) {
+    fields.relationship = { status: input.relationshipStatus, source: "customer", classifiedAt: now };
+    fields.serviceStatus = input.relationshipStatus === "returning" ? "waiting_human" : "ai_active";
+  }
   if (input.fullName !== undefined) {
     const fullName = input.fullName.trim().replace(/\s+/g, " ");
     if (!isValidFullName(fullName)) throw new CustomerProfileValidationError("Informe nome e sobrenome.");

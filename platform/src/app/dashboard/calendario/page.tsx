@@ -373,13 +373,15 @@ export default function CalendarPage() {
             <select value={settings.slotDurationMinutes} onChange={(event) => setSettings({ ...settings, slotDurationMinutes: Number(event.target.value) })} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
               {[15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
             </select>
+            <span className="mt-2 block font-normal leading-5 text-stone">Define a distância entre horários de início. Com 30 min: 09:00, 09:30 e 10:00. Não altera a duração do evento.</span>
           </label>
           <label className="text-xs font-semibold text-slate-ink">
             Antecedência mínima (h)
             <input type="number" min="0" max="720" value={settings.minimumNoticeHours} onChange={(event) => setSettings({ ...settings, minimumNoticeHours: Number(event.target.value) })} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+            <span className="mt-2 block font-normal leading-5 text-stone">Evita agendamentos muito próximos. Com 24 h, só são oferecidos horários a partir de 24 horas do momento atual.</span>
           </label>
         </div>
-        <p className="text-xs leading-5 text-stone">A grade define a frequência dos horários de início. Fuso horário: {settings.timezone}.</p>
+        <p className="text-xs leading-5 text-stone">Todos os horários seguem o fuso {settings.timezone}.</p>
 
         <section aria-labelledby="event-types-title" className="border-y border-mist py-5">
           <div className="flex items-end justify-between gap-4">

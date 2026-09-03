@@ -18,7 +18,12 @@ export async function executeRegisteredCustomerTool(
       return success("customer.classify_relationship", getCustomerProfileSnapshot(customer));
     }
 
+    const relationshipStatus = optionalRelationshipStatus(args.relationshipStatus);
+    if (relationshipStatus && args.relationshipConfirmedByCustomer !== true) {
+      return validationError("A classificação exige uma resposta explícita do cliente.");
+    }
     const customer = await updateCustomerProfile(context.customerId, {
+      relationshipStatus,
       fullName: optionalString(args.fullName),
       birthDate: optionalString(args.birthDate),
       cpf: optionalString(args.cpf),
@@ -48,6 +53,10 @@ export async function executeRegisteredCustomerTool(
 
 function optionalString(value: unknown) {
   return typeof value === "string" ? value : undefined;
+}
+
+function optionalRelationshipStatus(value: unknown) {
+  return value === "new" || value === "returning" ? value : undefined;
 }
 
 function success(tool: string, profile: ReturnType<typeof getCustomerProfileSnapshot>): ToolExecution {

@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { Activity, Bot, Clock3, CreditCard, MessageSquareWarning, TriangleAlert } from "lucide-react";
+import { Activity, Bot, CircleHelp, Clock3, CreditCard, MessageSquareWarning, TriangleAlert } from "lucide-react";
 import { getOperationsDashboard } from "@/lib/dashboard/operations";
 import AutoRefresh from "../_components/auto-refresh";
+import AiUsageChart from "./_components/ai-usage-chart";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,8 @@ export default async function OperationsPage() {
 
       {queueNeedsAttention && <div role="alert" className="flex items-start gap-3 rounded-lg border border-burnt-coral/25 bg-burnt-coral/[0.06] px-4 py-3"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-burnt-coral" /><div><p className="text-sm font-semibold text-slate-ink">A operação precisa de revisão</p><p className="mt-0.5 text-xs leading-5 text-stone">Priorize jobs com falha e confirme a entrega das mensagens antes de reativar automações.</p></div></div>}
 
+      <AiUsageSection usage={operations.aiUsage} />
+
       <div className="grid gap-7 xl:grid-cols-[1.05fr_0.95fr]">
         <OperationalSection title="Fila de automação" eyebrow="Agora" count={operations.jobs.length} empty="Nenhum job aguardando processamento.">
           {operations.jobs.map((job) => <article key={job._id.toString()} className="grid gap-2 border-t border-mist py-4 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={job.status} /><p className="truncate text-sm font-semibold text-slate-ink">{processLabel(job.process)}</p></div><Link href={`/dashboard/clientes/${job.customerId.toString()}`} className="mt-1 block truncate text-xs font-semibold text-deep-teal hover:text-forest-teal">{job.customerName}</Link><p className="mt-1 text-xs text-stone">{eventLabel(job.event)} · revisão {job.revision}{job.consecutiveFailures > 0 ? ` · ${job.consecutiveFailures} tentativa(s) com falha` : ""}</p>{job.lastError && <p className="mt-2 line-clamp-2 text-xs leading-5 text-burnt-coral">{job.lastError}</p>}</div><p className="text-xs text-stone sm:text-right">{formatDateTime(job.updatedAt)}</p></article>)}
@@ -43,7 +46,7 @@ export default async function OperationsPage() {
 
       <div className="grid gap-7 xl:grid-cols-2">
         <OperationalSection title="Chamadas de IA" eyebrow="Desempenho" count={operations.modelCalls.length} empty="Nenhuma chamada de IA registrada.">
-          {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage && <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p>}</div><p className="shrink-0 text-xs text-stone">{formatDateTime(call.startedAt)}</p></article>)}
+          {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p> : <p className="mt-2 text-xs text-stone">{formatCallUsage(call.normalizedUsage)}</p>}</div><p className="shrink-0 text-xs text-stone">{formatDateTime(call.startedAt)}</p></article>)}
         </OperationalSection>
 
         <OperationalSection title="Sinais e pagamentos" eyebrow="Financeiro" count={operations.payments.length} empty="Nenhuma solicitação de sinal registrada." icon={CreditCard}>
@@ -51,6 +54,55 @@ export default async function OperationsPage() {
         </OperationalSection>
       </div>
     </div>
+  );
+}
+
+function AiUsageSection({ usage }: { usage: Awaited<ReturnType<typeof getOperationsDashboard>>["aiUsage"] }) {
+  const metrics = [
+    { label: "Entrada", value: formatOptionalTokens(usage.inputTokens), note: "Conteúdo enviado à IA" },
+    { label: "Saída", value: formatOptionalTokens(usage.outputTokens), note: "Conteúdo gerado pela IA" },
+    { label: "Em cache", value: formatOptionalTokens(usage.cachedInputTokens), note: "Entrada que pôde ser reutilizada" },
+    { label: "Taxa de cache", value: usage.cacheRate === undefined ? "Não informado" : `${formatNumber(usage.cacheRate)}%`, note: "Parcela da entrada reaproveitada" },
+  ];
+
+  return (
+    <section aria-labelledby="ai-usage-title" className="border-y border-mist py-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase text-stone">Consumo da IA</p>
+          <h2 id="ai-usage-title" className="mt-1 font-heading text-xl font-semibold text-slate-ink">Tokens nos últimos {usage.periodDays} dias</h2>
+          <p className="mt-1 text-sm text-stone">{usage.callsWithUsage} de {usage.calls} chamadas informaram consumo.</p>
+        </div>
+        <div className="flex flex-wrap gap-4 text-xs text-stone" aria-label="Legenda do gráfico">
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-deep-teal" />Entrada nova</span>
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#D2A84A]" />Entrada em cache</span>
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-burnt-coral" />Saída</span>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-px border-y border-mist bg-mist sm:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="bg-warm-white px-4 py-4">
+            <p className="text-xs font-semibold uppercase text-stone">{metric.label}</p>
+            <p className="mt-1 font-heading text-2xl font-bold text-slate-ink">{metric.value}</p>
+            <p className="mt-1 text-xs text-stone">{metric.note}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_0.5fr]">
+        <div className="h-72 min-w-0"><AiUsageChart data={usage.daily} /></div>
+        <aside className="border-l-2 border-deep-teal/25 pl-4" aria-label="Como interpretar os tokens">
+          <h3 className="flex items-center gap-2 font-heading text-base font-semibold text-slate-ink"><CircleHelp className="h-4 w-4 text-deep-teal" />Como ler</h3>
+          <dl className="mt-3 space-y-3 text-sm leading-5">
+            <div><dt className="font-semibold text-slate-ink">Entrada</dt><dd className="text-stone">Prompt, histórico e dados enviados ao modelo.</dd></div>
+            <div><dt className="font-semibold text-slate-ink">Saída</dt><dd className="text-stone">Resposta e processamento gerados pelo modelo.</dd></div>
+            <div><dt className="font-semibold text-slate-ink">Cache</dt><dd className="text-stone">Parte da entrada reutilizada; costuma ser mais rápida e mais barata.</dd></div>
+            <div><dt className="font-semibold text-slate-ink">Não informado</dt><dd className="text-stone">O provider não forneceu essa métrica. Não significa zero.</dd></div>
+          </dl>
+        </aside>
+      </div>
+    </section>
   );
 }
 
@@ -73,6 +125,17 @@ function processLabel(value: string) { return value === "customer_agent" ? "Agen
 function eventLabel(value: string) { return ({ "message.received": "Mensagem recebida", "customer.profile.updated": "Cadastro atualizado", "payment.status.changed": "Pagamento alterado", "appointment.status.changed": "Agenda alterada", "manual.requested": "Solicitação manual" } as Record<string, string>)[value] ?? value; }
 function taskLabel(value: string) { return value === "customer_agent" ? "Agente do cliente" : value === "lead_qualification" ? "Qualificação de lead" : value; }
 function formatDuration(milliseconds: number) { return milliseconds <= 0 ? "—" : milliseconds < 1_000 ? `${milliseconds} ms` : `${(milliseconds / 1_000).toFixed(1)} s`; }
+function formatOptionalTokens(value: number | undefined) { return value === undefined ? "Não informado" : formatNumber(value); }
+function formatCallUsage(usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } | null | undefined) {
+  if (!usage) return "Consumo não informado pelo provider";
+  const parts = [
+    usage.inputTokens === undefined ? null : `${formatNumber(usage.inputTokens)} entrada`,
+    usage.outputTokens === undefined ? null : `${formatNumber(usage.outputTokens)} saída`,
+    usage.cachedInputTokens === undefined ? null : `${formatNumber(usage.cachedInputTokens)} em cache`,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "Consumo não informado pelo provider";
+}
+function formatNumber(value: number) { return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value); }
 function formatDateTime(value: Date) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(value); }
 function formatTime(value: Date) { return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(value); }
 function formatCurrency(valueCents: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valueCents / 100); }

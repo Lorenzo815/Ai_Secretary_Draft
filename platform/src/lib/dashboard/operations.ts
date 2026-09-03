@@ -2,6 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { normalizeModelUsage, type NormalizedModelUsage } from "../ai/model-usage";
 
 const DB_NAME = "ai_secretary";
 
@@ -42,6 +43,8 @@ interface ModelCallRecord {
   finishReason?: string;
   errorName?: string;
   errorMessage?: string;
+  usage?: unknown;
+  normalizedUsage?: NormalizedModelUsage | null;
   startedAt: Date;
 }
 
@@ -61,8 +64,16 @@ export async function getOperationsDashboard() {
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
   const lastSevenDays = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1_000);
+  const last14Days = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1_000);
+  const calendarSettings = await database.collection<{ _id: string; timezone?: string }>("calendar_settings").findOne(
+    { _id: "default-calendar" },
+    { projection: { timezone: 1 } },
+  );
+  const timezone = typeof calendarSettings?.timezone === "string"
+    ? calendarSettings.timezone
+    : "America/Sao_Paulo";
 
-  const [jobs, runs, modelCalls, payments, failedMessages, runStatuses] = await Promise.all([
+  const [jobs, runs, modelCalls, usageCalls, payments, failedMessages, runStatuses] = await Promise.all([
     database.collection<JobRecord>("automation_jobs").find({}, {
       projection: { customerId: 1, process: 1, event: 1, status: 1, revision: 1, consecutiveFailures: 1, lastError: 1, dueAt: 1, updatedAt: 1 },
     }).sort({ updatedAt: -1 }).limit(30).toArray(),
@@ -70,8 +81,12 @@ export async function getOperationsDashboard() {
       projection: { customerId: 1, status: 1, configRevision: 1, modelIterations: 1, toolExecutions: 1, mutationsExecuted: 1, finalDecision: 1, error: 1, startedAt: 1, completedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
     database.collection<ModelCallRecord>("ai_task_calls").find({}, {
-      projection: { customerId: 1, taskKey: 1, model: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, startedAt: 1 },
+      projection: { customerId: 1, taskKey: 1, model: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, usage: 1, normalizedUsage: 1, startedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
+    database.collection<ModelCallRecord>("ai_task_calls").find(
+      { status: "completed", startedAt: { $gte: last14Days } },
+      { projection: { _id: 0, usage: 1, normalizedUsage: 1, startedAt: 1 } },
+    ).sort({ startedAt: 1 }).toArray(),
     database.collection<PaymentRecord>("payment_requests").find({}, {
       projection: { customerId: 1, amountCents: 1, status: 1, createdAt: 1, reviewedAt: 1, reviewedBy: 1, reviewNote: 1 },
     }).sort({ createdAt: -1 }).limit(30).toArray(),
@@ -100,6 +115,11 @@ export async function getOperationsDashboard() {
   const failedRuns = Number(statusCounts.failed ?? 0);
   const finishedRuns = completedRuns + failedRuns;
   const completedCalls = modelCalls.filter((call) => call.status === "completed" && typeof call.durationMs === "number");
+  const normalizedCalls = modelCalls.map((call) => ({
+    ...call,
+    normalizedUsage: call.normalizedUsage ?? normalizeModelUsage(call.usage),
+    usage: undefined,
+  }));
 
   return {
     generatedAt: now,
@@ -113,7 +133,8 @@ export async function getOperationsDashboard() {
     },
     jobs: jobs.map(withCustomer),
     runs: runs.map(withCustomer),
-    modelCalls: modelCalls.map(withCustomer),
+    aiUsage: buildUsageSummary(now, timezone, usageCalls),
+    modelCalls: normalizedCalls.map(withCustomer),
     payments: payments.map(withCustomer),
   };
 }
@@ -123,4 +144,63 @@ function median(values: number[]) {
   const sorted = [...values].sort((first, second) => first - second);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? Math.round((sorted[middle - 1] + sorted[middle]) / 2) : sorted[middle];
+}
+
+function buildUsageSummary(now: Date, timezone: string, calls: ModelCallRecord[]) {
+  const normalizedCalls = calls.flatMap((call) => {
+    const usage = call.normalizedUsage ?? normalizeModelUsage(call.usage);
+    return usage ? [{ date: formatDateKey(call.startedAt, timezone), usage }] : [];
+  });
+  const usages = normalizedCalls.map((call) => call.usage);
+  const callsWithCacheData = usages.filter((usage) => usage.cachedInputTokens !== undefined && usage.inputTokens !== undefined);
+  const cacheEligibleInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.inputTokens));
+  const cachedInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.cachedInputTokens));
+  const dailyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number }>();
+
+  for (const call of normalizedCalls) {
+    const current = dailyUsage.get(call.date) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+    const cachedTokens = call.usage.cachedInputTokens ?? 0;
+    current.inputTokens += Math.max((call.usage.inputTokens ?? 0) - cachedTokens, 0);
+    current.cachedInputTokens += cachedTokens;
+    current.outputTokens += call.usage.outputTokens ?? 0;
+    dailyUsage.set(call.date, current);
+  }
+
+  return {
+    periodDays: 14,
+    calls: calls.length,
+    callsWithUsage: normalizedCalls.length,
+    inputTokens: sumKnown(usages.map((usage) => usage.inputTokens)),
+    outputTokens: sumKnown(usages.map((usage) => usage.outputTokens)),
+    totalTokens: sumKnown(usages.map((usage) => usage.totalTokens)),
+    cachedInputTokens: sumKnown(usages.map((usage) => usage.cachedInputTokens)),
+    cacheWriteInputTokens: sumKnown(usages.map((usage) => usage.cacheWriteInputTokens)),
+    reasoningTokens: sumKnown(usages.map((usage) => usage.reasoningTokens)),
+    cacheRate: cacheEligibleInputTokens && cachedInputTokens !== undefined
+      ? Math.round((cachedInputTokens / cacheEligibleInputTokens) * 1_000) / 10
+      : undefined,
+    daily: Array.from({ length: 14 }, (_, index) => {
+      const date = new Date(now.getTime() - (13 - index) * 24 * 60 * 60 * 1_000);
+      const key = formatDateKey(date, timezone);
+      return {
+        date: key,
+        label: new Intl.DateTimeFormat("pt-BR", { timeZone: timezone, day: "2-digit", month: "2-digit" }).format(date),
+        ...(dailyUsage.get(key) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }),
+      };
+    }),
+  };
+}
+
+function sumKnown(values: Array<number | undefined>) {
+  const knownValues = values.filter((value): value is number => value !== undefined);
+  return knownValues.length > 0 ? knownValues.reduce((total, value) => total + value, 0) : undefined;
+}
+
+function formatDateKey(date: Date, timezone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
 }

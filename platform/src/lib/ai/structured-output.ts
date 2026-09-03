@@ -5,6 +5,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { getModelConfig } from "./model-config";
+import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
 
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
@@ -29,6 +30,7 @@ export interface StructuredModelResult<T> {
   requestId?: string;
   finishReason?: string | null;
   usage?: object | null;
+  normalizedUsage?: NormalizedModelUsage | null;
   durationMs: number;
 }
 
@@ -77,6 +79,7 @@ export async function generateStructuredOutput<T>(
       requestId: response._request_id ?? undefined,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
+      normalizedUsage: normalizeModelUsage(response.usage),
     });
     return {
       value,
@@ -84,6 +87,7 @@ export async function generateStructuredOutput<T>(
       requestId: response._request_id ?? undefined,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
+      normalizedUsage: normalizeModelUsage(response.usage),
       durationMs,
     };
   } catch (error) {
@@ -118,7 +122,7 @@ async function startTrace(input: {
 
 async function completeTrace(
   traceId: ObjectId | null,
-  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null },
+  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null },
 ) {
   if (!traceId) return;
   await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(

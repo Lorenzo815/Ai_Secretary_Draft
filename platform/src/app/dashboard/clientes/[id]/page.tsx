@@ -42,7 +42,7 @@ export default async function CustomerPage({
     <div className="animate-fade-in-up space-y-6">
       <AutoRefresh />
       <header className="border-b border-mist pb-5">
-        <Link href="/dashboard" className="text-sm font-semibold text-deep-teal hover:text-forest-teal">
+        <Link href="/dashboard/clientes" className="text-sm font-semibold text-deep-teal hover:text-forest-teal">
           ← Clientes
         </Link>
         <div className="mt-4 flex flex-wrap items-end justify-between gap-4">

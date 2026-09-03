@@ -2,7 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
-import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointment } from "../../calendar";
+import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointments } from "../../calendar";
 import { bookSchedulingPlanOption, findSchedulingPlanOption, getActiveSchedulingPlanOption } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
@@ -27,6 +27,14 @@ interface CalendarToolArguments {
   planKey: string | null;
   planPreference: "compact" | "flexible" | null;
   criteria: PlanToolCriteria[];
+  appointmentUpdates: AppointmentToolUpdate[];
+}
+
+interface AppointmentToolUpdate {
+  appointmentId: string | null;
+  startAt: string | null;
+  eventType: string | null;
+  notes: string | null;
 }
 
 interface PlanSearchCriteria {
@@ -204,25 +212,29 @@ async function executeCalendarAction(input: {
     const validation = await validateUpdateInput(input.action);
     if (validation) return validation;
     try {
-      const appointment = await updateCustomerAppointment({
-        appointmentId: new ObjectId(input.action.appointmentId!),
+      const appointments = await updateCustomerAppointments({
         customerId: input.customerId,
-        startAt: input.action.startAt ?? undefined,
-        eventType: input.action.eventType ?? undefined,
-        notes: input.action.notes ?? undefined,
+        appointments: input.action.appointmentUpdates.map((appointment) => ({
+          appointmentId: new ObjectId(appointment.appointmentId!),
+          startAt: appointment.startAt ?? undefined,
+          eventType: appointment.eventType ?? undefined,
+          notes: appointment.notes ?? undefined,
+        })),
       });
       const settings = await getCalendarSettings();
       return {
         output: JSON.stringify({
           ok: true,
           tool: "calendar.update_appointment",
-          appointmentId: appointment._id.toString(),
-          startAt: appointment.startAt.toISOString(),
-          endAt: appointment.endAt.toISOString(),
-          eventType: appointment.eventType,
-          eventTypeName: settings.eventTypes.find((item) => item.key === appointment.eventType)?.name ?? "Tipo removido",
+          appointments: appointments.map((appointment) => ({
+            appointmentId: appointment._id.toString(),
+            startAt: appointment.startAt.toISOString(),
+            endAt: appointment.endAt.toISOString(),
+            eventType: appointment.eventType,
+            eventTypeName: settings.eventTypes.find((item) => item.key === appointment.eventType)?.name ?? "Tipo removido",
+          })),
           eventTypes: serializeEventTypes(settings.eventTypes),
-          timezone: appointment.timezone,
+          timezone: settings.timezone,
         }),
         retryable: false,
       };
@@ -394,20 +406,31 @@ async function validateListInput(action: CalendarToolArguments) {
 async function validateUpdateInput(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
-  if (!action.appointmentId || !ObjectId.isValid(action.appointmentId)) {
-    errors.push(required("arguments.appointmentId", "Informe um ID obtido pela consulta de eventos."));
-  }
   if (!action.confirmedByCustomer) {
     errors.push(invalid("arguments.confirmedByCustomer", "A alteração exige confirmação explícita do cliente."));
   }
-  if (!action.startAt && !action.eventType && action.notes === null) {
-    errors.push(required("arguments", "Informe ao menos uma alteração de horário, tipo ou observação."));
+  if (action.appointmentUpdates.length === 0 || action.appointmentUpdates.length > 10) {
+    errors.push(required("arguments.appointments", "Informe de um a dez eventos obtidos pela consulta de eventos."));
   }
-  if (action.eventType) validateEventType(action.eventType, settings, errors, "arguments.eventType");
-  if (action.startAt) {
-    const startAt = DateTime.fromISO(action.startAt, { setZone: true });
-    if (!startAt.isValid || !startAt.isOffsetFixed) {
-      errors.push(required("arguments.startAt", "Informe data, hora e offset no novo horário."));
+  const appointmentIds = new Set<string>();
+  for (const [index, appointment] of action.appointmentUpdates.entries()) {
+    const field = `arguments.appointments.${index}`;
+    if (!appointment.appointmentId || !ObjectId.isValid(appointment.appointmentId)) {
+      errors.push(required(`${field}.appointmentId`, "Informe um ID obtido pela consulta de eventos no job atual."));
+    } else if (appointmentIds.has(appointment.appointmentId)) {
+      errors.push(invalid(`${field}.appointmentId`, "Cada evento deve aparecer uma única vez."));
+    } else {
+      appointmentIds.add(appointment.appointmentId);
+    }
+    if (!appointment.startAt && !appointment.eventType && appointment.notes === null) {
+      errors.push(required(field, "Informe ao menos uma alteração de horário, tipo ou observação."));
+    }
+    if (appointment.eventType) validateEventType(appointment.eventType, settings, errors, `${field}.eventType`);
+    if (appointment.startAt) {
+      const startAt = DateTime.fromISO(appointment.startAt, { setZone: true });
+      if (!startAt.isValid || !startAt.isOffsetFixed) {
+        errors.push(required(`${field}.startAt`, "Informe data, hora e offset no novo horário."));
+      }
     }
   }
   return errors.length > 0 ? validationError("calendar.update_appointment", errors) : null;
@@ -503,7 +526,22 @@ export function executeRegisteredCalendarTool(
       planKey: asString(args.planKey),
       planPreference: asValue(args.preference, ["compact", "flexible"]),
       criteria: asPlanCriteria(args.criteria),
+      appointmentUpdates: asAppointmentUpdates(args.appointments),
     },
+  });
+}
+
+function asAppointmentUpdates(value: unknown): AppointmentToolUpdate[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const appointment = item as Record<string, unknown>;
+    return [{
+      appointmentId: asString(appointment.appointmentId),
+      startAt: asString(appointment.startAt),
+      eventType: asString(appointment.eventType),
+      notes: asString(appointment.notes),
+    }];
   });
 }
 
