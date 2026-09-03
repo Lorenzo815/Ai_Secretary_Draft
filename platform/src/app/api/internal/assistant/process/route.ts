@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { getAssistantSettings, processNextAssistantJob } from "@/lib/assistant";
+import { getAgentConfiguration } from "@/lib/assistant/agent";
+import { processNextAutomationJob } from "@/lib/automation";
 
 export async function POST(request: Request) {
   if (!isAuthorized(request.headers.get("authorization"))) {
@@ -8,13 +9,13 @@ export async function POST(request: Request) {
   }
 
   const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 1, 1), 20);
-  const settings = await getAssistantSettings();
-  if (!settings.processingEnabled) {
+  const settings = await getAgentConfiguration();
+  if (!settings.enabled) {
     return NextResponse.json({ processed: 0, results: [], processingEnabled: false });
   }
   const results = [];
   for (let index = 0; index < batchSize; index += 1) {
-    const result = await processNextAssistantJob();
+    const result = await processNextAutomationJob();
     if (!result.processed) break;
     results.push(result);
   }

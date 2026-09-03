@@ -1,6 +1,5 @@
 import "server-only";
 
-import { getAssistantSettings } from "../flows";
 import { createPaymentRequest } from "../../payments";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
@@ -19,7 +18,7 @@ export async function executePaymentRequestTool(
     };
   }
   try {
-    const settings = await getAssistantSettings();
+    const settings = context.configuration;
     const payment = await createPaymentRequest({
       customerId: context.customerId,
       amountCents: settings.payment.signalAmountCents,

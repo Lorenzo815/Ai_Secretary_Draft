@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { findCustomerById, getCustomerProfileSnapshot } from "@/lib/crm";
-import { getAssistantConversationState, getCustomerFlowOverview } from "@/lib/assistant";
+import { getAssistantConversationState } from "@/lib/assistant/context";
+import { listCustomerAgentRuns } from "@/lib/assistant/agent";
 import { getCustomerCalendarOverview } from "@/lib/calendar";
 import { listWhatsAppMessagesForCustomer } from "@/lib/whatsapp";
 import { getLatestPaymentRequest } from "@/lib/payments";
 import AutoRefresh from "../../_components/auto-refresh";
 import CustomerDetailTabs from "./_components/customer-detail-tabs";
-import CustomerFlowPanel from "./_components/customer-flow-panel";
+import CustomerAgentPanel from "./_components/customer-agent-panel";
 import LeadQualificationPanel from "./_components/lead-qualification-panel";
 import PaymentReviewPanel from "./_components/payment-review-panel";
 
@@ -23,9 +24,9 @@ export default async function CustomerPage({
   if (!customer) notFound();
   const profile = getCustomerProfileSnapshot(customer);
 
-  const [messages, flowOverview, conversationState, calendarOverview, payment] = await Promise.all([
+  const [messages, agentRuns, conversationState, calendarOverview, payment] = await Promise.all([
     listWhatsAppMessagesForCustomer(customer._id, customer.phones),
-    getCustomerFlowOverview(customer._id),
+    listCustomerAgentRuns(customer._id),
     getAssistantConversationState(customer._id),
     getCustomerCalendarOverview(customer._id),
     getLatestPaymentRequest(customer._id),
@@ -129,32 +130,23 @@ export default async function CustomerPage({
                 reviewedBy: payment.reviewedBy,
               } : null}
             />
-            <CustomerFlowPanel
+            <CustomerAgentPanel
               customerId={customer._id.toString()}
               initialServiceStatus={customer.serviceStatus ?? "ai_active"}
-              flows={flowOverview.flows.map((flow) => ({ key: flow.key, name: flow.name, currentVersion: flow.currentVersion }))}
-              assignment={{
-                flowKey: flowOverview.assignment.flowKey,
-                flowVersion: flowOverview.assignment.flowVersion,
-                status: flowOverview.assignment.status,
-                stage: flowOverview.assignment.state.stage,
-                missingData: flowOverview.assignment.state.missingData,
-                startedAt: flowOverview.assignment.startedAt.toISOString(),
-                completionReason: flowOverview.assignment.completionReason,
-              }}
-              history={flowOverview.history.map((item) => ({
-                id: item._id.toString(),
-                flowKey: item.flowKey,
-                flowVersion: item.flowVersion,
-                completedAt: item.completedAt.toISOString(),
-                completionReason: item.completionReason,
-                completionCode: item.completionCode,
-                nextFlowKey: item.nextFlowKey,
-                source: item.source,
+              runs={agentRuns.map((run) => ({
+                id: run._id.toString(),
+                status: run.status,
+                configRevision: run.configRevision,
+                modelIterations: run.modelIterations,
+                toolExecutions: run.toolExecutions,
+                mutationsExecuted: run.mutationsExecuted,
+                finalDecision: run.finalDecision,
+                error: run.error,
+                startedAt: run.startedAt.toISOString(),
+                completedAt: run.completedAt?.toISOString(),
               }))}
               conversationState={conversationState ? {
                 summary: conversationState.summary,
-                summarizedThrough: conversationState.summarizedThrough.toISOString(),
                 updatedAt: conversationState.updatedAt.toISOString(),
               } : null}
             />

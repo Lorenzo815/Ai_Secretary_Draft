@@ -3,7 +3,6 @@ import "server-only";
 import { Collection, MongoServerError, ObjectId } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
-import { selectFirstVisitCandidate } from "./first-visit";
 
 export interface WeeklyAvailability {
   weekday: number;
@@ -77,29 +76,6 @@ interface BookAppointmentInput extends PersistAppointmentInput {
   customerId: ObjectId;
 }
 
-export type FirstVisitPreference = "together" | "separate";
-
-export interface FirstVisitSearchCriteria {
-  fromDate: string;
-  toDate: string;
-  period: "morning" | "afternoon" | "any";
-  startTime: string | null;
-}
-
-export interface FirstVisitOptionDocument {
-  _id: ObjectId;
-  customerId: ObjectId;
-  preference: FirstVisitPreference;
-  bioimpedance: AvailableSlot;
-  consultation: AvailableSlot;
-  status: "proposed" | "superseded" | "booked";
-  expiresAt: Date;
-  createdAt: Date;
-  bookedAt?: Date;
-  supersededAt?: Date;
-  visitGroupId?: ObjectId;
-}
-
 const DB_NAME = "ai_secretary";
 export const DEFAULT_PROVIDER_ID = "default-doctor";
 const SETTINGS_ID = "default-calendar";
@@ -136,11 +112,6 @@ async function getSettingsCollection(): Promise<Collection<CalendarSettingsDocum
 async function getAppointmentsCollection(): Promise<Collection<AppointmentDocument>> {
   const client = await clientPromise;
   return client.db(DB_NAME).collection<AppointmentDocument>("calendar_appointments");
-}
-
-async function getVisitOptionsCollection(): Promise<Collection<FirstVisitOptionDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<FirstVisitOptionDocument>("calendar_visit_options");
 }
 
 export async function getCalendarSettings() {
@@ -251,28 +222,6 @@ export async function findCustomerAppointments(input: {
   return { settings, appointments };
 }
 
-export async function hasBookedFirstVisit(customerId: ObjectId) {
-  const appointments = await (await getAppointmentsCollection())
-    .find({
-      customerId,
-      status: "scheduled",
-      visitGroupId: { $exists: true },
-      eventType: { $in: ["bioimpedance", "doctor_consultation"] },
-    })
-    .toArray();
-  const eventTypesByVisit = new Map<string, Set<string>>();
-  for (const appointment of appointments) {
-    if (!appointment.visitGroupId) continue;
-    const visitGroupId = appointment.visitGroupId.toHexString();
-    const eventTypes = eventTypesByVisit.get(visitGroupId) ?? new Set<string>();
-    eventTypes.add(appointment.eventType);
-    eventTypesByVisit.set(visitGroupId, eventTypes);
-  }
-  return [...eventTypesByVisit.values()].some((eventTypes) => (
-    eventTypes.has("bioimpedance") && eventTypes.has("doctor_consultation")
-  ));
-}
-
 export async function findAvailableSlots(input: {
   fromDate: string;
   toDate: string;
@@ -339,145 +288,6 @@ export async function findAvailableSlots(input: {
     }
   }
   return { settings, slots };
-}
-
-export async function findFirstVisitOption(input: {
-  customerId: ObjectId;
-  bioimpedance: FirstVisitSearchCriteria;
-  consultation: FirstVisitSearchCriteria;
-  preference: FirstVisitPreference;
-}) {
-  const [bioResult, consultationResult] = await Promise.all([
-    findAvailableSlots({
-      fromDate: input.bioimpedance.fromDate,
-      toDate: input.bioimpedance.toDate,
-      period: input.bioimpedance.period,
-      startTime: input.bioimpedance.startTime,
-      eventType: "bioimpedance",
-      limit: 50,
-    }),
-    findAvailableSlots({
-      fromDate: input.consultation.fromDate,
-      toDate: input.consultation.toDate,
-      period: input.consultation.period,
-      startTime: input.consultation.startTime,
-      eventType: "doctor_consultation",
-      limit: 50,
-    }),
-  ]);
-  const options = await getVisitOptionsCollection();
-  const previouslyOffered = await options.find({ customerId: input.customerId }).toArray();
-  await options.updateMany(
-    { customerId: input.customerId, status: "proposed" },
-    { $set: { status: "superseded", supersededAt: new Date() } },
-  );
-  const offeredPairs = new Set(previouslyOffered.map((option) => (
-    `${option.bioimpedance.startAt}|${option.consultation.startAt}`
-  )));
-
-  const candidate = selectFirstVisitCandidate({
-    bioimpedanceSlots: bioResult.slots,
-    consultationSlots: consultationResult.slots,
-    preference: input.preference,
-    offeredPairs,
-  });
-  if (!candidate) return { settings: bioResult.settings, option: null };
-  const now = new Date();
-  const option: FirstVisitOptionDocument = {
-    _id: new ObjectId(),
-    customerId: input.customerId,
-    preference: input.preference,
-    bioimpedance: candidate.bioimpedance,
-    consultation: candidate.consultation,
-    status: "proposed",
-    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1_000),
-    createdAt: now,
-  };
-  await options.insertOne(option);
-  await options.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-  await options.createIndex({ customerId: 1, createdAt: -1 });
-  return { settings: bioResult.settings, option };
-}
-
-export async function getActiveFirstVisitOption(customerId: ObjectId, optionId?: ObjectId) {
-  if (!optionId) return null;
-  const option = await (await getVisitOptionsCollection()).findOne(
-    {
-      _id: optionId,
-      customerId,
-      status: "proposed",
-      expiresAt: { $gt: new Date() },
-    },
-    { sort: { createdAt: -1 } },
-  );
-  if (!option) return null;
-  return {
-    optionId: option._id.toHexString(),
-    preference: option.preference,
-    bioimpedance: option.bioimpedance,
-    consultation: option.consultation,
-    expiresAt: option.expiresAt.toISOString(),
-  };
-}
-
-export async function bookFirstVisit(input: {
-  customerId: ObjectId;
-  customerName: string;
-  contactPhone: string;
-  optionId: ObjectId;
-}) {
-  const options = await getVisitOptionsCollection();
-  const option = await options.findOne({
-    _id: input.optionId,
-    customerId: input.customerId,
-    status: "proposed",
-    expiresAt: { $gt: new Date() },
-  });
-  if (!option) throw new Error("A opção expirou ou não pertence a este cliente. Consulte uma nova opção.");
-
-  const settings = await getCalendarSettings();
-  const slots = [
-    { eventType: "bioimpedance", slot: option.bioimpedance },
-    { eventType: "doctor_consultation", slot: option.consultation },
-  ];
-  for (const item of slots) {
-    const date = DateTime.fromISO(item.slot.startAt).setZone(settings.timezone).toISODate()!;
-    const available = await findAvailableSlots({ fromDate: date, toDate: date, eventType: item.eventType, limit: 50 });
-    if (!available.slots.some((slot) => DateTime.fromISO(slot.startAt).toMillis() === DateTime.fromISO(item.slot.startAt).toMillis())) {
-      throw new Error("Um dos horários escolhidos não está mais disponível. Consulte uma nova opção.");
-    }
-  }
-
-  const visitGroupId = new ObjectId();
-  const created: AppointmentDocument[] = [];
-  try {
-    for (const item of slots) {
-      created.push(await persistAppointment(
-        {
-          customerId: input.customerId,
-          customerName: input.customerName,
-          contactPhone: input.contactPhone,
-          startAt: item.slot.startAt,
-          eventType: item.eventType,
-          source: "assistant",
-          visitGroupId,
-        },
-        settings,
-        DateTime.fromISO(item.slot.startAt).toUTC(),
-        DateTime.fromISO(item.slot.endAt).toUTC(),
-      ));
-    }
-  } catch (error) {
-    if (created.length > 0) {
-      await (await getAppointmentsCollection()).deleteMany({ _id: { $in: created.map((item) => item._id) } });
-    }
-    throw error;
-  }
-  await options.updateOne(
-    { _id: option._id, status: "proposed" },
-    { $set: { status: "booked", bookedAt: new Date(), visitGroupId } },
-  );
-  return { settings, option, appointments: created, visitGroupId };
 }
 
 export async function bookAppointment(input: BookAppointmentInput) {

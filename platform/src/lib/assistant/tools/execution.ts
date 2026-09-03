@@ -1,6 +1,5 @@
 import "server-only";
 
-import type { AssistantGeneration } from "../prompt";
 import type { AssistantToolKey } from "./registry";
 import type { ToolCall, ToolExecution, ToolExecutionContext } from "./contracts";
 import { getToolDefinition, isAssistantToolKey } from "./registry";
@@ -23,7 +22,7 @@ export async function executeToolCalls(input: {
   let retryable = false;
   for (const call of calls) {
     if (!isAssistantToolKey(call.tool) || !input.allowedTools.includes(call.tool)) {
-      results.push(errorResult(call.tool, "tool_not_allowed", "Esta tool não está autorizada no fluxo atual."));
+      results.push(errorResult(call.tool, "tool_not_allowed", "Esta tool não está autorizada na configuração ativa."));
       retryable = true;
       break;
     }
@@ -59,24 +58,6 @@ export async function executeToolCalls(input: {
     : null;
 }
 
-export function assertRequiredToolCall(input: {
-  generation: AssistantGeneration;
-  allowedTools: AssistantToolKey[];
-  completionIsGrounded?: boolean;
-}): ToolExecution | null {
-  if (
-    input.allowedTools.length === 0 ||
-    input.generation.toolCalls.length > 0 ||
-    input.generation.state.missingData.length > 0 ||
-    (input.generation.transition.action === "complete" && input.completionIsGrounded) ||
-    input.generation.decision === "emergency" ||
-    input.generation.decision === "out_of_scope"
-  ) {
-    return null;
-  }
-  return executionError("tool_call_required", "O fluxo está sem dados pendentes; use uma tool autorizada ou informe o dado realmente ausente.");
-}
-
 export function getGroundedToolReply(output?: string) {
   if (!output) return null;
   try {
@@ -93,37 +74,6 @@ export function getGroundedToolReply(output?: string) {
     return null;
   }
   return null;
-}
-
-export function hasSuccessfulToolResult(output: string | undefined, tool: AssistantToolKey) {
-  if (!output) return false;
-  try {
-    const envelope = JSON.parse(output) as {
-      executedTools?: string[];
-      results?: Array<{ ok?: boolean }>;
-    };
-    return envelope.executedTools?.some((executedTool, index) => (
-      executedTool === tool && envelope.results?.[index]?.ok === true
-    )) ?? false;
-  } catch {
-    return false;
-  }
-}
-
-export function getToolValidationRecoveryReply(flowKey: string) {
-  if (flowKey === "initial_triage") {
-    return "Para continuar, preciso confirmar: esta será sua primeira consulta com o Dr. Matheus ou você já é paciente de retorno?";
-  }
-  if (flowKey === "payment_confirmation") {
-    return "Antes de gerar os dados do sinal, preciso da sua confirmação: deseja prosseguir com o pagamento do sinal via Pix?";
-  }
-  if (flowKey === "collect_profile") {
-    return "Não consegui validar a informação enviada. Pode conferir e me enviar novamente?";
-  }
-  if (flowKey === "schedule_appointment") {
-    return "Não consegui validar sua preferência. Você prefere a Bioimpedância e a consulta no mesmo dia, em sequência, ou em horários separados?";
-  }
-  return "Não consegui validar sua última resposta. Pode conferir e me enviar novamente?";
 }
 
 function executionError(code: string, message: string): ToolExecution {

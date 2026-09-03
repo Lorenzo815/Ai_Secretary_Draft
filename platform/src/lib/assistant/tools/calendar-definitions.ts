@@ -1,7 +1,8 @@
 import type { ToolDefinition } from "./contracts";
 
 const nullableString = { type: ["string", "null"] };
-const firstVisitCriteria = strictArguments(["dateIntent", "fromDate", "toDate", "period", "startTime"], {
+const planCriteria = strictArguments(["stepKey", "dateIntent", "fromDate", "toDate", "period", "startTime"], {
+  stepKey: { type: "string" },
   dateIntent: { type: "string", enum: ["exact_date", "date_range", "next_available"] },
   fromDate: { type: "string" },
   toDate: { type: "string" },
@@ -10,36 +11,35 @@ const firstVisitCriteria = strictArguments(["dateIntent", "fromDate", "toDate", 
 });
 
 export const calendarToolDefinitions = {
-  "calendar.find_first_visit_option": defineTool({
-    label: "Sugerir primeira consulta",
-    description: "Encontra uma única combinação de Bioimpedância antes da Consulta Dr.",
+  "calendar.find_plan_option": defineTool({
+    label: "Sugerir plano de agendamento",
+    description: "Encontra uma combinação que respeita as etapas e restrições de um plano configurado.",
     mutates: false,
-    argumentsSchema: strictArguments(["bioimpedance", "consultation", "preference"], {
-      bioimpedance: firstVisitCriteria,
-      consultation: firstVisitCriteria,
-      preference: { type: "string", enum: ["together", "separate"] },
+    argumentsSchema: strictArguments(["planKey", "preference", "criteria"], {
+      planKey: { type: "string" },
+      preference: { type: "string", enum: ["compact", "flexible"] },
+      criteria: { type: "array", minItems: 1, maxItems: 10, items: planCriteria },
     }),
-    promptInstructions: `calendar.find_first_visit_option exige preference e critérios independentes em bioimpedance e consultation. Cada critério contém dateIntent, fromDate, toDate em YYYY-MM-DD, period=morning, afternoon ou any e startTime em HH:mm ou null.
-  - Traduza separadamente as preferências de data e horário de cada atendimento. Exemplo: bioimpedância no fim desta semana e consulta segunda às 09:00 usa janelas distintas e consultation.startTime="09:00"; não amplie nem iguale um critério ao outro.
-- together procura Bioimpedância de 30 minutos imediatamente antes da Consulta Dr. de 90 minutos; use critérios compatíveis para os dois eventos.
-- separate permite dias ou horários diferentes, sempre com Bioimpedância terminando antes da consulta.
-- Para next_available, fromDate é a data local atual da agenda e toDate fica de 7 a 31 dias depois. Esse intervalo é o tamanho da janela de busca, não uma espera antes de começar a busca.
-- A tool retorna somente uma sugestão e exclui opções já oferecidas. Preserve optionId em state.notes até o cliente confirmar ou rejeitar. Chame novamente apenas quando houver rejeição ou mudança de preferências.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_first_visit_option", context, args),
+    promptInstructions: `calendar.find_plan_option exige planKey, preference e um critério independente para cada etapa obrigatória do plano.
+- Use preference=compact quando o cliente quiser etapas consecutivas e flexible quando aceitar intervalos, dias ou horários diferentes.
+- Cada item de criteria usa o stepKey do plano, dateIntent, fromDate, toDate, period e startTime.
+- As restrições configuradas do plano são obrigatórias e validadas pelo servidor.
+- Para next_available, use a data local atual e uma janela entre 7 e 31 dias.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_plan_option", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
-  "calendar.book_first_visit": defineTool({
-    label: "Confirmar primeira consulta",
-    description: "Reserva Bioimpedância e Consulta Dr. a partir de uma opção confirmada.",
+  "calendar.book_plan_option": defineTool({
+    label: "Confirmar plano de agendamento",
+    description: "Reserva todas as etapas de uma proposta de plano confirmada pelo cliente.",
     mutates: true,
     argumentsSchema: strictArguments(["optionId", "confirmedByCustomer"], {
       optionId: { type: "string" },
       confirmedByCustomer: { type: "boolean" },
     }),
-    promptInstructions: `calendar.book_first_visit exige optionId retornado pela sugestão e confirmedByCustomer=true.
-- Use somente quando o cliente confirmar explicitamente os dois horários da opção oferecida.
-- Nunca monte horários manualmente nem reutilize uma opção recusada.`,
-    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book_first_visit", context, args),
+    promptInstructions: `calendar.book_plan_option exige optionId e confirmedByCustomer=true.
+- Use somente após confirmação explícita de todas as etapas e horários da proposta ativa.
+- Nunca monte horários manualmente nem reutilize uma proposta recusada, expirada ou criada sob regras antigas.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book_plan_option", context, args),
     getGroundedReply: lazyGroundedReply,
   }),
   "calendar.list_appointments": defineTool({
@@ -115,19 +115,20 @@ function strictArguments(required: string[], properties: Record<string, unknown>
 }
 
 function lazyGroundedReply(output: string) {
-  const parsed = JSON.parse(output) as { ok?: boolean; tool?: string; type?: string; optionId?: string; preference?: string; bioimpedance?: { startAt?: string }; consultation?: { startAt?: string }; slots?: Array<{ label?: string }>; appointments?: Array<{ startAt?: string; eventTypeName?: string }>; startAt?: string; timezone?: string };
-  if (parsed.ok && parsed.tool === "calendar.find_first_visit_option" && parsed.optionId && parsed.bioimpedance?.startAt && parsed.consultation?.startAt) {
-    const bio = formatDateTime(parsed.bioimpedance.startAt, parsed.timezone);
-    const consultation = formatDateTime(parsed.consultation.startAt, parsed.timezone);
-    return parsed.preference === "together"
-      ? `Minha sugestão é fazer a Bioimpedância em ${bio} e, logo depois, a Consulta com o Dr. Matheus em ${consultation}. Posso reservar os dois horários?`
-      : `Minha sugestão é a Bioimpedância em ${bio} e a Consulta com o Dr. Matheus em ${consultation}. Posso reservar os dois horários?`;
+  const parsed = JSON.parse(output) as { ok?: boolean; tool?: string; type?: string; optionId?: string; preference?: string; planName?: string; steps?: Array<{ label?: string; startAt?: string }>; slots?: Array<{ label?: string }>; appointments?: Array<{ startAt?: string; eventTypeName?: string }>; startAt?: string; timezone?: string };
+  if (parsed.ok && parsed.tool === "calendar.find_plan_option") {
+    const labels = parsed.steps?.flatMap((step) => step.startAt
+      ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
+      : []) ?? [];
+    return parsed.optionId && labels.length > 0
+      ? `Minha sugestão para ${parsed.planName ?? "o atendimento"} é ${joinLabels(labels)}. Posso reservar esses horários?`
+      : "Não encontrei uma combinação disponível com essas preferências. Você gostaria de ampliar o período ou flexibilizar os horários?";
   }
-  if (parsed.ok && parsed.tool === "calendar.find_first_visit_option" && !parsed.optionId) {
-    return "Não encontrei uma combinação disponível com essas preferências. Você gostaria de ampliar o período ou mudar entre horários juntos e separados?";
-  }
-  if (parsed.ok && parsed.tool === "calendar.book_first_visit" && parsed.bioimpedance?.startAt && parsed.consultation?.startAt) {
-    return `Os dois horários foram confirmados: Bioimpedância em ${formatDateTime(parsed.bioimpedance.startAt, parsed.timezone)} e Consulta com o Dr. Matheus em ${formatDateTime(parsed.consultation.startAt, parsed.timezone)}.`;
+  if (parsed.ok && parsed.tool === "calendar.book_plan_option") {
+    const labels = parsed.steps?.flatMap((step) => step.startAt
+      ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
+      : []) ?? [];
+    if (labels.length > 0) return `Seu agendamento foi confirmado: ${joinLabels(labels)}.`;
   }
   if (parsed.ok && parsed.tool === "calendar.check_availability") {
     const labels = parsed.slots?.flatMap((slot) => slot.label ? [slot.label] : []) ?? [];

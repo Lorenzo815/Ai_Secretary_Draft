@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { CalendarPlus, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
 import WeekCalendar from "./_components/week-calendar";
 
 interface DayAvailability {
@@ -299,10 +300,10 @@ export default function CalendarPage() {
             <h1 className="mt-2 font-heading text-2xl font-bold text-slate-ink">Calendário clínico</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-stone">O expediente abaixo é a fonte de verdade usada pela equipe e pela IA para oferecer e reservar horários.</p>
           </div>
-          <div className="flex gap-2">
-            <button type="button" onClick={() => refreshCalendar()} disabled={busy} className="rounded-lg border border-mist bg-white px-3 py-2 text-sm font-semibold text-slate-ink hover:border-deep-teal/40 disabled:opacity-50">Atualizar</button>
-            <button type="button" onClick={() => openCreateEvent()} className="rounded-lg border border-deep-teal px-3 py-2 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5">Novo evento</button>
-            <button type="button" onClick={() => setSettingsOpen(true)} className="rounded-lg bg-deep-teal px-3 py-2 text-sm font-semibold text-white hover:bg-forest-teal">Configurar agenda</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => refreshCalendar()} disabled={busy} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-mist bg-white px-3 text-sm font-semibold text-slate-ink hover:border-deep-teal/40 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} />Atualizar</button>
+            <button type="button" onClick={() => openCreateEvent()} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal px-3 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5"><CalendarPlus className="h-4 w-4" />Novo evento</button>
+            <button type="button" onClick={() => setSettingsOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-deep-teal px-3 text-sm font-semibold text-white hover:bg-forest-teal"><Settings2 className="h-4 w-4" />Configurar agenda</button>
           </div>
         </div>
       </header>
@@ -316,7 +317,7 @@ export default function CalendarPage() {
               <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">Novo evento</h2>
               <p className="mt-1 text-xs text-stone">Escolha qualquer data e hora para incluir o evento manualmente.</p>
             </div>
-            <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-lg text-xl text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar novo evento">×</button>
+            <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar novo evento"><X className="h-4 w-4" /></button>
           </div>
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -358,7 +359,7 @@ export default function CalendarPage() {
               <h2 id="hours-title" className="font-heading text-lg font-semibold text-slate-ink">Configuração da agenda</h2>
               <p className="mt-1 text-xs text-stone">Defina regras gerais e intervalos diferentes para cada dia da semana.</p>
             </div>
-            <button type="button" onClick={() => setSettingsOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-lg text-xl text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar configuração">×</button>
+            <button type="button" onClick={() => setSettingsOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar configuração"><X className="h-4 w-4" /></button>
           </div>
         </div>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-7">
@@ -407,7 +408,7 @@ export default function CalendarPage() {
                     {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
                   </select>
                 </label>
-                <button type="button" onClick={() => removeEventType(eventType.key)} disabled={settings.eventTypes.length === 1} className="flex h-9 w-9 items-center justify-center rounded-lg text-lg text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-30" aria-label={`Remover ${eventType.name}`}>×</button>
+                <button type="button" onClick={() => removeEventType(eventType.key)} disabled={settings.eventTypes.length === 1} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-30" aria-label={`Remover ${eventType.name}`}><Trash2 className="h-4 w-4" /></button>
               </div>
             ))}
           </div>
@@ -439,13 +440,13 @@ export default function CalendarPage() {
                           <input type="time" disabled={!day.enabled} value={interval.startTime} onChange={(event) => updateInterval(day.weekday, index, { startTime: event.target.value })} className="rounded-lg border border-mist px-3 py-2 text-sm disabled:bg-soft-ivory" aria-label={`Início do intervalo ${index + 1} de ${dayNames[day.weekday - 1]}`} />
                           <span className="text-xs text-stone">até</span>
                           <input type="time" disabled={!day.enabled} value={interval.endTime} onChange={(event) => updateInterval(day.weekday, index, { endTime: event.target.value })} className="rounded-lg border border-mist px-3 py-2 text-sm disabled:bg-soft-ivory" aria-label={`Fim do intervalo ${index + 1} de ${dayNames[day.weekday - 1]}`} />
-                          <button type="button" onClick={() => removeInterval(day.weekday, index)} disabled={!day.enabled} className="flex h-9 w-9 items-center justify-center rounded-lg text-lg text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-30" aria-label={`Remover intervalo ${index + 1}`}>×</button>
+                          <button type="button" onClick={() => removeInterval(day.weekday, index)} disabled={!day.enabled} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-30" aria-label={`Remover intervalo ${index + 1}`}><Trash2 className="h-4 w-4" /></button>
                         </div>
                       ))}
                       {day.enabled && day.intervals.length === 0 && <p className="text-xs text-burnt-coral">Adicione ao menos um intervalo.</p>}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right"><button type="button" onClick={() => addInterval(day.weekday)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-mist text-lg text-deep-teal hover:border-deep-teal/40" aria-label={`Adicionar intervalo em ${dayNames[day.weekday - 1]}`}>+</button></td>
+                  <td className="px-4 py-3 text-right"><button type="button" onClick={() => addInterval(day.weekday)} className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-mist text-deep-teal hover:border-deep-teal/40" aria-label={`Adicionar intervalo em ${dayNames[day.weekday - 1]}`}><Plus className="h-4 w-4" /></button></td>
                 </tr>
               ))}
             </tbody>

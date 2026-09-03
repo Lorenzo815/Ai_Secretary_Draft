@@ -110,13 +110,12 @@ export interface CustomerDocument {
 }
 
 export interface CustomerOperationsDocument extends CustomerDocument {
-  flow?: {
-    flowKey: string;
-    flowVersion: number;
-    status: "active" | "completed";
-    state: { stage: string; missingData: string[] };
-    completionCode?: string;
-    completionReason?: string;
+  agentRun?: {
+    status: "running" | "completed" | "failed" | "superseded";
+    configRevision: number;
+    finalDecision?: string;
+    startedAt: Date;
+    completedAt?: Date;
   };
   conversationState?: { summary: string; updatedAt: Date };
   nextAppointment?: {
@@ -397,14 +396,14 @@ export async function listCustomerOperations() {
     { $sort: { lastInteractionAt: -1 } },
     {
       $lookup: {
-        from: "assistant_customer_flows",
+        from: "assistant_runs",
         let: { customerId: "$_id" },
         pipeline: [
           { $match: { $expr: { $eq: ["$customerId", "$$customerId"] } } },
           { $sort: { updatedAt: -1 } },
           { $limit: 1 },
         ],
-        as: "flowDocuments",
+        as: "agentRunDocuments",
       },
     },
     {
@@ -445,7 +444,7 @@ export async function listCustomerOperations() {
       },
     },
     { $set: {
-      flow: { $arrayElemAt: ["$flowDocuments", 0] },
+      agentRun: { $arrayElemAt: ["$agentRunDocuments", 0] },
       conversationState: { $arrayElemAt: ["$conversationDocuments", 0] },
       nextAppointment: { $arrayElemAt: ["$appointmentDocuments", 0] },
       latestMessage: { $arrayElemAt: ["$messageDocuments", 0] },
@@ -455,11 +454,10 @@ export async function listCustomerOperations() {
         $and: [
           { $eq: ["$serviceStatus", "closed"] },
           { $eq: ["$latestMessage.direction", "inbound"] },
-          { $gt: ["$latestMessage.timestamp", "$flow.completedAt"] },
         ],
       },
     } },
-    { $unset: ["flowDocuments", "conversationDocuments", "appointmentDocuments", "messageDocuments"] },
+    { $unset: ["agentRunDocuments", "conversationDocuments", "appointmentDocuments", "messageDocuments"] },
   ]).toArray();
 }
 

@@ -1,6 +1,6 @@
 # Adding a tool
 
-A tool is a server-side capability exposed to selected flow versions. It is
+A tool is a server-side capability exposed by the active agent configuration. It is
 registered in code because enabling it grants real behavior to the assistant.
 
 ## Layout
@@ -25,7 +25,7 @@ schemas usable by APIs, UI and tests without initializing infrastructure.
 4. Validate authorization and business rules again in the executor.
 5. Return JSON with `ok`, `tool` and result data or an error.
 6. Add the domain definitions to `toolRegistry` in `registry.ts`.
-7. Authorize the key in `flows/catalog.ts` or a dashboard-published version.
+7. Add the key to the default configuration when it should start enabled.
 8. Extend registry tests when introducing a new invariant.
 9. Run the validation commands from the assistant README.
 
@@ -50,5 +50,5 @@ export const customerToolDefinitions = {
 } satisfies Record<string, ToolDefinition>;
 ```
 
-Do not add tool-specific branches to `processor.ts`, `schema.ts`, the flow API
+Do not add tool-specific branches to `processor.ts`, `schema.ts`, the Studio API
 or dashboard. Extend the generic contract first if a new invariant is needed.

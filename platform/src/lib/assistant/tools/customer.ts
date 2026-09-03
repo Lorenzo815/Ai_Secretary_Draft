@@ -1,6 +1,7 @@
 import "server-only";
 
 import { CustomerProfileValidationError, classifyCustomerRelationship, getCustomerProfileSnapshot, updateCustomerProfile } from "../../crm";
+import { emitAutomationEvent } from "../../automation";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 export async function executeRegisteredCustomerTool(
@@ -30,14 +31,12 @@ export async function executeRegisteredCustomerTool(
       profession: optionalString(args.profession),
     });
     const profile = getCustomerProfileSnapshot(customer);
-    if (profile.missingFields.length === 0) {
-      try {
-        const { analyzeAndSaveCustomerLeadQualification } = await import("../../qualification/customer-lead");
-        await analyzeAndSaveCustomerLeadQualification(context.customerId);
-      } catch (error) {
-        console.error("Lead qualification failed after profile completion", error);
-      }
-    }
+    await emitAutomationEvent({
+      type: "customer.profile.updated",
+      customerId: context.customerId,
+      occurredAt: new Date(),
+      payload: { missingFields: profile.missingFields },
+    });
     return success("customer.update_profile", profile);
   } catch (error) {
     if (error instanceof CustomerProfileValidationError) {

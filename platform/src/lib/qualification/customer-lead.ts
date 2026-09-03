@@ -1,10 +1,9 @@
 import "server-only";
 
 import { createHash } from "crypto";
-import { AzureOpenAI } from "openai";
 import type { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
-import { getAssistantConfig } from "../assistant/config";
+import { generateStructuredOutput } from "../ai/structured-output";
 import {
   findCustomerById,
   getCustomerProfileSnapshot,
@@ -12,12 +11,11 @@ import {
   type CustomerLeadQualification,
 } from "../crm";
 import { listWhatsAppMessagesForAssistant } from "../whatsapp";
+import { getLeadQualificationConfiguration } from "./config";
 
 const QUALIFICATION_VERSION = 2;
 const CLINIC_CITY = "Ponta Grossa/PR";
 const CLINIC_TIMEZONE = "America/Sao_Paulo";
-let client: AzureOpenAI | undefined;
-
 export async function analyzeAndSaveCustomerLeadQualification(
   customerId: ObjectId,
   options: { force?: boolean } = {},
@@ -25,9 +23,11 @@ export async function analyzeAndSaveCustomerLeadQualification(
   const customer = await findCustomerById(customerId.toString());
   if (!customer) throw new Error("Cliente não encontrado.");
   const profile = getCustomerProfileSnapshot(customer);
-  if (profile.missingFields.length > 0 || !profile.address || !profile.profession) {
-    throw new Error("A qualificação exige cadastro completo.");
+  if (!profile.birthDate || !profile.address || !profile.profession) {
+    throw new Error("A qualificação exige nascimento, localização e profissão.");
   }
+  const taskConfiguration = await getLeadQualificationConfiguration();
+  if (!taskConfiguration.enabled) return customer.leadQualification ?? null;
 
   const messages = await listWhatsAppMessagesForAssistant(
     customerId,
@@ -55,36 +55,28 @@ export async function analyzeAndSaveCustomerLeadQualification(
     return customer.leadQualification;
   }
 
-  const config = getAssistantConfig();
-  client ??= new AzureOpenAI({
-    apiKey: config.apiKey,
-    endpoint: config.endpoint,
-    apiVersion: config.apiVersion,
-    deployment: config.deployment,
-    maxRetries: 0,
-    timeout: config.modelRequestTimeoutMs,
-  });
-  const response = await client.chat.completions.create({
-    model: config.deployment,
+  const response = await generateStructuredOutput({
+    taskKey: "lead_qualification",
+    customerId,
     messages: [
       { role: "system", content: QUALIFICATION_POLICY },
+      { role: "developer", content: taskConfiguration.prompt },
       { role: "user", content: JSON.stringify(input) },
     ],
-    max_completion_tokens: 4_096,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "customer_lead_qualification",
-        strict: true,
-        schema: QUALIFICATION_SCHEMA,
-      },
+    schemaName: "customer_lead_qualification",
+    schema: QUALIFICATION_SCHEMA,
+    maxCompletionTokens: taskConfiguration.maxCompletionTokens,
+    trace: {
+      configRevision: taskConfiguration.revision,
+      configHash: taskConfiguration.contentHash,
+      sourceHash,
     },
+    parse: (content) => JSON.parse(content) as QualificationModelOutput,
   });
-  const result = JSON.parse(response.choices[0]?.message.content ?? "{}") as QualificationModelOutput;
   const qualification: CustomerLeadQualification = {
     version: QUALIFICATION_VERSION,
     generatedAt: new Date(),
-    model: config.deployment,
+    model: response.model,
     sourceHash,
     profileContext: {
       ageYears: input.ageYears,
@@ -92,7 +84,7 @@ export async function analyzeAndSaveCustomerLeadQualification(
       city: input.customerLocation.city,
       state: input.customerLocation.state,
     },
-    ...result,
+    ...response.value,
   };
   await saveCustomerLeadQualification(customerId, qualification);
   return qualification;

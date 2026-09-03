@@ -3,13 +3,11 @@
 import { useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 
-type SectionId = "operation" | "performance" | "automation" | "customers";
+type SectionId = "operation" | "performance";
 
 const sections: Array<{ id: SectionId; label: string }> = [
   { id: "operation", label: "Operação" },
   { id: "performance", label: "Desempenho" },
-  { id: "automation", label: "Automação" },
-  { id: "customers", label: "Clientes" },
 ];
 
 export default function DashboardSections(props: Record<SectionId, ReactNode>) {
@@ -32,7 +30,7 @@ export default function DashboardSections(props: Record<SectionId, ReactNode>) {
   return (
     <div>
       <div className="border-b border-mist">
-        <div role="tablist" aria-label="Seções da visão geral" className="grid grid-cols-4 sm:flex sm:gap-7">
+        <div role="tablist" aria-label="Seções da visão geral" className="flex gap-7">
           {sections.map((section, index) => (
             <button
               key={section.id}

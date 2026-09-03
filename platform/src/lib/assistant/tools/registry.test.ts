@@ -1,21 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildAssistantResponseSchema } from "../schema";
-import type { FlowVersion } from "../flows/contracts";
-import { assertRequiredToolCall, getGroundedToolReply, getToolValidationRecoveryReply, hasSuccessfulToolResult } from "./execution";
+import { createDefaultAgentConfiguration } from "../agent/defaults";
+import { buildAgentActionSchema } from "../agent/schema";
+import { getGroundedToolReply } from "./execution";
 import { isAssistantToolKey, listToolMetadata, toolRegistry } from "./registry";
-
-const baseVersion: FlowVersion = {
-  version: 1,
-  prompt: "Test",
-  lifecycle: "tool_cycle",
-  preToolPrompt: "Test",
-  postToolPrompt: "Test",
-  allowedTools: ["calendar.list_appointments", "calendar.book_appointment"],
-  knowledgeContext: "Test",
-  completionCriteria: "Test",
-  allowedTransitions: [],
-  createdAt: new Date("2026-01-01T00:00:00.000Z"),
-};
 
 describe("tool registry", () => {
   it("derives public metadata from every registered tool", () => {
@@ -23,104 +10,53 @@ describe("tool registry", () => {
 
     expect(metadata.map((tool) => tool.key)).toEqual(Object.keys(toolRegistry));
     expect(metadata.every((tool) => tool.label && tool.description)).toBe(true);
-    expect(metadata.find((tool) => tool.key === "calendar.book_appointment")?.mutates).toBe(true);
-    expect(isAssistantToolKey("calendar.list_appointments")).toBe(true);
-    expect(isAssistantToolKey("calendar.delete_appointment")).toBe(false);
-    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain("YYYY-MM-DD");
-    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain("não uma espera");
-    expect(toolRegistry["customer.update_profile"].promptInstructions).toContain("mesmo que outros campos");
+    expect(metadata.find((tool) => tool.key === "calendar.book_plan_option")?.mutates).toBe(true);
+    expect(isAssistantToolKey("calendar.find_plan_option")).toBe(true);
+    expect(isAssistantToolKey("calendar.find_first_visit_option")).toBe(false);
   });
 
-  it("requires independent strict criteria for both first-visit events", () => {
-    const schema = toolRegistry["calendar.find_first_visit_option"].argumentsSchema as {
+  it("requires strict independent criteria for generic plan steps", () => {
+    const schema = toolRegistry["calendar.find_plan_option"].argumentsSchema as {
       required: string[];
       additionalProperties: boolean;
-      properties: Record<string, {
-        required?: string[];
-        additionalProperties?: boolean;
-        properties?: Record<string, { enum?: string[] }>;
-      }>;
+      properties: { criteria: { items: { required: string[]; additionalProperties: boolean } } };
     };
 
-    expect(schema.required).toEqual(["bioimpedance", "consultation", "preference"]);
+    expect(schema.required).toEqual(["planKey", "preference", "criteria"]);
     expect(schema.additionalProperties).toBe(false);
-    for (const event of ["bioimpedance", "consultation"]) {
-      const criteria = schema.properties[event];
-      expect(criteria.required).toEqual(["dateIntent", "fromDate", "toDate", "period", "startTime"]);
-      expect(criteria.additionalProperties).toBe(false);
-      expect(criteria.properties?.dateIntent.enum).toContain("exact_date");
-      expect(criteria.properties?.period.enum).toEqual(["morning", "afternoon", "any"]);
-    }
-    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain("janelas distintas");
-    expect(toolRegistry["calendar.find_first_visit_option"].promptInstructions).toContain('consultation.startTime="09:00"');
+    expect(schema.properties.criteria.items.required).toEqual([
+      "stepKey", "dateIntent", "fromDate", "toDate", "period", "startTime",
+    ]);
+    expect(schema.properties.criteria.items.additionalProperties).toBe(false);
   });
 
-  it("builds pre-tool schema only from tools allowed by the flow", () => {
-    const schema = buildAssistantResponseSchema(baseVersion, "pre_tool") as {
-      properties: { toolCalls: { maxItems: number; items: { anyOf: Array<{ properties: { tool: { enum: string[] } } }> } } };
-    };
-    const keys = schema.properties.toolCalls.items.anyOf.map((entry) => entry.properties.tool.enum[0]);
+  it("offers exactly one tool request or one final response", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const iterative = buildAgentActionSchema(configuration, true) as { anyOf: unknown[] };
+    const final = buildAgentActionSchema(configuration, false) as { properties: { type: { enum: string[] } } };
 
-    expect(schema.properties.toolCalls.maxItems).toBe(2);
-    expect(keys).toEqual(["calendar.list_appointments", "calendar.book_appointment"]);
+    expect(iterative.anyOf).toHaveLength(2);
+    expect(final.properties.type.enum).toEqual(["final"]);
   });
 
-  it("forbids tool calls after execution and in single-call flows", () => {
-    for (const phase of ["post_tool", "single"] as const) {
-      const schema = buildAssistantResponseSchema(baseVersion, phase) as {
-        properties: { toolCalls: { maxItems: number } };
-      };
-      expect(schema.properties.toolCalls.maxItems).toBe(0);
-    }
-  });
-
-  it("grounds customer input errors without another tool attempt", () => {
+  it("renders grounded replies for arbitrary configured plan steps", () => {
     const reply = getGroundedToolReply(JSON.stringify({
-      executedTools: ["customer.update_profile"],
+      executedTools: ["calendar.find_plan_option"],
       results: [{
-        ok: false,
-        type: "customer_input_error",
-        publicReply: "O CPF informado parece inválido. Pode conferir os 11 dígitos e me enviar novamente?",
+        ok: true,
+        tool: "calendar.find_plan_option",
+        optionId: "option-1",
+        planName: "Atendimento inicial",
+        timezone: "America/Sao_Paulo",
+        steps: [
+          { label: "Avaliação", startAt: "2026-09-04T09:00:00-03:00" },
+          { label: "Consulta", startAt: "2026-09-04T09:30:00-03:00" },
+        ],
       }],
     }));
 
-    expect(reply).toBe("O CPF informado parece inválido. Pode conferir os 11 dígitos e me enviar novamente?");
-  });
-
-  it("recovers deterministically when tool correction attempts are exhausted", () => {
-    expect(getToolValidationRecoveryReply("initial_triage")).toContain("primeira consulta");
-    expect(getToolValidationRecoveryReply("collect_profile")).toContain("enviar novamente");
-    expect(getToolValidationRecoveryReply("payment_confirmation")).toContain("confirmação");
-    expect(getToolValidationRecoveryReply("schedule_appointment")).toContain("horários separados");
-  });
-
-  it("requires tools for ungrounded completion and accepts persisted completion", () => {
-    const generation = {
-      decision: "reply" as const,
-      reply: "Tudo certo.",
-      updatedSummary: "Concluído.",
-      state: { stage: "concluido", collectedData: [], missingData: [], notes: [] },
-      transition: { action: "complete" as const, continueImmediately: false },
-      toolCalls: [],
-    };
-
-    expect(assertRequiredToolCall({
-      generation,
-      allowedTools: ["calendar.book_first_visit"],
-    })).not.toBeNull();
-    expect(assertRequiredToolCall({
-      generation,
-      allowedTools: ["calendar.book_first_visit"],
-      completionIsGrounded: true,
-    })).toBeNull();
-  });
-
-  it("recognizes only a successful matching terminal tool result", () => {
-    const output = JSON.stringify({
-      executedTools: ["calendar.book_first_visit"],
-      results: [{ ok: true }],
-    });
-    expect(hasSuccessfulToolResult(output, "calendar.book_first_visit")).toBe(true);
-    expect(hasSuccessfulToolResult(output, "calendar.book_appointment")).toBe(false);
+    expect(reply).toContain("Atendimento inicial");
+    expect(reply).toContain("Avaliação");
+    expect(reply).toContain("Consulta");
   });
 });

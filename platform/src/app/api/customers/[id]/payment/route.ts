@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
-import { assignCustomerFlow } from "@/lib/assistant";
+import { emitAutomationEvent } from "@/lib/automation";
 import { authOptions } from "@/lib/auth";
 import { updateCustomerServiceStatus } from "@/lib/crm";
 import { reviewPaymentRequest } from "@/lib/payments";
@@ -32,8 +32,13 @@ export async function POST(
     });
 
     let deliveryWarning: string | undefined;
+    await emitAutomationEvent({
+      type: "payment.status.changed",
+      customerId,
+      occurredAt: new Date(),
+      payload: { status },
+    });
     if (status === "paid") {
-      await assignCustomerFlow(customerId, "schedule_appointment", "manual", "Sinal confirmado pela equipe");
       const customer = await updateCustomerServiceStatus(customerId, "ai_active");
       const contactPhone = customer.phones[0];
       if (contactPhone) {

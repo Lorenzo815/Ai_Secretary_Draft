@@ -1,4 +1,5 @@
 import type { ObjectId } from "mongodb";
+import type { AgentConfigurationDocument } from "../agent/contracts";
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -14,7 +15,8 @@ export interface ToolExecutionContext {
   customerId: ObjectId;
   customerName: string;
   contactPhone: string;
-  activeFirstVisitOptionId?: string;
+  activeSchedulingOptionId?: string;
+  configuration: AgentConfigurationDocument;
 }
 
 export interface ToolExecution {

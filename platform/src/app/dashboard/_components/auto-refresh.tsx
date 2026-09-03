@@ -25,8 +25,21 @@ export default function AutoRefresh({ intervalMs = 10_000 }: { intervalMs?: numb
 
 function isEditing() {
   const active = document.activeElement;
-  return active instanceof HTMLInputElement
+  if (active instanceof HTMLInputElement
     || active instanceof HTMLTextAreaElement
     || active instanceof HTMLSelectElement
-    || Boolean(document.querySelector('[role="dialog"]'));
+    || active instanceof HTMLElement && active.isContentEditable) return true;
+
+  if (document.querySelector('[role="dialog"], [data-auto-refresh-dirty="true"]')) return true;
+
+  return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))
+    .some((control) => {
+      if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
+        return control.checked !== control.defaultChecked;
+      }
+      if (control instanceof HTMLSelectElement) {
+        return Array.from(control.options).some((option) => option.selected !== option.defaultSelected);
+      }
+      return control.value !== control.defaultValue;
+    });
 }

@@ -145,7 +145,7 @@ function LoginForm() {
                   type="email"
                   autoComplete="email"
                   required
-                  className="mt-1.5 block w-full rounded-xl border border-mist bg-white px-4 py-3 text-sm text-slate-ink placeholder-stone shadow-sm focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20 transition-all"
+                  className="mt-1.5 block w-full rounded-lg border border-mist bg-white px-4 py-3 text-sm text-slate-ink placeholder-stone shadow-sm transition-all focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20"
                   placeholder="voce@empresa.com"
                 />
               </div>
@@ -162,7 +162,7 @@ function LoginForm() {
                     autoComplete="current-password"
                     required
                     minLength={8}
-                    className="block w-full rounded-xl border border-mist bg-white px-4 py-3 pr-11 text-sm text-slate-ink placeholder-stone shadow-sm focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20 transition-all"
+                    className="block w-full rounded-lg border border-mist bg-white px-4 py-3 pr-11 text-sm text-slate-ink placeholder-stone shadow-sm transition-all focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20"
                     placeholder="••••••••"
                   />
                   <button
@@ -189,7 +189,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={loading}
-              className="relative flex w-full justify-center rounded-xl bg-deep-teal px-4 py-3 text-sm font-semibold text-white shadow-md shadow-deep-teal/25 hover:bg-forest-teal hover:shadow-lg hover:shadow-deep-teal/30 focus:outline-none focus:ring-2 focus:ring-deep-teal focus:ring-offset-2 focus:ring-offset-soft-ivory disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+              className="relative flex w-full justify-center rounded-lg bg-deep-teal px-4 py-3 text-sm font-semibold text-white shadow-md shadow-deep-teal/25 transition-all duration-200 hover:bg-forest-teal hover:shadow-lg hover:shadow-deep-teal/30 focus:outline-none focus:ring-2 focus:ring-deep-teal focus:ring-offset-2 focus:ring-offset-soft-ivory disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <span className="flex items-center gap-2">

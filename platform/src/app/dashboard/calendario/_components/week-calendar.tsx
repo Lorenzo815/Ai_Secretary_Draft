@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 
 interface Appointment {
   _id: string;
@@ -93,11 +94,11 @@ export default function WeekCalendar({
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Toggle label="Pacientes" checked={showAppointments} onChange={setShowAppointments} color="teal" />
-          <div className="ml-1 flex overflow-hidden rounded-lg border border-mist bg-white">
-            <button type="button" onClick={() => navigateTo(addDays(weekStart, -7))} className="h-9 w-9 border-r border-mist text-lg text-slate-ink hover:bg-soft-ivory" aria-label="Semana anterior">‹</button>
+          <Toggle label="Eventos" checked={showAppointments} onChange={setShowAppointments} color="teal" />
+          <div className="ml-1 flex overflow-hidden rounded-md border border-mist bg-white">
+            <button type="button" onClick={() => navigateTo(addDays(weekStart, -7))} className="flex h-9 w-9 items-center justify-center border-r border-mist text-slate-ink hover:bg-soft-ivory" aria-label="Semana anterior"><ChevronLeft className="h-4 w-4" /></button>
             <button type="button" onClick={() => navigateTo(getCurrentWeekStart(timezone))} className="px-3 text-xs font-semibold text-slate-ink hover:bg-soft-ivory">Hoje</button>
-            <button type="button" onClick={() => navigateTo(addDays(weekStart, 7))} className="h-9 w-9 border-l border-mist text-lg text-slate-ink hover:bg-soft-ivory" aria-label="Próxima semana">›</button>
+            <button type="button" onClick={() => navigateTo(addDays(weekStart, 7))} className="flex h-9 w-9 items-center justify-center border-l border-mist text-slate-ink hover:bg-soft-ivory" aria-label="Próxima semana"><ChevronRight className="h-4 w-4" /></button>
           </div>
         </div>
       </div>
@@ -130,7 +131,7 @@ export default function WeekCalendar({
                                 <div className="flex items-start justify-between gap-1">
                                   <p className="min-w-0 break-words text-xs font-bold" style={{ color }}>{formatTime(appointment.startAt, timezone)}–{formatTime(appointment.endAt, timezone)}</p>
                                   <button type="button" onClick={() => deleteEvent(appointment)} disabled={deletingId === appointment._id} className="flex h-6 w-6 shrink-0 items-center justify-center text-stone hover:bg-burnt-coral/10 hover:text-burnt-coral disabled:opacity-40" aria-label={`Excluir evento de ${appointment.customerName || "sem cliente"}`} title="Excluir evento">
-                                    <TrashIcon />
+                                    <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
                                 <p className="mt-1 break-words text-xs font-semibold text-slate-ink">{appointment.customerName || "Sem cliente"}</p>
@@ -146,8 +147,8 @@ export default function WeekCalendar({
                     <p className="py-4 text-center text-xs text-stone lg:py-8">Sem eventos</p>
                   )}
                   {!loading && (
-                    <button type="button" onClick={() => onCreateEvent(dateKey)} className="min-h-9 w-full border border-dashed border-mist px-2 text-xs font-semibold text-deep-teal hover:border-deep-teal/40 hover:bg-deep-teal/5">
-                      + Criar evento
+                    <button type="button" onClick={() => onCreateEvent(dateKey)} className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 border border-dashed border-mist px-2 text-xs font-semibold text-deep-teal hover:border-deep-teal/40 hover:bg-deep-teal/5">
+                      <Plus className="h-3.5 w-3.5" />Criar evento
                     </button>
                   )}
                 </div>
@@ -157,17 +158,6 @@ export default function WeekCalendar({
         </div>
       </div>
     </section>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="m19 6-1 14H6L5 6" />
-      <path d="M10 11v5M14 11v5" />
-    </svg>
   );
 }
 

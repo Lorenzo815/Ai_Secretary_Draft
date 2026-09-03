@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { clearDynamicData } from "@/lib/admin/database";
-import { getAssistantSettings, setAssistantProcessingEnabled, updatePaymentSettings } from "@/lib/assistant";
+import { getAgentConfiguration, setAgentEnabled, updateAgentPaymentSettings } from "@/lib/assistant/agent";
 import { authOptions } from "@/lib/auth";
 
 export async function PUT(request: Request) {
@@ -20,12 +20,13 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Configuração Pix inválida." }, { status: 400 });
     }
     try {
-      const settings = await updatePaymentSettings({
-        pixKey: payment.pixKey,
+      const current = await getAgentConfiguration();
+      const settings = await updateAgentPaymentSettings({
+        pixKey: payment.pixKey.trim() || current.payment.pixKey,
         recipientName: payment.recipientName,
         signalAmountCents: payment.signalAmountCents,
       });
-      return NextResponse.json({ payment: settings?.payment });
+      return NextResponse.json({ paymentConfigured: Boolean(settings.payment.pixKey && settings.payment.recipientName) });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Não foi possível salvar o Pix." },
@@ -37,8 +38,8 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Configuração de processamento inválida." }, { status: 400 });
   }
 
-  const settings = await setAssistantProcessingEnabled(input.processingEnabled);
-  return NextResponse.json({ settings });
+  const settings = await setAgentEnabled(input.processingEnabled);
+  return NextResponse.json({ processingEnabled: settings.enabled });
 }
 
 export async function DELETE(request: Request) {
@@ -51,8 +52,8 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Confirmação inválida." }, { status: 400 });
   }
 
-  const settings = await getAssistantSettings();
-  if (settings.processingEnabled) {
+  const settings = await getAgentConfiguration();
+  if (settings.enabled) {
     return NextResponse.json(
       { error: "Pause o processamento da IA antes de apagar os dados dinâmicos." },
       { status: 409 },

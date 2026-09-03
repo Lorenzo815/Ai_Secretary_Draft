@@ -13,8 +13,6 @@ export default async function DashboardPage() {
   const messagesAfterClosure = customers.filter((customer) => customer.messageAfterClosure);
   const inboundMessages = Number(overview.messageDirections.inbound ?? 0);
   const outboundMessages = Number(overview.messageDirections.outbound ?? 0);
-  const pendingJobs = Number(overview.jobStatuses.pending ?? 0);
-  const failedJobs = Number(overview.jobStatuses.failed ?? 0);
   const customerById = new Map(customers.map((customer) => [customer._id.toString(), customer]));
   const pendingPaymentCustomerIds = new Set(overview.pendingPayments.map((payment) => payment.customerId.toString()));
   const actionItems = [
@@ -66,20 +64,18 @@ export default async function DashboardPage() {
     })),
     ...customers.filter((customer) => (
       customer.relationship?.status === "new"
-      && isBeyondProfileFlow(customer.flow?.flowKey)
+      && customer.latestMessage?.direction === "outbound"
       && getMissingProfileFields(customer).length > 0
     )).map((customer) => ({
       key: `profile-anomaly-${customer._id.toString()}`,
       href: `/dashboard/clientes/${customer._id.toString()}`,
       label: "Revisar cadastro incompleto",
       customerName: customer.name,
-      detail: `${getMissingProfileFields(customer).join(", ")} pendente(s) no fluxo ${formatFlow(customer.flow?.flowKey)}`,
+      detail: `${getMissingProfileFields(customer).join(", ")} ainda pendente(s) no cadastro`,
       tone: "amber" as const,
       timestamp: customer.updatedAt.getTime(),
     })),
   ].sort((first, second) => first.timestamp - second.timestamp).slice(0, 6);
-  const totalActiveFlows = overview.activeFlows.reduce((total, flow) => total + flow.count, 0);
-
   return (
     <div className="animate-fade-in-up space-y-8">
       <AutoRefresh />
@@ -167,135 +163,6 @@ export default async function DashboardPage() {
             <OverviewCharts activity={overview.activitySeries} funnel={overview.funnel} leadFit={overview.leadFitSeries} />
           </div>
         )}
-        automation={(
-          <section className="max-w-3xl">
-
-        <div className="border-y border-mist py-5">
-          <div className="flex items-end justify-between gap-3"><div><p className="text-xs font-semibold uppercase text-stone">Automação</p><h2 className="mt-1 font-heading text-lg font-semibold text-slate-ink">Saúde e fluxos ativos</h2></div><Link href="/dashboard/fluxos" className="text-xs font-semibold text-deep-teal hover:text-forest-teal">Ver fluxos</Link></div>
-          <div className="mt-5 divide-y divide-mist border-y border-mist"><StatusRow label="Jobs pendentes" value={pendingJobs} attention={pendingJobs > 0} /><StatusRow label="Jobs com falha" value={failedJobs} attention={failedJobs > 0} /><StatusRow label="Respostas da IA em 24h" value={overview.flowRunsLast24Hours} /><StatusRow label="Mensagens com falha em 24h" value={overview.messageFailures} attention={overview.messageFailures > 0} /></div>
-          <div className="mt-5 space-y-3">
-            {overview.activeFlows.length === 0 && <p className="text-xs text-stone">Nenhum fluxo ativo.</p>}
-            {overview.activeFlows.map((flow) => <div key={flow.key}><div className="flex justify-between gap-3 text-xs"><span className="font-semibold text-slate-ink">{formatFlow(flow.key)}</span><span className="text-stone">{flow.count}</span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-mist"><div className="h-full bg-deep-teal" style={{ width: `${percentage(flow.count, totalActiveFlows)}%` }} /></div></div>)}
-          </div>
-        </div>
-
-          </section>
-        )}
-        customers={(
-          <div className="space-y-5">
-
-      <div className="flex items-end justify-between gap-4 pt-2">
-        <div>
-          <p className="text-xs font-semibold uppercase text-stone">CRM</p>
-          <h2 className="mt-1 font-heading text-lg font-semibold text-slate-ink">Clientes</h2>
-        </div>
-        <span className="text-xs font-semibold text-stone">{customers.length} registro(s)</span>
-      </div>
-
-      <section className="overflow-hidden rounded-lg border border-mist bg-white">
-        {customers.length === 0 ? (
-          <div className="px-5 py-16 text-center">
-            <p className="text-sm font-semibold text-slate-ink">
-              Nenhum cliente cadastrado
-            </p>
-            <p className="mt-1 text-xs text-stone">
-              Um cliente será criado quando chegar a primeira mensagem.
-            </p>
-          </div>
-        ) : (
-          <>
-          <div className="divide-y divide-mist lg:hidden">
-            {customers.map((customer) => (
-              <Link key={customer._id.toString()} href={`/dashboard/clientes/${customer._id.toString()}`} className="block px-4 py-4 hover:bg-soft-ivory">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-ink">{customer.name}</p>
-                    <p className="mt-0.5 text-xs text-stone">{customer.phones[0] ? `+${customer.phones[0]}` : "Sem telefone"}</p>
-                  </div>
-                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${getSituationStyle(customer)}`}>{getSituation(customer)}</span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                  <div><span className="text-stone">Responsável</span><p className="mt-0.5 font-semibold text-slate-ink">{getCustomerOwner(customer)}</p></div>
-                  <div><span className="text-stone">Fluxo</span><p className="mt-0.5 font-semibold text-slate-ink">{formatFlow(customer.flow?.flowKey)}</p></div>
-                </div>
-                <p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{getContext(customer)}</p>
-                <div className="mt-3 flex flex-wrap justify-between gap-2 border-t border-mist pt-3 text-xs text-stone">
-                  <span>{customer.nextAppointment ? formatAppointment(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Sem agendamento"}</span>
-                  <span>Última interação {formatDateTime(customer.lastInteractionAt)}</span>
-                </div>
-              </Link>
-            ))}
-          </div>
-          <div className="hidden overflow-x-auto lg:block">
-            <table className="w-full min-w-[1180px] border-collapse text-left">
-              <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone">
-                <tr>
-                  <th className="px-5 py-3">Cliente</th>
-                  <th className="px-5 py-3">Responsável</th>
-                  <th className="px-5 py-3">Situação</th>
-                  <th className="px-5 py-3">Fluxo atual</th>
-                  <th className="px-5 py-3">Contexto</th>
-                  <th className="px-5 py-3">Próximo atendimento</th>
-                  <th className="px-5 py-3">Última interação</th>
-                  <th className="px-5 py-3 text-right">Ação</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-mist">
-                {customers.map((customer) => (
-                  <tr key={customer._id.toString()}>
-                    <td className="px-5 py-4">
-                      <p className="text-sm font-semibold text-slate-ink">
-                        {customer.name}
-                      </p>
-                      <p className="mt-0.5 text-xs text-stone">
-                        {customer.phones[0] ? `+${customer.phones[0]}` : "Sem telefone"}
-                      </p>
-                    </td>
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-ink">
-                      {getCustomerOwner(customer)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getSituationStyle(customer)}`}>
-                        {getSituation(customer)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <p className="text-sm font-semibold text-slate-ink">{formatFlow(customer.flow?.flowKey)}</p>
-                      <p className="mt-0.5 text-xs text-stone">
-                        {customer.flow ? `${customer.flow.status === "active" ? "Em andamento" : "Concluído"} · ${formatStage(customer.flow.state.stage)}` : "Sem fluxo"}
-                      </p>
-                    </td>
-                    <td className="max-w-[300px] px-5 py-4">
-                      <p className="line-clamp-2 text-sm leading-5 text-slate-ink/75">
-                        {getContext(customer)}
-                      </p>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-ink/75">
-                      {customer.nextAppointment
-                        ? formatAppointment(customer.nextAppointment.startAt, customer.nextAppointment.timezone)
-                        : "Não agendado"}
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-ink/75">
-                      {formatDateTime(customer.lastInteractionAt)}
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <Link
-                        href={`/dashboard/clientes/${customer._id.toString()}`}
-                        className="text-sm font-semibold text-deep-teal hover:text-forest-teal"
-                      >
-                        Abrir cliente
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          </>
-        )}
-      </section>
-          </div>
-        )}
       />
     </div>
   );
@@ -321,10 +188,6 @@ function InsightMetric({ label, value, detail }: { label: string; value: string;
   );
 }
 
-function StatusRow({ label, value, attention = false }: { label: string; value: number; attention?: boolean }) {
-  return <div className="flex items-center justify-between gap-4 py-3 text-sm"><span className="text-slate-ink/75">{label}</span><span className={`font-bold ${attention ? "text-burnt-coral" : "text-slate-ink"}`}>{value}</span></div>;
-}
-
 function formatEventType(eventType?: string) {
   if (eventType === "doctor_consultation") return "Consulta Dr.";
   if (eventType === "bioimpedance") return "Bioimpedância";
@@ -338,67 +201,6 @@ function formatDateTime(date: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "short",
-  }).format(date);
-}
-
-function getOwner(status?: CustomerOperationsDocument["serviceStatus"]) {
-  if (status === "waiting_human" || status === "human_active") return "Equipe";
-  if (status === "closed") return "Nenhum";
-  return "IA";
-}
-
-function getCustomerOwner(customer: CustomerOperationsDocument) {
-  if (customer.messageAfterClosure) return "Equipe";
-  return getOwner(customer.serviceStatus);
-}
-
-function getSituation(customer: CustomerOperationsDocument) {
-  if (customer.messageAfterClosure) return "Nova mensagem após encerramento";
-  if (customer.serviceStatus === "waiting_human") return "Aguardando equipe";
-  if (customer.serviceStatus === "human_active") return "Atendimento humano";
-  if (customer.serviceStatus === "closed") return "Encerrado";
-  if (customer.nextAppointment) return "Agendado";
-  if (customer.flow?.status === "active") return "Em atendimento";
-  if (customer.flow?.status === "completed") return "Fluxo concluído";
-  return "Disponível";
-}
-
-function getSituationStyle(customer: CustomerOperationsDocument) {
-  if (customer.messageAfterClosure) return "bg-burnt-coral/10 text-burnt-coral";
-  if (customer.serviceStatus === "waiting_human") return "bg-burnt-coral/10 text-burnt-coral";
-  if (customer.serviceStatus === "human_active") return "bg-slate-ink/10 text-slate-ink";
-  if (customer.serviceStatus === "closed") return "bg-stone/10 text-stone";
-  if (customer.nextAppointment) return "bg-deep-teal/10 text-deep-teal";
-  return "bg-warm-sand text-slate-ink/75";
-}
-
-function formatFlow(flowKey?: string) {
-  if (flowKey === "initial_triage") return "Triagem inicial";
-  if (flowKey === "collect_profile") return "Cadastro";
-  if (flowKey === "commercial_information") return "Comercial";
-  if (flowKey === "payment_confirmation") return "Confirmação do sinal";
-  if (flowKey === "schedule_appointment") return "Agendamento";
-  return flowKey ?? "Sem fluxo";
-}
-
-function formatStage(stage: string) {
-  return stage.replaceAll("_", " ");
-}
-
-function getContext(customer: CustomerOperationsDocument) {
-  const summary = customer.conversationState?.summary.split("\nÚltima resposta enviada:")[0]?.trim();
-  if (summary) return summary;
-  if (customer.latestMessage) {
-    return `${customer.latestMessage.direction === "inbound" ? "Cliente" : "IA"}: ${customer.latestMessage.body}`;
-  }
-  return "Sem contexto registrado.";
-}
-
-function formatAppointment(date: Date, timezone: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-    timeZone: timezone,
   }).format(date);
 }
 
@@ -427,12 +229,6 @@ function sourcePercentage(value: number, sources: { assistant: number; manual: n
 
 function percentage(value: number, total: number) {
   return total > 0 ? Math.round((value / total) * 100) : 0;
-}
-
-function isBeyondProfileFlow(flowKey?: string) {
-  return flowKey === "commercial_information"
-    || flowKey === "payment_confirmation"
-    || flowKey === "schedule_appointment";
 }
 
 function getMissingProfileFields(customer: CustomerOperationsDocument) {

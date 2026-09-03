@@ -5,15 +5,16 @@ import clientPromise from "../mongodb";
 const DB_NAME = "ai_secretary";
 
 export const DYNAMIC_COLLECTIONS = [
-  "assistant_response_jobs",
+  "automation_jobs",
   "assistant_conversation_states",
-  "assistant_customer_flows",
-  "assistant_flow_history",
-  "assistant_flow_runs",
-  "calendar_appointments",
-  "calendar_visit_options",
-  "crm_customers",
+  "assistant_runs",
+  "assistant_run_steps",
+  "ai_task_calls",
+  "calendar_plan_options",
+  "lead_qualification_history",
   "payment_requests",
+  "calendar_appointments",
+  "crm_customers",
   "whatsapp_messages",
 ] as const;
 

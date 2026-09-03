@@ -2,12 +2,17 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
-import { bookAppointment, bookFirstVisit, findAvailableSlots, findCustomerAppointments, findFirstVisitOption, getCalendarSettings, updateCustomerAppointment } from "../../calendar";
-import { isCurrentFirstVisitOption } from "../../calendar/first-visit";
+import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointment } from "../../calendar";
+import { bookSchedulingPlanOption, findSchedulingPlanOption, getActiveSchedulingPlanOption } from "../../calendar/plans";
+import { matchesConditions } from "../../automation/conditions";
+import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
+import { getLatestPaymentRequest } from "../../payments";
+import type { AgentConfigurationDocument, SchedulingPlan } from "../agent/contracts";
+import { getConfiguredMissingFields } from "../agent/runtime-context";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 interface CalendarToolArguments {
-  action: "find_first_visit_option" | "book_first_visit" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  action: "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
   dateIntent: "exact_date" | "date_range" | "next_available" | null;
   fromDate: string | null;
   toDate: string | null;
@@ -19,12 +24,12 @@ interface CalendarToolArguments {
   startAt: string | null;
   confirmedByCustomer: boolean;
   notes: string | null;
-  preference: "together" | "separate" | null;
-  bioimpedance: FirstVisitToolCriteria | null;
-  consultation: FirstVisitToolCriteria | null;
+  planKey: string | null;
+  planPreference: "compact" | "flexible" | null;
+  criteria: PlanToolCriteria[];
 }
 
-interface FirstVisitToolCriteria {
+interface PlanSearchCriteria {
   dateIntent: "exact_date" | "date_range" | "next_available";
   fromDate: string;
   toDate: string;
@@ -32,71 +37,106 @@ interface FirstVisitToolCriteria {
   startTime: string | null;
 }
 
+interface PlanToolCriteria extends PlanSearchCriteria {
+  stepKey: string;
+}
+
 async function executeCalendarAction(input: {
   action: CalendarToolArguments;
   customerId: ObjectId;
   customerName: string;
   contactPhone: string;
-  activeFirstVisitOptionId?: string;
+  activeSchedulingOptionId?: string;
+  configuration: AgentConfigurationDocument;
 }): Promise<ToolExecution | null> {
-  if (input.action.action === "find_first_visit_option") {
-    const validation = await validateFirstVisitAvailability(input.action);
+  if (input.action.action === "find_plan_option") {
+    const configuration = input.configuration;
+    const plan = configuration.schedulingPlans.find((item) => item.enabled && item.key === input.action.planKey);
+    if (!plan) return validationError("calendar.find_plan_option", [invalid("arguments.planKey", "Informe um plano de agenda habilitado.")]);
+    const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, configuration);
+    if (prerequisiteError) return prerequisiteError;
+    const validation = await validatePlanAvailability(input.action, plan);
     if (validation) return validation;
     try {
-      const result = await findFirstVisitOption({
+      const result = await findSchedulingPlanOption({
         customerId: input.customerId,
-        bioimpedance: input.action.bioimpedance!,
-        consultation: input.action.consultation!,
-        preference: input.action.preference!,
+        plan,
+        configRevision: configuration.revision,
+        preference: input.action.planPreference!,
+        criteria: input.action.criteria,
       });
       return {
         output: JSON.stringify({
           ok: true,
-          tool: "calendar.find_first_visit_option",
+          tool: "calendar.find_plan_option",
           timezone: result.settings.timezone,
           optionId: result.option?._id.toString() ?? null,
-          preference: result.option?.preference ?? input.action.preference,
-          bioimpedance: result.option?.bioimpedance ?? null,
-          consultation: result.option?.consultation ?? null,
+          planKey: plan.key,
+          planName: plan.name,
+          preference: result.option?.preference ?? input.action.planPreference,
+          steps: result.option?.steps.map((step) => ({
+            stepKey: step.stepKey,
+            eventTypeKey: step.eventTypeKey,
+            label: plan.steps.find((definition) => definition.key === step.stepKey)?.label ?? step.stepKey,
+            startAt: step.slot.startAt,
+            endAt: step.slot.endAt,
+          })) ?? [],
         }),
         retryable: false,
       };
     } catch (error) {
-      return operationalError("calendar.find_first_visit_option", error, "Falha na consulta da primeira visita.");
+      return operationalError("calendar.find_plan_option", error, "Falha na consulta do plano de agenda.");
     }
   }
 
-  if (input.action.action === "book_first_visit") {
+  if (input.action.action === "book_plan_option") {
     if (!input.action.optionId || !ObjectId.isValid(input.action.optionId) || !input.action.confirmedByCustomer) {
-      return validationError("calendar.book_first_visit", [
+      return validationError("calendar.book_plan_option", [
         invalid("arguments", "Informe optionId válido e confirmação explícita do cliente."),
       ]);
     }
-    if (!isCurrentFirstVisitOption(input.action.optionId, input.activeFirstVisitOptionId)) {
-      return validationError("calendar.book_first_visit", [
+    if (input.action.optionId !== input.activeSchedulingOptionId) {
+      return validationError("calendar.book_plan_option", [
         invalid("optionId", "A opção confirmada não é a proposta atual. Consulte novamente a agenda."),
       ]);
     }
+    const configuration = input.configuration;
+    const activeOption = await getActiveSchedulingPlanOption(input.customerId, new ObjectId(input.action.optionId));
+    const plan = configuration.schedulingPlans.find((item) => item.enabled && item.key === activeOption?.planKey);
+    if (!activeOption || !plan) {
+      return validationError("calendar.book_plan_option", [invalid("optionId", "A proposta não usa um plano ativo.")]);
+    }
+    const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, configuration);
+    if (prerequisiteError) return prerequisiteError;
     try {
-      const result = await bookFirstVisit({
+      const result = await bookSchedulingPlanOption({
         customerId: input.customerId,
         customerName: input.customerName,
         contactPhone: input.contactPhone,
         optionId: new ObjectId(input.action.optionId),
+        plan,
+        configRevision: configuration.revision,
       });
       return {
         output: JSON.stringify({
           ok: true,
-          tool: "calendar.book_first_visit",
-          visitGroupId: result.visitGroupId.toString(),
+          tool: "calendar.book_plan_option",
+          appointmentGroupId: result.appointmentGroupId.toString(),
           timezone: result.settings.timezone,
-          bioimpedance: result.option.bioimpedance,
-          consultation: result.option.consultation,
+          planKey: plan.key,
+          planName: plan.name,
+          steps: result.option.steps.map((step) => ({
+            stepKey: step.stepKey,
+            eventTypeKey: step.eventTypeKey,
+            label: plan.steps.find((definition) => definition.key === step.stepKey)?.label ?? step.stepKey,
+            startAt: step.slot.startAt,
+            endAt: step.slot.endAt,
+          })),
         }),
         retryable: false,
       };
     } catch (error) {
-      return operationalError("calendar.book_first_visit", error, "Falha na reserva da primeira visita.");
+      return operationalError("calendar.book_plan_option", error, "Falha na reserva do plano de agenda.");
     }
   }
 
@@ -253,38 +293,65 @@ async function validateAvailabilityInput(action: CalendarToolArguments) {
   return errors.length > 0 ? validationError("calendar.check_availability", errors) : null;
 }
 
-async function validateFirstVisitAvailability(action: CalendarToolArguments) {
+async function validatePlanAvailability(action: CalendarToolArguments, plan: SchedulingPlan) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
-  if (!action.preference) errors.push(required("arguments.preference", "Informe together ou separate."));
-  validateFirstVisitCriteria(action.bioimpedance, "bioimpedance", settings.timezone, errors);
-  validateFirstVisitCriteria(action.consultation, "consultation", settings.timezone, errors);
-  return errors.length > 0 ? validationError("calendar.find_first_visit_option", errors) : null;
+  if (!action.planPreference) errors.push(required("arguments.preference", "Informe compact ou flexible."));
+  const criteriaByStep = new Map(action.criteria.map((criterion) => [criterion.stepKey, criterion]));
+  for (const step of plan.steps.filter((item) => item.required)) {
+    const criterion = criteriaByStep.get(step.key);
+    if (!criterion) {
+      errors.push(required(`arguments.criteria.${step.key}`, `Informe os critérios de ${step.label}.`));
+      continue;
+    }
+    validatePlanCriterion(criterion, settings.timezone, errors);
+    validateEventType(step.eventTypeKey, settings, errors, `plan.steps.${step.key}.eventTypeKey`);
+  }
+  if (criteriaByStep.size !== action.criteria.length || action.criteria.some((criterion) => !plan.steps.some((step) => step.key === criterion.stepKey))) {
+    errors.push(invalid("arguments.criteria", "Use cada stepKey configurado no plano no máximo uma vez."));
+  }
+  return errors.length > 0 ? validationError("calendar.find_plan_option", errors) : null;
 }
 
-function validateFirstVisitCriteria(
-  criteria: FirstVisitToolCriteria | null,
-  field: "bioimpedance" | "consultation",
+function validatePlanCriterion(
+  criterion: PlanToolCriteria,
   timezone: string,
   errors: ToolValidationIssue[],
 ) {
-  if (!criteria) {
-    errors.push(required(`arguments.${field}`, `Informe os critérios de ${field}.`));
+  const fromDate = parseDate(criterion.fromDate, timezone);
+  const toDate = parseDate(criterion.toDate, timezone);
+  if (!fromDate || !toDate) {
+    errors.push(required(`arguments.criteria.${criterion.stepKey}`, "Informe datas válidas em YYYY-MM-DD."));
     return;
   }
-  const fromDate = parseDate(criteria.fromDate, timezone);
-  const toDate = parseDate(criteria.toDate, timezone);
-  if (!fromDate) errors.push(required(`arguments.${field}.fromDate`, "Informe a data inicial em YYYY-MM-DD."));
-  if (!toDate) errors.push(required(`arguments.${field}.toDate`, "Informe a data final em YYYY-MM-DD."));
-  if (criteria.startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(criteria.startTime)) {
-    errors.push(invalid(`arguments.${field}.startTime`, "Use HH:mm ou null."));
+  const rangeDays = toDate.diff(fromDate, "days").days;
+  if (rangeDays < 0 || rangeDays > 31) errors.push(invalid(`arguments.criteria.${criterion.stepKey}.toDate`, "Use uma janela de até 31 dias."));
+  if (criterion.dateIntent === "exact_date" && rangeDays !== 0) errors.push(invalid(`arguments.criteria.${criterion.stepKey}.toDate`, "Para exact_date, use datas iguais."));
+  if (criterion.dateIntent === "next_available" && rangeDays < 7) errors.push(invalid(`arguments.criteria.${criterion.stepKey}.toDate`, "Para next_available, use de 7 a 31 dias."));
+  if (criterion.startTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(criterion.startTime)) {
+    errors.push(invalid(`arguments.criteria.${criterion.stepKey}.startTime`, "Use HH:mm ou null."));
   }
-  if (fromDate && toDate) {
-    const rangeDays = toDate.diff(fromDate, "days").days;
-    if (rangeDays < 0 || rangeDays > 31) errors.push(invalid(`arguments.${field}.toDate`, "Use uma janela válida de até 31 dias."));
-    if (criteria.dateIntent === "exact_date" && rangeDays !== 0) errors.push(invalid(`arguments.${field}.toDate`, "Para exact_date, use datas iguais."));
-    if (criteria.dateIntent === "next_available" && rangeDays < 7) errors.push(invalid(`arguments.${field}.toDate`, "Para next_available, use de 7 a 31 dias."));
-  }
+}
+
+async function validatePlanPrerequisites(
+  customerId: ObjectId,
+  plan: SchedulingPlan,
+  configuration: AgentConfigurationDocument,
+) {
+  const [customer, payment] = await Promise.all([
+    findCustomerById(customerId.toString()),
+    getLatestPaymentRequest(customerId),
+  ]);
+  if (!customer) return validationError("calendar.find_plan_option", [invalid("customer", "Cliente não encontrado.")]);
+  const profile = getCustomerProfileSnapshot(customer);
+  const missingFields = getConfiguredMissingFields(profile, configuration.dataCollectionRules);
+  const facts = {
+    customer: { ...profile, missingFieldsCount: missingFields.length },
+    operations: { paymentStatus: payment?.status ?? null },
+  };
+  return matchesConditions(facts, plan.prerequisites)
+    ? null
+    : validationError("calendar.find_plan_option", [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
 }
 
 async function validateBookingInput(action: CalendarToolArguments) {
@@ -433,14 +500,25 @@ export function executeRegisteredCalendarTool(
       startAt: asString(args.startAt),
       confirmedByCustomer: args.confirmedByCustomer === true,
       notes: asString(args.notes),
-      preference: asValue(args.preference, ["together", "separate"]),
-      bioimpedance: asFirstVisitCriteria(args.bioimpedance),
-      consultation: asFirstVisitCriteria(args.consultation),
+      planKey: asString(args.planKey),
+      planPreference: asValue(args.preference, ["compact", "flexible"]),
+      criteria: asPlanCriteria(args.criteria),
     },
   });
 }
 
-function asFirstVisitCriteria(value: unknown): FirstVisitToolCriteria | null {
+function asPlanCriteria(value: unknown): PlanToolCriteria[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const criterion = item as Record<string, unknown>;
+    const stepKey = asString(criterion.stepKey);
+    const parsed = asPlanSearchCriteria(criterion);
+    return stepKey && parsed ? [{ stepKey, ...parsed }] : [];
+  });
+}
+
+function asPlanSearchCriteria(value: unknown): PlanSearchCriteria | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const criteria = value as Record<string, unknown>;
   const dateIntent = asValue(criteria.dateIntent, ["exact_date", "date_range", "next_available"]);

@@ -8,6 +8,8 @@ interface ConversationStateDocument {
   _id: ObjectId;
   customerId: ObjectId;
   summary: string;
+  pendingQuestion?: string | null;
+  nonSensitiveFacts?: string[];
   summarizedThrough: Date;
   updatedAt: Date;
 }
@@ -28,7 +30,12 @@ export async function loadAssistantContext(customerId: ObjectId, messageLimit: n
     messageLimit,
   );
 
-  return { summary: state?.summary ?? "Sem contexto anterior.", messages };
+  return {
+    summary: state?.summary ?? "Sem contexto anterior.",
+    pendingQuestion: state?.pendingQuestion ?? null,
+    nonSensitiveFacts: state?.nonSensitiveFacts ?? [],
+    messages,
+  };
 }
 
 export async function getAssistantConversationState(customerId: ObjectId) {
@@ -40,6 +47,8 @@ export async function saveAssistantContext(input: {
   customerId: ObjectId;
   summary: string;
   summarizedThrough: Date;
+  pendingQuestion?: string | null;
+  nonSensitiveFacts?: string[];
 }) {
   const states = await getStatesCollection();
   await states.updateOne(
@@ -47,6 +56,8 @@ export async function saveAssistantContext(input: {
     {
       $set: {
         summary: input.summary.slice(0, 8_000),
+        pendingQuestion: input.pendingQuestion?.slice(0, 500) ?? null,
+        nonSensitiveFacts: (input.nonSensitiveFacts ?? []).slice(0, 30).map((fact) => fact.slice(0, 500)),
         summarizedThrough: input.summarizedThrough,
         updatedAt: new Date(),
       },

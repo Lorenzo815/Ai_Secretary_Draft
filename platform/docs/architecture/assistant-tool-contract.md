@@ -6,13 +6,14 @@ Accepted on 2026-09-01.
 
 ## Decision
 
-Model responses use a generic, namespaced `toolCalls` envelope:
+Each model iteration uses a generic, namespaced `tool_request` action:
 
 ```json
 {
-  "toolCalls": [
-    {
-      "tool": "calendar.check_availability",
+  "type": "tool_request",
+  "reasonCode": "need_authoritative_data",
+  "toolCall": {
+      "name": "calendar.check_availability",
       "arguments": {
         "dateIntent": "exact_date",
         "fromDate": "2026-09-02",
@@ -20,14 +21,13 @@ Model responses use a generic, namespaced `toolCalls` envelope:
         "period": "morning",
         "eventType": "consultation"
       }
-    }
-  ]
+  }
 }
 ```
 
 The TypeScript registry is the source of truth for keys, metadata, argument
-schemas, prompt instructions, mutation classification and execution. Flows
-persist only the tool keys they authorize.
+schemas, prompt instructions, mutation classification and execution. The active
+agent configuration persists only the tool keys it authorizes.
 
 ## Why
 
@@ -38,7 +38,7 @@ without adding domain branches to orchestration.
 ## Consequences
 
 - Executable behavior requires a deploy and review.
-- Flows authorize registered tools without processor changes.
+- Agent configuration authorizes registered tools without processor changes.
 - Definitions lazy-load infrastructure so the registry remains import-safe.
 - Arguments are schema-validated and validated again by the executor.
 - Results contain `executedTools` and `results`.

@@ -1,25 +1,50 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 export default function SystemControls({
   initialProcessingEnabled,
   initialPayment,
 }: {
   initialProcessingEnabled: boolean;
-  initialPayment: { pixKey: string; recipientName: string; signalAmountCents: number };
+  initialPayment: { configured: boolean; recipientName: string; signalAmountCents: number };
 }) {
+  const initialSignalAmount = (initialPayment.signalAmountCents / 100).toFixed(2);
   const [processingEnabled, setProcessingEnabled] = useState(initialProcessingEnabled);
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [pixKey, setPixKey] = useState(initialPayment.pixKey);
+  const [pixKey, setPixKey] = useState("");
   const [recipientName, setRecipientName] = useState(initialPayment.recipientName);
-  const [signalAmount, setSignalAmount] = useState((initialPayment.signalAmountCents / 100).toFixed(2));
+  const [signalAmount, setSignalAmount] = useState(initialSignalAmount);
+  const [paymentBaseline, setPaymentBaseline] = useState({
+    recipientName: initialPayment.recipientName,
+    signalAmount: initialSignalAmount,
+  });
   const [savingPayment, setSavingPayment] = useState(false);
   const confirmationAccepted = confirmation.trim() === "APAGAR";
   const deletionEnabled = confirmationAccepted && !processingEnabled && !deleting;
+  const paymentDirty = Boolean(
+    pixKey
+    || recipientName !== paymentBaseline.recipientName
+    || signalAmount !== paymentBaseline.signalAmount,
+  );
+  const refreshBlocked = paymentDirty || Boolean(confirmation) || saving || savingPayment || deleting;
+
+  useEffect(() => {
+    if (!saving) setProcessingEnabled(initialProcessingEnabled);
+  }, [initialProcessingEnabled, saving]);
+
+  useEffect(() => {
+    if (paymentDirty || savingPayment) return;
+    setRecipientName(initialPayment.recipientName);
+    setSignalAmount(initialSignalAmount);
+    setPaymentBaseline({
+      recipientName: initialPayment.recipientName,
+      signalAmount: initialSignalAmount,
+    });
+  }, [initialPayment.recipientName, initialSignalAmount, paymentDirty, savingPayment]);
 
   async function toggleProcessing() {
     setSaving(true);
@@ -80,6 +105,10 @@ export default function SystemControls({
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error ?? "Não foi possível salvar o Pix.");
+      setPixKey("");
+      const normalizedAmount = (amountCents / 100).toFixed(2);
+      setSignalAmount(normalizedAmount);
+      setPaymentBaseline({ recipientName, signalAmount: normalizedAmount });
       setMessage("Configuração do sinal via Pix atualizada.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível salvar o Pix.");
@@ -89,7 +118,7 @@ export default function SystemControls({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
       <section aria-labelledby="payment-settings-title" className="border-y border-mist py-5">
         <h2 id="payment-settings-title" className="font-heading text-sm font-semibold text-slate-ink">
           Sinal via Pix
@@ -100,7 +129,7 @@ export default function SystemControls({
         <form onSubmit={savePayment} className="mt-4 grid gap-3 md:grid-cols-3 md:items-end">
           <label className="text-xs font-semibold text-slate-ink">
             Chave Pix
-            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required placeholder="{{PIX_KEY_NOT_CONFIGURED}}" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!initialPayment.configured} placeholder={initialPayment.configured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
           </label>
           <label className="text-xs font-semibold text-slate-ink">
             Favorecido
@@ -150,7 +179,7 @@ export default function SystemControls({
           Apagar dados dinâmicos
         </h2>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-stone">
-          Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, configurações do calendário, configurações do assistente e definições dos fluxos serão preservados.
+          Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados.
         </p>
         <form onSubmit={deleteDynamicData} className="mt-4 max-w-xl space-y-3">
           <label className="block text-xs font-semibold text-slate-ink">

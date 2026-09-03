@@ -31,13 +31,6 @@ type QualificationScoreDocument = Pick<
   "customerId" | "generatedAt" | "profileFit" | "combinedFit"
 >;
 
-interface FlowRunAnalyticsDocument {
-  customerId?: ObjectId;
-  flowKey: string;
-  createdAt: Date;
-  deliveryStatus: string;
-}
-
 interface PaymentAnalyticsDocument {
   customerId?: ObjectId;
   status: string;
@@ -83,12 +76,11 @@ export async function getDashboardOverview() {
     jobStatuses,
     upcomingAppointments,
     appointmentsNextSevenDays,
-    flowRunsLast24Hours,
+    agentRunsLast24Hours,
     cohortCustomers,
-    recentFlowRuns,
     recentPayments,
     recentAppointments,
-    activeFlowCounts,
+    agentRunStatusCounts,
     dailyMessageCounts,
     responseMessages,
     pendingPayments,
@@ -102,7 +94,7 @@ export async function getDashboardOverview() {
       { $group: { _id: "$direction", count: { $sum: 1 } } },
     ]).toArray(),
     database.collection("whatsapp_messages").countDocuments({ status: "failed", timestamp: { $gte: last24Hours } }),
-    database.collection("assistant_response_jobs").aggregate<{ _id: string; count: number }>([
+    database.collection("automation_jobs").aggregate<{ _id: string; count: number }>([
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]).toArray(),
     database.collection("calendar_appointments").find(
@@ -110,14 +102,10 @@ export async function getDashboardOverview() {
       { projection: { _id: 0, customerName: 1, eventType: 1, startAt: 1, endAt: 1, timezone: 1 } },
     ).sort({ startAt: 1 }).limit(6).toArray(),
     database.collection("calendar_appointments").countDocuments({ status: "scheduled", startAt: { $gte: now, $lt: nextSevenDays } }),
-    database.collection("assistant_flow_runs").countDocuments({ createdAt: { $gte: last24Hours }, deliveryStatus: "sent" }),
+    database.collection("assistant_runs").countDocuments({ startedAt: { $gte: last24Hours }, status: "completed" }),
     database.collection<CohortCustomerDocument>("crm_customers").find(
       { createdAt: { $gte: last30Days } },
       { projection: { _id: 1, relationship: 1, profile: 1, leadQualification: 1 } },
-    ).toArray(),
-    database.collection<FlowRunAnalyticsDocument>("assistant_flow_runs").find(
-      { createdAt: { $gte: last30Days }, deliveryStatus: "sent" },
-      { projection: { _id: 0, customerId: 1, flowKey: 1 } },
     ).toArray(),
     database.collection<PaymentAnalyticsDocument>("payment_requests").find(
       { createdAt: { $gte: last30Days } },
@@ -127,9 +115,9 @@ export async function getDashboardOverview() {
       { createdAt: { $gte: last30Days } },
       { projection: { _id: 0, customerId: 1, eventType: 1, status: 1, source: 1 } },
     ).toArray(),
-    database.collection("assistant_customer_flows").aggregate<{ _id: string; count: number }>([
-      { $match: { status: "active" } },
-      { $group: { _id: "$flowKey", count: { $sum: 1 } } },
+    database.collection("assistant_runs").aggregate<{ _id: string; count: number }>([
+      { $match: { startedAt: { $gte: last30Days } } },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]).toArray(),
     database.collection("whatsapp_messages").aggregate<{ _id: { date: string; direction: string }; count: number }>([
@@ -163,11 +151,11 @@ export async function getDashboardOverview() {
   const profileCompleteIds = new Set(cohortCustomers
     .filter((customer) => customer.relationship?.status === "new" && isProfileComplete(customer.profile))
     .map((customer) => customer._id.toString()));
-  const commercialIds = distinctCustomerIds(
-    recentFlowRuns.filter((run) => run.flowKey === "commercial_information"),
+  const engagedIds = distinctCustomerIds(
+    responseMessages.filter((message) => message.direction === "outbound"),
     profileCompleteIds,
   );
-  const paymentRequestedIds = distinctCustomerIds(recentPayments, commercialIds);
+  const paymentRequestedIds = distinctCustomerIds(recentPayments, engagedIds);
   const paymentConfirmedIds = distinctCustomerIds(
     recentPayments.filter((payment) => payment.status === "paid"),
     paymentRequestedIds,
@@ -207,7 +195,7 @@ export async function getDashboardOverview() {
     jobStatuses: Object.fromEntries(jobStatuses.map((item) => [item._id, item.count])),
     upcomingAppointments,
     appointmentsNextSevenDays,
-    flowRunsLast24Hours,
+    agentRunsLast24Hours,
     timezone,
     periodDays: 30,
     activitySeries: buildDailyActivity(now, timezone, dailyMessageCounts),
@@ -216,12 +204,12 @@ export async function getDashboardOverview() {
       { key: "contacts", label: "Contatos", count: cohortIds.size },
       { key: "new_patients", label: "Novos pacientes", count: newPatientIds.size },
       { key: "profile_complete", label: "Cadastro completo", count: profileCompleteIds.size },
-      { key: "commercial", label: "Conversa comercial", count: commercialIds.size },
+      { key: "agent_engaged", label: "Atendimento do agente", count: engagedIds.size },
       { key: "payment_requested", label: "Sinal solicitado", count: paymentRequestedIds.size },
       { key: "payment_paid", label: "Sinal confirmado", count: paymentConfirmedIds.size },
       { key: "scheduled", label: "Consulta agendada", count: scheduledIds.size },
     ],
-    activeFlows: activeFlowCounts.map((item) => ({ key: item._id, count: item.count })),
+    agentRunStatuses: agentRunStatusCounts.map((item) => ({ key: item._id, count: item.count })),
     commercialMetrics: {
       newPatients: newPatientIds.size,
       returningPatients: cohortCustomers.filter((customer) => customer.relationship?.status === "returning").length,
