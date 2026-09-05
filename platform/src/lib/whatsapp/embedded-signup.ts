@@ -97,7 +97,7 @@ export async function getEmbeddedSignupConnectionStatus(): Promise<EmbeddedSignu
   };
 }
 
-export async function exchangeEmbeddedSignupCode(code: string) {
+export async function exchangeEmbeddedSignupCode(code: string, redirectUri: string) {
   const normalizedCode = code.trim();
   if (normalizedCode.length < 20 || normalizedCode.length > 4096) {
     throw new Error("Código temporário da Meta inválido.");
@@ -105,6 +105,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
 
   const configuration = await getEmbeddedSignupConfiguration();
   if (!configuration.appId) throw new Error("App ID da Meta não está configurado.");
+  const normalizedRedirectUri = validateRedirectUri(redirectUri);
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret) throw new Error("WHATSAPP_APP_SECRET não está configurado.");
 
@@ -112,6 +113,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
     client_id: configuration.appId,
     client_secret: appSecret,
     code: normalizedCode,
+    redirect_uri: normalizedRedirectUri,
   });
   const response = await fetch(
     `https://graph.facebook.com/${configuration.graphVersion}/oauth/access_token?${query}`,
@@ -347,4 +349,17 @@ export async function captureCoexistenceWebhookEvent(input: {
     { upsert: true },
   );
   return result.upsertedCount === 1;
+}
+
+function validateRedirectUri(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("URL de redirecionamento OAuth inválida.");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new Error("URL de redirecionamento OAuth inválida.");
+  }
+  return `${url.origin}/`;
 }
