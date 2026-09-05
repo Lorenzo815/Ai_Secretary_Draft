@@ -1,16 +1,22 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function SystemControls({
   initialProcessingEnabled,
   initialPayment,
+  initialCustomers,
 }: {
   initialProcessingEnabled: boolean;
   initialPayment: { configured: boolean; recipientName: string; signalAmountCents: number };
+  initialCustomers: Array<{ id: string; label: string }>;
 }) {
+  const router = useRouter();
   const initialSignalAmount = (initialPayment.signalAmountCents / 100).toFixed(2);
   const [processingEnabled, setProcessingEnabled] = useState(initialProcessingEnabled);
+  const [deletionScope, setDeletionScope] = useState<"customer" | "all">("customer");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -24,7 +30,8 @@ export default function SystemControls({
   });
   const [savingPayment, setSavingPayment] = useState(false);
   const confirmationAccepted = confirmation.trim() === "APAGAR";
-  const deletionEnabled = confirmationAccepted && !processingEnabled && !deleting;
+  const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
+  const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !deleting;
   const paymentDirty = Boolean(
     pixKey
     || recipientName !== paymentBaseline.recipientName
@@ -33,8 +40,8 @@ export default function SystemControls({
   const refreshBlocked = paymentDirty || Boolean(confirmation) || saving || savingPayment || deleting;
 
   useEffect(() => {
-    if (!saving) setProcessingEnabled(initialProcessingEnabled);
-  }, [initialProcessingEnabled, saving]);
+    setProcessingEnabled(initialProcessingEnabled);
+  }, [initialProcessingEnabled]);
 
   useEffect(() => {
     if (paymentDirty || savingPayment) return;
@@ -56,10 +63,11 @@ export default function SystemControls({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ processingEnabled: nextValue }),
       });
-      const result = await response.json() as { error?: string };
+      const result = await response.json() as { processingEnabled?: boolean; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Não foi possível atualizar o processamento.");
-      setProcessingEnabled(nextValue);
-      setMessage(nextValue
+      const savedValue = result.processingEnabled ?? nextValue;
+      setProcessingEnabled(savedValue);
+      setMessage(savedValue
         ? "Processamento de respostas retomado."
         : "Processamento pausado. Novos jobs continuarão sendo salvos.");
     } catch (error) {
@@ -77,12 +85,20 @@ export default function SystemControls({
       const response = await fetch("/api/settings", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: confirmation.trim() }),
+        body: JSON.stringify({
+          confirmation: confirmation.trim(),
+          scope: deletionScope,
+          ...(deletionScope === "customer" ? { customerId: selectedCustomerId } : {}),
+        }),
       });
       const result = await response.json() as { deletedCount?: number; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Não foi possível apagar os dados.");
       setConfirmation("");
-      setMessage(`${result.deletedCount ?? 0} registros dinâmicos foram apagados.`);
+      setSelectedCustomerId("");
+      setMessage(deletionScope === "customer"
+        ? `${result.deletedCount ?? 0} registros do cliente foram apagados.`
+        : `${result.deletedCount ?? 0} registros dinâmicos foram apagados.`);
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível apagar os dados.");
     } finally {
@@ -182,6 +198,29 @@ export default function SystemControls({
           Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados.
         </p>
         <form onSubmit={deleteDynamicData} className="mt-4 max-w-xl space-y-3">
+          <fieldset>
+            <legend className="text-xs font-semibold text-slate-ink">O que deseja apagar?</legend>
+            <div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">
+              {([
+                ["customer", "Um cliente"],
+                ["all", "Todos os dados"],
+              ] as const).map(([value, label]) => (
+                <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold transition-colors ${deletionScope === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}>
+                  <input type="radio" name="deletionScope" value={value} checked={deletionScope === value} onChange={() => { setDeletionScope(value); setConfirmation(""); }} className="sr-only" />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {deletionScope === "customer" && (
+            <label className="block text-xs font-semibold text-slate-ink">
+              Cliente
+              <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} required className="mt-1 block min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-red-500">
+                <option value="">Selecione um cliente</option>
+                {initialCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.label}</option>)}
+              </select>
+            </label>
+          )}
           <label className="block text-xs font-semibold text-slate-ink">
             Digite APAGAR para confirmar
             <input
@@ -206,6 +245,8 @@ export default function SystemControls({
         <p id="delete-confirmation-status" className={`mt-2 text-xs font-medium ${confirmationAccepted && !processingEnabled ? "text-red-700" : "text-stone"}`}>
           {processingEnabled
             ? "Pause as respostas automáticas antes de apagar."
+            : !deletionTargetSelected
+              ? "Selecione o cliente cujos dados serão apagados."
             : confirmationAccepted
               ? "Confirmação reconhecida. O botão de exclusão está liberado."
               : "O botão será liberado quando você digitar APAGAR."}

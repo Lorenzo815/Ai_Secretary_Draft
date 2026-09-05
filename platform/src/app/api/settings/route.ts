@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { clearDynamicData } from "@/lib/admin/database";
+import { ObjectId } from "mongodb";
+import { clearDynamicData, clearDynamicDataForCustomer } from "@/lib/admin/database";
 import { getAgentConfiguration, setAgentEnabled, updateAgentPaymentSettings } from "@/lib/assistant/agent";
 import { authOptions } from "@/lib/auth";
 
@@ -60,7 +61,22 @@ export async function DELETE(request: Request) {
     );
   }
 
-  const deleted = await clearDynamicData();
+  if (input.scope !== "all" && input.scope !== "customer") {
+    return NextResponse.json({ error: "Escopo de exclusão inválido." }, { status: 400 });
+  }
+
+  let deleted;
+  if (input.scope === "customer") {
+    if (typeof input.customerId !== "string" || !ObjectId.isValid(input.customerId)) {
+      return NextResponse.json({ error: "Selecione um cliente válido." }, { status: 400 });
+    }
+    deleted = await clearDynamicDataForCustomer(new ObjectId(input.customerId));
+    if (!deleted) {
+      return NextResponse.json({ error: "Cliente não encontrado." }, { status: 404 });
+    }
+  } else {
+    deleted = await clearDynamicData();
+  }
   const deletedCount = Object.values(deleted).reduce((total, count) => total + count, 0);
-  return NextResponse.json({ deleted, deletedCount });
+  return NextResponse.json({ deleted, deletedCount, scope: input.scope });
 }
