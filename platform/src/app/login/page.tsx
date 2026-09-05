@@ -16,7 +16,7 @@ export default function LoginPage() {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+  const callbackUrl = getSafeCallbackUrl(searchParams.get("callbackUrl"));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -30,34 +30,32 @@ function LoginForm() {
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-      callbackUrl,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+        callbackUrl,
+      });
 
-    setLoading(false);
-
-    if (result?.error) {
-      setError("Email ou senha inválidos.");
-    } else if (result?.ok) {
-      router.push(callbackUrl);
-      router.refresh();
+      if (result?.error) {
+        setError("Email ou senha inválidos.");
+      } else if (result?.ok) {
+        router.push(callbackUrl);
+      } else {
+        setError("Não foi possível iniciar a sessão.");
+      }
+    } catch {
+      setError("Não foi possível conectar. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
     <div className="flex min-h-screen">
       {/* ── Brand Panel ── */}
-      <div className="hidden lg:flex lg:w-[480px] xl:w-[560px] flex-col justify-between bg-gradient-to-br from-deep-teal to-forest-teal p-12 relative overflow-hidden">
-        {/* Decorative orbital rings */}
-        <div className="pointer-events-none absolute -right-24 -top-24 opacity-[0.07]">
-          <OriaSymbol className="h-[400px] w-[400px] animate-orbital" color="#FCFAF6" />
-        </div>
-        <div className="pointer-events-none absolute -bottom-32 -left-20 opacity-[0.05]">
-          <OriaSymbol className="h-[300px] w-[300px] animate-orbital" color="#6EE7B7" />
-        </div>
+      <div className="relative hidden overflow-hidden bg-deep-teal p-12 lg:flex lg:w-[480px] lg:flex-col lg:justify-between xl:w-[560px]">
 
         {/* Top: logo */}
         <div className="relative z-10">
@@ -146,7 +144,7 @@ function LoginForm() {
                   type="email"
                   autoComplete="email"
                   required
-                  className="mt-1.5 block w-full rounded-xl border border-mist bg-white px-4 py-3 text-sm text-slate-ink placeholder-stone shadow-sm focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20 transition-all"
+                  className="mt-1.5 block w-full rounded-lg border border-mist bg-white px-4 py-3 text-sm text-slate-ink placeholder-stone shadow-sm transition-all focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20"
                   placeholder="voce@empresa.com"
                 />
               </div>
@@ -163,7 +161,7 @@ function LoginForm() {
                     autoComplete="current-password"
                     required
                     minLength={8}
-                    className="block w-full rounded-xl border border-mist bg-white px-4 py-3 pr-11 text-sm text-slate-ink placeholder-stone shadow-sm focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20 transition-all"
+                    className="block w-full rounded-lg border border-mist bg-white px-4 py-3 pr-11 text-sm text-slate-ink placeholder-stone shadow-sm transition-all focus:border-deep-teal focus:outline-none focus:ring-2 focus:ring-deep-teal/20"
                     placeholder="••••••••"
                   />
                   <button
@@ -190,7 +188,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={loading}
-              className="relative flex w-full justify-center rounded-xl bg-deep-teal px-4 py-3 text-sm font-semibold text-white shadow-md shadow-deep-teal/25 hover:bg-forest-teal hover:shadow-lg hover:shadow-deep-teal/30 focus:outline-none focus:ring-2 focus:ring-deep-teal focus:ring-offset-2 focus:ring-offset-soft-ivory disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+              className="relative flex w-full justify-center rounded-lg bg-deep-teal px-4 py-3 text-sm font-semibold text-white shadow-md shadow-deep-teal/25 transition-all duration-200 hover:bg-forest-teal hover:shadow-lg hover:shadow-deep-teal/30 focus:outline-none focus:ring-2 focus:ring-deep-teal focus:ring-offset-2 focus:ring-offset-soft-ivory disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <span className="flex items-center gap-2">
@@ -214,4 +212,8 @@ function LoginForm() {
       </div>
     </div>
   );
+}
+
+function getSafeCallbackUrl(value: string | null) {
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
 }

@@ -8,6 +8,7 @@ export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed
 
 export interface WhatsAppMessageDocument {
   _id: ObjectId;
+  customerId?: ObjectId;
   metaMessageId: string;
   contactPhone: string;
   contactName?: string;
@@ -32,7 +33,7 @@ export async function saveWhatsAppMessage(
   const messages = await getMessagesCollection();
   const now = new Date();
 
-  await messages.updateOne(
+  const result = await messages.updateOne(
     { metaMessageId: message.metaMessageId },
     {
       $set: { ...message, updatedAt: now },
@@ -40,6 +41,8 @@ export async function saveWhatsAppMessage(
     },
     { upsert: true },
   );
+
+  return { inserted: result.upsertedCount === 1 };
 }
 
 export async function updateWhatsAppMessageStatus(metaMessageId: string, status: MessageStatus) {
@@ -60,10 +63,46 @@ export async function listWhatsAppMessages(limit = 100) {
     .toArray();
 }
 
+export async function listWhatsAppMessagesForCustomer(
+  customerId: ObjectId,
+  phones: string[],
+  limit = 500,
+) {
+  const messages = await getMessagesCollection();
+  const safeLimit = Math.min(Math.max(limit, 1), 1000);
+  return messages
+    .find({
+      $or: [{ customerId }, { contactPhone: { $in: phones } }],
+    }, { projection: { _id: 0 } })
+    .sort({ timestamp: 1 })
+    .limit(safeLimit)
+    .toArray();
+}
+
+export async function listWhatsAppMessagesForAssistant(
+  customerId: ObjectId,
+  after?: Date,
+  limit = 40,
+) {
+  const messages = await getMessagesCollection();
+  const safeLimit = Math.min(Math.max(limit, 1), 80);
+  const results = await messages
+    .find({
+      customerId,
+      ...(after ? { timestamp: { $gt: after } } : {}),
+    })
+    .sort({ timestamp: -1 })
+    .limit(safeLimit)
+    .toArray();
+
+  return results.reverse();
+}
+
 export async function ensureWhatsAppMessageIndexes() {
   const messages = await getMessagesCollection();
   await Promise.all([
     messages.createIndex({ metaMessageId: 1 }, { unique: true }),
     messages.createIndex({ contactPhone: 1, timestamp: -1 }),
+    messages.createIndex({ customerId: 1, timestamp: -1 }),
   ]);
 }

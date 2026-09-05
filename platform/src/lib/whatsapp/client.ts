@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
+import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
 const DEFAULT_GRAPH_VERSION = "v25.0";
 
@@ -51,9 +52,10 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
   };
 }
 
-export function getWhatsAppPublicStatus(): WhatsAppPublicStatus {
-  const config = getWhatsAppConfig();
-  const missingVariables = [
+export async function getWhatsAppPublicStatus(): Promise<WhatsAppPublicStatus> {
+  const operationalConfig = await getOperationalEmbeddedSignupConfig();
+  const config = operationalConfig ?? getWhatsAppConfig();
+  const missingVariables = operationalConfig ? [] : [
     !process.env.WHATSAPP_ACCESS_TOKEN && "WHATSAPP_ACCESS_TOKEN",
     !process.env.WHATSAPP_PHONE_NUMBER_ID && "WHATSAPP_PHONE_NUMBER_ID",
   ].filter((variable): variable is string => Boolean(variable));
@@ -70,7 +72,7 @@ export function getWhatsAppPublicStatus(): WhatsAppPublicStatus {
 }
 
 export async function sendSampleTemplate(input: SendTemplateInput) {
-  const config = requireWhatsAppConfig();
+  const config = await requireWhatsAppConfig();
   const to = normalizePhone(input.to);
   const payload = {
     messaging_product: "whatsapp",
@@ -97,7 +99,7 @@ export async function sendSampleTemplate(input: SendTemplateInput) {
 }
 
 export async function sendTextMessage(input: SendTextInput) {
-  const config = requireWhatsAppConfig();
+  const config = await requireWhatsAppConfig();
   const to = normalizePhone(input.to);
   const body = input.body.trim();
   if (!body) throw new Error("Escreva uma mensagem antes de enviar.");
@@ -126,8 +128,8 @@ export function isValidWebhookSignature(rawBody: string, signature: string | nul
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
-function requireWhatsAppConfig() {
-  const config = getWhatsAppConfig();
+async function requireWhatsAppConfig() {
+  const config = await getOperationalEmbeddedSignupConfig() ?? getWhatsAppConfig();
   if (!config) throw new Error("A integração do WhatsApp não está configurada no servidor.");
   return config;
 }
@@ -149,15 +151,28 @@ async function sendPayload(config: WhatsAppConfig, payload: object) {
       },
       body: JSON.stringify(payload),
       cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
     },
   );
   const result = (await response.json()) as {
     messages?: Array<{ id: string }>;
-    error?: { message?: string };
+    error?: {
+      message?: string;
+      type?: string;
+      code?: number;
+      error_subcode?: number;
+    };
   };
 
   if (!response.ok || !result.messages?.[0]?.id) {
-    throw new Error(result.error?.message ?? "A Meta recusou o envio da mensagem.");
+    const details = [
+      result.error?.type,
+      result.error?.code ? `code ${result.error.code}` : undefined,
+      result.error?.error_subcode ? `subcode ${result.error.error_subcode}` : undefined,
+    ].filter(Boolean).join(", ");
+    throw new Error(
+      `WhatsApp Cloud API recusou o envio${details ? ` (${details})` : ""}: ${result.error?.message ?? `HTTP ${response.status}`}`,
+    );
   }
   return result.messages[0].id;
 }

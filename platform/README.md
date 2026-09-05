@@ -1,25 +1,12 @@
 # Oria Platform
 
-Aplicação principal da Oria, uma secretária com IA voltada inicialmente para
-agendamentos e acompanhamentos de clientes pelo WhatsApp.
-
-## Estado atual
-
-- Login com credenciais e sessão protegida via NextAuth
-- Usuários persistidos no MongoDB
-- Dashboard autenticado com o estado real do MVP
-- Perfil carregado da sessão no servidor
-- Integração demonstrativa com a WhatsApp Cloud API
-- Envio de template e histórico local de mensagens no MongoDB
-- Webhook para mensagens recebidas e atualizações de status
-
-Agenda e acompanhamentos ainda não possuem persistência nem APIs. Consulte
-[MVP.md](MVP.md) para o escopo proposto.
+Aplicação Next.js da Oria para atendimento administrativo pelo WhatsApp, CRM,
+agenda, pagamentos e automação com IA.
 
 ## Desenvolvimento
 
-Copie as chaves de `.env.example` para `.env.local` e preencha os valores.
-Depois:
+Configure as variáveis de ambiente do MongoDB, NextAuth, WhatsApp, Azure
+OpenAI, criptografia de PII e worker. Depois execute:
 
 ```bash
 npm install
@@ -27,35 +14,46 @@ npm run seed
 npm run dev
 ```
 
-Abra [http://localhost:3000](http://localhost:3000).
+`npm run dev` inicia o Next.js e o worker do assistente. Para processos
+separados, use `npm run dev:next` e `npm run worker:assistant`.
 
-## WhatsApp Business
+## Assistente
 
-A demonstração usa uma configuração única no servidor. Preencha estas
-variáveis em `.env.local`:
+O webhook persiste cada mensagem e publica eventos em uma fila genérica no
+MongoDB. Regras de automação podem acionar o agente de atendimento ou a
+qualificação independente de leads. O agente usa uma configuração ativa
+mutável, identificada por revisão e hash, que é fixada durante todo o job.
 
-- `WHATSAPP_PHONE_NUMBER_ID`: ID do número fornecido pela Meta
-- `WHATSAPP_ACCESS_TOKEN`: token de acesso, somente no servidor
-- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: segredo escolhido para validar o webhook
-- `WHATSAPP_APP_SECRET`: segredo do aplicativo para validar assinaturas
-- `WHATSAPP_BUSINESS_ACCOUNT_ID`: opcional nesta primeira versão
+Em cada iteração o modelo retorna exatamente uma resposta final ou uma
+solicitação de ferramenta. Ferramentas consultam e alteram dados somente no
+servidor, com autorização, validação de argumentos, limites de mutação e regras
+de negócio determinísticas. Resultados são acumulados até a resposta final ou
+até um limite configurado.
 
-No painel da Meta, configure o callback com a URL exibida na página
-`/dashboard/whatsapp`, use o mesmo token de verificação e assine o campo
-`messages`. Em desenvolvimento, o callback precisa ser publicado por uma URL
-HTTPS; `localhost` não pode ser acessado pela Meta.
+O Agent Studio em `/dashboard/fluxos` edita identidade, políticas,
+conhecimento, coleta de dados, planos de agenda, ferramentas, limites,
+qualificação e automações. A API correspondente é `/api/assistant/studio`.
+Segredos Pix não são enviados ao navegador.
 
-A Cloud API não fornece importação retroativa de conversas. O endpoint
-`GET /api/whatsapp/messages` consulta somente o histórico armazenado pela Oria
-desde a ativação do webhook. Nesta demonstração, a configuração e o histórico
-são compartilhados por todos os usuários autenticados; isolamento por empresa
-deve ser implementado antes de uso multi-tenant.
+Consulte [src/lib/assistant/README.md](src/lib/assistant/README.md) para os
+invariantes e pontos de extensão.
 
-Nunca coloque o token da Meta no código ou em uma variável `NEXT_PUBLIC_*`.
+## Implantação
+
+Webhooks devem apontar para `/api/webhooks/whatsapp`. O worker chama
+`POST /api/internal/assistant/process` com
+`Authorization: Bearer ASSISTANT_WORKER_SECRET`. Em ambientes serverless, use
+um agendador externo para invocar a rota ou hospede o worker em um processo
+Node contínuo.
+
+Tokens e chaves permanecem em variáveis somente de servidor; nunca use o
+prefixo `NEXT_PUBLIC_*` para segredos.
 
 ## Verificação
 
 ```bash
+npm test
 npm run lint
+npm exec tsc -- --noEmit
 npm run build
 ```

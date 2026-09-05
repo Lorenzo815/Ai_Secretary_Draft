@@ -1,11 +1,18 @@
 import "server-only";
 
+import { emitAutomationEvent } from "../automation";
+import { findOrCreateCustomerFromWhatsApp } from "../crm";
 import {
   ensureWhatsAppMessageIndexes,
   MessageStatus,
   saveWhatsAppMessage,
   updateWhatsAppMessageStatus,
 } from "./messages";
+import {
+  captureCoexistenceWebhookEvent,
+  COEXISTENCE_WEBHOOK_FIELDS,
+  isOperationalEmbeddedSignupPhoneNumber,
+} from "./embedded-signup";
 
 interface WebhookMessage {
   id?: string;
@@ -21,7 +28,8 @@ interface WebhookMessage {
   reaction?: { emoji?: string };
 }
 
-interface WebhookValue {
+interface WebhookValue extends Record<string, unknown> {
+  metadata?: { phone_number_id?: string };
   contacts?: Array<{ profile?: { name?: string } }>;
   messages?: WebhookMessage[];
   statuses?: Array<{ id?: string; status?: string }>;
@@ -29,7 +37,7 @@ interface WebhookValue {
 
 interface WebhookPayload {
   object?: string;
-  entry?: Array<{ changes?: Array<{ field?: string; value?: WebhookValue }> }>;
+  entry?: Array<{ id?: string; changes?: Array<{ field?: string; value?: WebhookValue }> }>;
 }
 
 const validStatuses = new Set<MessageStatus>(["sent", "delivered", "read", "failed"]);
@@ -55,16 +63,39 @@ export async function processWhatsAppWebhook(rawBody: string) {
   await ensureWhatsAppMessageIndexes();
   let receivedMessages = 0;
   let statusUpdates = 0;
+  let coexistenceEvents = 0;
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value;
+      if (change.field && value && COEXISTENCE_WEBHOOK_FIELDS.has(change.field)) {
+        if (await captureCoexistenceWebhookEvent({
+          wabaId: entry.id ?? "unknown",
+          field: change.field,
+          value,
+        })) coexistenceEvents += 1;
+      }
       if (change.field !== "messages" || !value) continue;
+      const embeddedConnectionMatch = await isOperationalEmbeddedSignupPhoneNumber(value.metadata?.phone_number_id);
+      if (embeddedConnectionMatch === false) continue;
+      if (embeddedConnectionMatch === null) {
+        const legacyPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+        if (legacyPhoneNumberId && value.metadata?.phone_number_id !== legacyPhoneNumberId) continue;
+      }
       const contact = value.contacts?.[0];
 
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
-        await saveWhatsAppMessage({
+        const timestamp = message.timestamp
+          ? new Date(Number(message.timestamp) * 1000)
+          : new Date();
+        const customer = await findOrCreateCustomerFromWhatsApp({
+          phone: message.from,
+          name: contact?.profile?.name,
+          interactionAt: timestamp,
+        });
+        const saved = await saveWhatsAppMessage({
+          customerId: customer._id,
           metaMessageId: message.id,
           contactPhone: message.from,
           contactName: contact?.profile?.name,
@@ -72,8 +103,15 @@ export async function processWhatsAppWebhook(rawBody: string) {
           type: message.type ?? "unknown",
           body: getMessageBody(message),
           status: "received",
-          timestamp: message.timestamp ? new Date(Number(message.timestamp) * 1000) : new Date(),
+          timestamp,
         });
+        if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
+          await emitAutomationEvent({
+            type: "message.received",
+            customerId: customer._id,
+            occurredAt: timestamp,
+          });
+        }
         receivedMessages += 1;
       }
 
@@ -86,7 +124,7 @@ export async function processWhatsAppWebhook(rawBody: string) {
     }
   }
 
-  return { receivedMessages, statusUpdates };
+  return { receivedMessages, statusUpdates, coexistenceEvents };
 }
 
 function getMessageBody(message: WebhookMessage) {

@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({
-    ...getWhatsAppPublicStatus(),
+    ...await getWhatsAppPublicStatus(),
     webhookUrl: new URL("/api/webhooks/whatsapp", request.nextUrl.origin).toString(),
   });
 }

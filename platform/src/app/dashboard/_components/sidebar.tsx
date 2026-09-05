@@ -3,16 +3,31 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
+import { Activity, Bot, CalendarDays, ChevronLeft, ContactRound, LayoutDashboard, LogOut, Menu, SlidersHorizontal } from "lucide-react";
 import { OriaLogo, OriaSymbol } from "@/components/oria-logo";
 import { useEffect, useState, useCallback } from "react";
 
-const navItems = [
-  { href: "/dashboard", label: "Visão geral", icon: HomeIcon },
-  { href: "/dashboard/whatsapp", label: "WhatsApp", icon: WhatsAppIcon },
-  { href: "/dashboard/settings", label: "Conta", icon: SettingsIcon },
+const navigationGroups = [
+  { label: "Trabalho", items: [
+    { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
+    { href: "/dashboard/clientes", label: "Clientes", icon: ContactRound },
+    { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays },
+  ] },
+  { label: "Inteligência", items: [
+    { href: "/dashboard/fluxos", label: "Agent Studio", icon: Bot },
+    { href: "/dashboard/operacoes", label: "Operações", icon: Activity },
+  ] },
+  { label: "Administração", items: [
+    { href: "/dashboard/settings/system", label: "Configurações", icon: SlidersHorizontal },
+  ] },
 ];
 
 const LG_BREAKPOINT = 1024;
+
+function isNavigationActive(pathname: string, href: string) {
+  if (href === "/dashboard") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -78,49 +93,22 @@ export default function Sidebar() {
           className="flex h-8 w-8 items-center justify-center rounded-lg text-stone hover:bg-white/60 hover:text-slate-ink transition-colors"
           aria-label="Recolher menu"
         >
-          <CollapseIcon className="h-[18px] w-[18px]" />
+          <ChevronLeft className="h-[18px] w-[18px]" />
         </button>
       </div>
 
-      {/* Section label */}
-      <div className="px-6 pb-2 pt-4">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-stone">
-          Menu
-        </span>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 space-y-0.5 px-3">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-                isActive
-                  ? "bg-white text-deep-teal shadow-sm"
-                  : "text-slate-ink/60 hover:bg-white/60 hover:text-slate-ink"
-              }`}
-            >
-              <span
-                className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                  isActive
-                    ? "bg-deep-teal/10 text-deep-teal"
-                    : "bg-transparent text-stone group-hover:bg-deep-teal/5 group-hover:text-slate-ink/80"
-                }`}
-              >
-                <item.icon className="h-[18px] w-[18px]" />
-              </span>
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav aria-label="Navegação principal" className="space-y-5 px-3 pt-4">
+        {navigationGroups.map((group) => <div key={group.label}><p className="px-3 pb-2 text-[10px] font-semibold uppercase text-stone">{group.label}</p><div className="space-y-0.5">{group.items.map((item) => {
+          const isActive = isNavigationActive(pathname, item.href);
+          return <Link key={item.href} href={item.href} className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${isActive ? "bg-white text-deep-teal shadow-sm ring-1 ring-mist/70" : "text-slate-ink/65 hover:bg-white/60 hover:text-slate-ink"}`}><item.icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? "text-deep-teal" : "text-stone group-hover:text-slate-ink/75"}`} />{item.label}</Link>;
+        })}</div></div>)}
       </nav>
+
+      <div className="flex-1" />
 
       {/* User section + Logout */}
       <div className="border-t border-mist/60 p-4">
-        <div className="flex items-center gap-3 rounded-xl bg-white/70 p-3">
+        <Link href="/dashboard/settings" className="flex items-center gap-3 rounded-lg bg-white/70 p-3 transition hover:bg-white">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-deep-teal text-xs font-bold text-white">
             {initials}
           </div>
@@ -132,13 +120,13 @@ export default function Sidebar() {
               {session?.user?.email || ""}
             </div>
           </div>
-        </div>
+        </Link>
 
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}
-          className="mt-2 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium text-stone hover:bg-white/60 hover:text-burnt-coral transition-all duration-150"
+          className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-stone transition-colors hover:bg-white/60 hover:text-burnt-coral"
         >
-          <LogoutIcon className="h-[18px] w-[18px]" />
+          <LogOut className="h-[18px] w-[18px]" />
           Sair
         </button>
       </div>
@@ -158,7 +146,7 @@ export default function Sidebar() {
           className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-ink hover:bg-white/60 transition-colors"
           aria-label="Abrir menu"
         >
-          <HamburgerIcon className="h-5 w-5" />
+          <Menu className="h-5 w-5" />
         </button>
         <OriaSymbol className="h-7 w-7" color="#0F766E" />
         <div className="w-9" />
@@ -172,133 +160,15 @@ export default function Sidebar() {
         />
       )}
 
-      {/* ── Sidebar panel ── */}
       {isMobile ? (
-        /* Mobile: overlay drawer */
-        <aside
-          className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col bg-warm-sand/95 backdrop-blur-md shadow-xl transition-transform duration-300 ease-in-out ${
-            open ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
+        <aside className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col bg-warm-sand/95 shadow-xl backdrop-blur-md transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "-translate-x-full"}`}>
           {sidebarInner}
         </aside>
       ) : (
-        /* Desktop: inline collapsible */
-        <aside
-          className={`shrink-0 flex h-screen flex-col bg-warm-sand/60 shadow-[1px_0_0_0_theme(colors.mist)] transition-[width,opacity] duration-300 ease-in-out overflow-hidden ${
-            open ? "w-[260px]" : "w-0"
-          }`}
-        >
-          <div className="flex h-full w-[260px] flex-col">
-            {sidebarInner}
-          </div>
+        <aside className={`flex h-screen shrink-0 flex-col overflow-hidden bg-warm-sand/60 shadow-[1px_0_0_0_theme(colors.mist)] transition-[width,opacity] duration-300 ease-in-out ${open ? "w-[260px]" : "w-0"}`}>
+          <div className="flex h-full w-[260px] flex-col">{sidebarInner}</div>
         </aside>
       )}
     </>
-  );
-}
-
-/* ---------- Simple SVG Icons ---------- */
-
-function HomeIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M2.25 12l8.954-8.955a1.126 1.126 0 011.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"
-      />
-    </svg>
-  );
-}
-
-function WhatsAppIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-8.25 7.5 1.14-3.42A8.25 8.25 0 1 1 7.5 20.1l-3.75.65Z" />
-    </svg>
-  );
-}
-
-function SettingsIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"
-      />
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-      />
-    </svg>
-  );
-}
-
-function LogoutIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"
-      />
-    </svg>
-  );
-}
-
-function CollapseIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M15.75 19.5L8.25 12l7.5-7.5"
-      />
-    </svg>
-  );
-}
-
-function HamburgerIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
-      />
-    </svg>
   );
 }
