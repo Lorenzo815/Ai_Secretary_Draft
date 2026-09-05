@@ -103,10 +103,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
     throw new Error("Código temporário da Meta inválido.");
   }
 
-  const configuration = await getEmbeddedSignupConfiguration();
-  if (!configuration.appId) throw new Error("App ID da Meta não está configurado.");
-  const appSecret = process.env.WHATSAPP_APP_SECRET;
-  if (!appSecret) throw new Error("WHATSAPP_APP_SECRET não está configurado.");
+  const { configuration, appSecret } = await verifyEmbeddedSignupAppCredentials();
 
   const query = new URLSearchParams({
     client_id: configuration.appId,
@@ -119,10 +116,10 @@ export async function exchangeEmbeddedSignupCode(code: string) {
   );
   const result = await response.json() as {
     access_token?: string;
-    error?: { message?: string };
+    error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string };
   };
   if (!response.ok || !result.access_token) {
-    throw new Error(result.error?.message ?? "A Meta recusou a troca do código temporário.");
+    throw new Error(formatMetaError(result.error, "A Meta recusou a troca do código temporário."));
   }
 
   const now = new Date();
@@ -137,6 +134,45 @@ export async function exchangeEmbeddedSignupCode(code: string) {
     updatedAt: now,
   });
   return { connectionId };
+}
+
+export async function verifyEmbeddedSignupAppCredentials() {
+  const configuration = await getEmbeddedSignupConfiguration();
+  if (!configuration.appId) throw new Error("App ID da Meta não está configurado.");
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret) throw new Error("WHATSAPP_APP_SECRET não está configurado.");
+  const query = new URLSearchParams({
+    client_id: configuration.appId,
+    client_secret: appSecret,
+    grant_type: "client_credentials",
+  });
+  const response = await fetch(
+    `https://graph.facebook.com/${configuration.graphVersion}/oauth/access_token?${query}`,
+    { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+  );
+  const result = await response.json() as {
+    access_token?: string;
+    error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string };
+  };
+  if (!response.ok || !result.access_token) {
+    throw new Error(formatMetaError(
+      result.error,
+      "O App Secret não foi aceito para o App ID configurado.",
+    ));
+  }
+  return { configuration, appSecret };
+}
+
+function formatMetaError(
+  error: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string } | undefined,
+  fallback: string,
+) {
+  const identifiers = [
+    error?.code !== undefined ? `code ${error.code}` : undefined,
+    error?.error_subcode !== undefined ? `subcode ${error.error_subcode}` : undefined,
+    error?.fbtrace_id ? `trace ${error.fbtrace_id}` : undefined,
+  ].filter(Boolean).join(", ");
+  return `${error?.message ?? fallback}${identifiers ? ` (${identifiers})` : ""}`;
 }
 
 export async function finalizeEmbeddedSignupConnection(input: {

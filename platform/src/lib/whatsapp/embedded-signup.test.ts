@@ -78,6 +78,10 @@ describe("Embedded Signup configuration", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => ({ access_token: "app-access-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ access_token: accessToken }),
       })
       .mockResolvedValueOnce({
@@ -93,7 +97,7 @@ describe("Embedded Signup configuration", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const exchanged = await exchangeEmbeddedSignupCode("temporary-meta-code-long-enough");
-    const exchangeUrl = new URL(fetchMock.mock.calls[0][0]);
+    const exchangeUrl = new URL(fetchMock.mock.calls[1][0]);
     expect(exchangeUrl.searchParams.has("redirect_uri")).toBe(false);
     const storedConnection = insertOne.mock.calls[0][0];
     expect(storedConnection.accessToken.ciphertext).not.toContain(accessToken);
@@ -111,7 +115,7 @@ describe("Embedded Signup configuration", () => {
     });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      4,
       "https://graph.facebook.com/v25.0/1122334455/subscribed_apps",
       expect.objectContaining({
         method: "POST",

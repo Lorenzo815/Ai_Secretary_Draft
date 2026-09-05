@@ -260,7 +260,7 @@ export default function EmbeddedSignupSettings({
     }
   }
 
-  function launchSignup() {
+  async function launchSignup() {
     if (window.location.protocol !== "https:") {
       setMessage("O Login da Meta exige HTTPS. Abra esta página no ambiente publicado para executar o teste.");
       return;
@@ -270,13 +270,24 @@ export default function EmbeddedSignupSettings({
       return;
     }
     setLaunching(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/whatsapp/embedded-signup/readiness", { cache: "no-store" });
+      const result = await response.json() as { ready?: boolean; error?: string };
+      if (!response.ok || !result.ready) {
+        throw new Error(result.error ?? "A configuração da Meta não está pronta.");
+      }
+    } catch (error) {
+      setLaunching(false);
+      setMessage(error instanceof Error ? error.message : "Não foi possível validar a configuração da Meta.");
+      return;
+    }
     setOAuthStatus("waiting");
     setCompletionStatus("idle");
     setSessionEvent(null);
     connectionIdRef.current = null;
     sessionEventRef.current = null;
     finalizingRef.current = false;
-    setMessage(null);
     window.FB.login((response) => {
       setLaunching(false);
       if (response.authResponse?.code) {
@@ -330,7 +341,7 @@ export default function EmbeddedSignupSettings({
       </form>
 
       <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-mist pt-5">
-        <button type="button" onClick={launchSignup} disabled={!configured || !sdkReady || !pageUsesHttps || launching || dirty} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal bg-white px-4 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:cursor-not-allowed disabled:opacity-45">
+        <button type="button" onClick={() => void launchSignup()} disabled={!configured || !sdkReady || !pageUsesHttps || launching || dirty} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal bg-white px-4 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:cursor-not-allowed disabled:opacity-45">
           {launching ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           {launching ? "Aguardando Meta..." : "Conectar com a Meta"}
         </button>
