@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Bot, CircleDollarSign, DatabaseZap } from "lucide-react";
 
 export default function SystemControls({
   initialProcessingEnabled,
@@ -134,42 +135,15 @@ export default function SystemControls({
   }
 
   return (
-    <div className="space-y-8" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
-      <section aria-labelledby="payment-settings-title" className="border-y border-mist py-5">
-        <h2 id="payment-settings-title" className="font-heading text-sm font-semibold text-slate-ink">
-          Sinal via Pix
-        </h2>
-        <p className="mt-1 max-w-2xl text-sm text-stone">
-          Estes valores substituem os placeholders do prompt e são a única fonte autorizada para a IA.
-        </p>
-        <form onSubmit={savePayment} className="mt-4 grid gap-3 md:grid-cols-3 md:items-end">
-          <label className="text-xs font-semibold text-slate-ink">
-            Chave Pix
-            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!initialPayment.configured} placeholder={initialPayment.configured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
-          </label>
-          <label className="text-xs font-semibold text-slate-ink">
-            Favorecido
-            <input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required placeholder="Nome exibido no comprovante" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
-          </label>
-          <label className="text-xs font-semibold text-slate-ink">
-            Valor do sinal (R$)
-            <input value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required inputMode="decimal" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
-          </label>
-          <button type="submit" disabled={savingPayment} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 md:col-start-3">
-            {savingPayment ? "Salvando..." : "Salvar configuração Pix"}
-          </button>
-        </form>
-      </section>
-
-      <section aria-labelledby="assistant-processing-title" className="border-y border-mist py-5">
+    <div className="grid gap-5 lg:grid-cols-2" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
+      <section aria-labelledby="assistant-processing-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 id="assistant-processing-title" className="font-heading text-sm font-semibold text-slate-ink">
-              Respostas automáticas
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-stone">
-              Quando pausado, mensagens recebidas ainda criam jobs, mas o assistente não os processa.
-            </p>
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><Bot className="h-5 w-5" /></span>
+            <div>
+              <h3 id="assistant-processing-title" className="font-heading text-base font-semibold text-slate-ink">Respostas automáticas</h3>
+              <p className="mt-1 max-w-md text-sm leading-6 text-stone">Pause o processamento sem interromper o recebimento de novas mensagens.</p>
+            </div>
           </div>
           <button
             type="button"
@@ -183,21 +157,36 @@ export default function SystemControls({
             <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${processingEnabled ? "bg-deep-teal" : "bg-mist"}`}>
               <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${processingEnabled ? "translate-x-4" : "translate-x-0"}`} />
             </span>
-            <span className="w-16 text-left text-sm font-semibold text-slate-ink">
-              {saving ? "Salvando..." : processingEnabled ? "Ativo" : "Pausado"}
-            </span>
+            <span className="w-16 text-left text-sm font-semibold text-slate-ink">{saving ? "Salvando..." : processingEnabled ? "Ativo" : "Pausado"}</span>
           </button>
         </div>
+        <div className={`mt-5 rounded-md px-3 py-2.5 text-xs font-medium ${processingEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{processingEnabled ? "A Oria está processando a fila normalmente." : "As mensagens continuam salvas, mas aguardam processamento."}</div>
       </section>
 
-      <section aria-labelledby="database-title" className="border-y border-red-200 py-5">
-        <h2 id="database-title" className="font-heading text-sm font-semibold text-red-700">
-          Apagar dados dinâmicos
-        </h2>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-stone">
-          Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados.
-        </p>
-        <form onSubmit={deleteDynamicData} className="mt-4 max-w-xl space-y-3">
+      <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Sinal via Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Fonte autorizada para valores informados pela IA.</p></div></div>
+        <form onSubmit={savePayment} className="mt-4 grid gap-3 md:grid-cols-3 md:items-end">
+          <label className="text-xs font-semibold text-slate-ink">
+            Chave Pix
+            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!initialPayment.configured} placeholder={initialPayment.configured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+          </label>
+          <label className="text-xs font-semibold text-slate-ink">
+            Favorecido
+            <input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required placeholder="Nome exibido no comprovante" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+          </label>
+          <label className="text-xs font-semibold text-slate-ink">
+            Valor do sinal (R$)
+            <input value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required inputMode="decimal" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+          </label>
+          <button type="submit" disabled={savingPayment || !paymentDirty} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 md:col-start-3">
+            {savingPayment ? "Salvando..." : "Salvar configuração Pix"}
+          </button>
+        </form>
+      </section>
+
+      <section aria-labelledby="database-title" className="rounded-lg border border-red-200 bg-white p-5 shadow-sm lg:col-span-2 sm:p-6">
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-700"><DatabaseZap className="h-5 w-5" /></span><div><p className="text-[11px] font-bold uppercase text-red-700">Zona de risco</p><h3 id="database-title" className="mt-0.5 font-heading text-base font-semibold text-slate-ink">Apagar dados dinâmicos</h3><p className="mt-1 max-w-3xl text-sm leading-6 text-stone">Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados.</p></div></div>
+        <form onSubmit={deleteDynamicData} className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)] lg:items-end">
           <fieldset>
             <legend className="text-xs font-semibold text-slate-ink">O que deseja apagar?</legend>
             <div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">
@@ -237,12 +226,12 @@ export default function SystemControls({
           <button
             type="submit"
             disabled={!deletionEnabled}
-            className="flex min-h-11 w-full items-center justify-center rounded-md border-2 border-red-700 bg-red-700 px-4 text-sm font-bold text-white transition-colors hover:bg-red-800 disabled:cursor-not-allowed disabled:border-red-300 disabled:bg-white disabled:text-red-400"
+            className="flex min-h-10 w-full items-center justify-center rounded-md border border-red-700 bg-red-700 px-4 text-sm font-bold text-white transition-colors hover:bg-red-800 disabled:cursor-not-allowed disabled:border-red-200 disabled:bg-white disabled:text-red-400"
           >
             {deleting ? "Apagando..." : "Confirmar exclusão"}
           </button>
         </form>
-        <p id="delete-confirmation-status" className={`mt-2 text-xs font-medium ${confirmationAccepted && !processingEnabled ? "text-red-700" : "text-stone"}`}>
+        <p id="delete-confirmation-status" className={`mt-3 text-xs font-medium lg:col-span-2 ${confirmationAccepted && !processingEnabled ? "text-red-700" : "text-stone"}`}>
           {processingEnabled
             ? "Pause as respostas automáticas antes de apagar."
             : !deletionTargetSelected
@@ -253,7 +242,7 @@ export default function SystemControls({
         </p>
       </section>
 
-      {message && <p role="status" className="text-sm font-medium text-deep-teal">{message}</p>}
+      {message && <p role="status" className="rounded-md border border-deep-teal/20 bg-deep-teal/5 px-4 py-3 text-sm font-medium text-deep-teal lg:col-span-2">{message}</p>}
     </div>
   );
 }
