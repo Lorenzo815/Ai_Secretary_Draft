@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createCipheriv, createHash, createHmac, randomBytes } from "crypto";
-import { Collection, ObjectId } from "mongodb";
+import { Collection, Document, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { CustomerProfileValidationError, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone } from "./validation";
 
@@ -126,6 +126,23 @@ export interface CustomerOperationsDocument extends CustomerDocument {
   };
   latestMessage?: { direction: "inbound" | "outbound"; body: string; timestamp: Date };
   messageAfterClosure?: boolean;
+}
+
+export type CustomerOperationsFilter = "all" | "attention" | "ai_active" | "human_active" | "scheduled" | "closed";
+export type CustomerOperationsSort = "recent" | "oldest" | "name_asc" | "name_desc";
+
+export interface CustomerOperationsPage {
+  items: CustomerOperationsDocument[];
+  page: number;
+  pageSize: number;
+  pageCount: number;
+  total: number;
+  summary: {
+    total: number;
+    humanService: number;
+    scheduled: number;
+    qualified: number;
+  };
 }
 
 const DB_NAME = "ai_secretary";
@@ -464,6 +481,148 @@ export async function listCustomerOperations() {
     } },
     { $unset: ["agentRunDocuments", "conversationDocuments", "appointmentDocuments", "messageDocuments"] },
   ]).toArray();
+}
+
+export async function listCustomerOperationsPage(input: {
+  page?: number;
+  pageSize?: number;
+  query?: string;
+  status?: CustomerOperationsFilter;
+  sort?: CustomerOperationsSort;
+} = {}): Promise<CustomerOperationsPage> {
+  const client = await clientPromise;
+  const database = client.db(DB_NAME);
+  const customers = database.collection<CustomerDocument>("crm_customers");
+  const appointments = database.collection<{ customerId: ObjectId; status: string; startAt: Date }>("calendar_appointments");
+  const pageSize = Math.min(Math.max(Math.trunc(input.pageSize ?? 25), 10), 100);
+  const requestedPage = Math.max(Math.trunc(input.page ?? 1), 1);
+  const query = input.query?.trim();
+  const status = input.status ?? "all";
+  const now = new Date();
+  const baseMatch: Document = {};
+
+  if (query) {
+    const pattern = escapeRegularExpression(query);
+    const phonePattern = query.replace(/\D/g, "");
+    baseMatch.$or = [
+      { name: { $regex: pattern, $options: "i" } },
+      ...(phonePattern ? [{ phones: { $regex: phonePattern } }] : []),
+      { "profile.fullName": { $regex: pattern, $options: "i" } },
+      { "profile.address.city": { $regex: pattern, $options: "i" } },
+      { "profile.profession": { $regex: pattern, $options: "i" } },
+    ];
+  }
+  if (["ai_active", "human_active", "closed"].includes(status)) {
+    baseMatch.serviceStatus = status;
+  }
+
+  const initialStages: Document[] = Object.keys(baseMatch).length ? [{ $match: baseMatch }] : [];
+  const postMatch = status === "scheduled"
+    ? { nextAppointment: { $ne: null } }
+    : status === "attention"
+      ? { $or: [
+      { messageAfterClosure: true },
+      { serviceStatus: "waiting_human" },
+      { "agentRun.status": "failed" },
+    ] }
+      : null;
+  const countResult = postMatch
+    ? await customers.aggregate<{ total: number }>([
+      ...initialStages,
+      ...buildCustomerOperationsEnrichment(now),
+      { $match: postMatch },
+      { $count: "total" },
+    ]).next()
+    : null;
+  const total = countResult?.total ?? (postMatch ? 0 : await customers.countDocuments(baseMatch));
+  const pageCount = Math.max(Math.ceil(total / pageSize), 1);
+  const page = Math.min(requestedPage, pageCount);
+  const itemPipeline: Document[] = postMatch
+    ? [
+      ...initialStages,
+      ...buildCustomerOperationsEnrichment(now),
+      { $match: postMatch },
+      { $sort: customerOperationsSort(input.sort ?? "recent") },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+    ]
+    : [
+      ...initialStages,
+      { $sort: customerOperationsSort(input.sort ?? "recent") },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+      ...buildCustomerOperationsEnrichment(now),
+    ];
+
+  const [items, summaryTotal, humanService, scheduledCustomerIds, qualified] = await Promise.all([
+    customers.aggregate<CustomerOperationsDocument>(itemPipeline).toArray(),
+    customers.countDocuments(),
+    customers.countDocuments({ serviceStatus: { $in: ["waiting_human", "human_active"] } }),
+    appointments.distinct("customerId", { status: "scheduled", startAt: { $gte: now } }),
+    customers.countDocuments({ leadQualification: { $exists: true } }),
+  ]);
+
+  return {
+    items,
+    page,
+    pageSize,
+    pageCount,
+    total,
+    summary: {
+      total: summaryTotal,
+      humanService,
+      scheduled: scheduledCustomerIds.length,
+      qualified,
+    },
+  };
+}
+
+function buildCustomerOperationsEnrichment(now: Date): Document[] {
+  return [
+    { $lookup: { from: "assistant_runs", let: { customerId: "$_id" }, pipeline: [
+      { $match: { $expr: { $eq: ["$customerId", "$$customerId"] } } },
+      { $sort: { updatedAt: -1 } },
+      { $limit: 1 },
+    ], as: "agentRunDocuments" } },
+    { $lookup: { from: "assistant_conversation_states", localField: "_id", foreignField: "customerId", as: "conversationDocuments" } },
+    { $lookup: { from: "calendar_appointments", let: { customerId: "$_id" }, pipeline: [
+      { $match: { $expr: { $and: [
+        { $eq: ["$customerId", "$$customerId"] },
+        { $eq: ["$status", "scheduled"] },
+        { $gte: ["$startAt", now] },
+      ] } } },
+      { $sort: { startAt: 1 } },
+      { $limit: 1 },
+    ], as: "appointmentDocuments" } },
+    { $lookup: { from: "whatsapp_messages", let: { customerId: "$_id" }, pipeline: [
+      { $match: { $expr: { $eq: ["$customerId", "$$customerId"] } } },
+      { $sort: { timestamp: -1 } },
+      { $limit: 1 },
+      { $project: { _id: 0, direction: 1, body: 1, timestamp: 1 } },
+    ], as: "messageDocuments" } },
+    { $set: {
+      agentRun: { $arrayElemAt: ["$agentRunDocuments", 0] },
+      conversationState: { $arrayElemAt: ["$conversationDocuments", 0] },
+      nextAppointment: { $arrayElemAt: ["$appointmentDocuments", 0] },
+      latestMessage: { $arrayElemAt: ["$messageDocuments", 0] },
+    } },
+    { $set: { messageAfterClosure: { $and: [
+      { $eq: ["$serviceStatus", "closed"] },
+      { $eq: ["$latestMessage.direction", "inbound"] },
+    ] } } },
+    { $unset: ["agentRunDocuments", "conversationDocuments", "appointmentDocuments", "messageDocuments"] },
+  ];
+}
+
+function customerOperationsSort(sort: CustomerOperationsSort): Document {
+  if (sort === "oldest") return { lastInteractionAt: 1, _id: 1 };
+  if (sort === "name_asc") return { name: 1, _id: 1 };
+  if (sort === "name_desc") return { name: -1, _id: 1 };
+  return { lastInteractionAt: -1, _id: 1 };
+}
+
+function escapeRegularExpression(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function saveCustomerLeadQualification(

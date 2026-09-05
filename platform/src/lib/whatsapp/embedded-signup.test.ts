@@ -92,12 +92,9 @@ describe("Embedded Signup configuration", () => {
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    const exchanged = await exchangeEmbeddedSignupCode(
-      "temporary-meta-code-long-enough",
-      "https://ai-secretary-draft.vercel.app/",
-    );
+    const exchanged = await exchangeEmbeddedSignupCode("temporary-meta-code-long-enough");
     const exchangeUrl = new URL(fetchMock.mock.calls[0][0]);
-    expect(exchangeUrl.searchParams.get("redirect_uri")).toBe("https://ai-secretary-draft.vercel.app/");
+    expect(exchangeUrl.searchParams.has("redirect_uri")).toBe(false);
     const storedConnection = insertOne.mock.calls[0][0];
     expect(storedConnection.accessToken.ciphertext).not.toContain(accessToken);
     expect(JSON.stringify(storedConnection)).not.toContain(accessToken);

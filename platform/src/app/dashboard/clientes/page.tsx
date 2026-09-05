@@ -1,24 +1,31 @@
 import Link from "next/link";
-import { listCustomerOperations, type CustomerOperationsDocument } from "@/lib/crm";
+import { ArrowUpDown, Search } from "lucide-react";
+import {
+  listCustomerOperationsPage,
+  type CustomerOperationsDocument,
+  type CustomerOperationsFilter,
+  type CustomerOperationsSort,
+} from "@/lib/crm";
 import AutoRefresh from "../_components/auto-refresh";
+import Pagination from "../_components/pagination";
 
 export const dynamic = "force-dynamic";
-
-type CustomerFilter = "all" | "attention" | "ai_active" | "human_active" | "scheduled" | "closed";
 
 export default async function CustomersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; sort?: string; page?: string }>;
 }) {
   const parameters = await searchParams;
   const query = parameters.q?.trim() ?? "";
   const status = isCustomerFilter(parameters.status) ? parameters.status : "all";
-  const customers = await listCustomerOperations();
-  const filtered = customers.filter((customer) => matchesQuery(customer, query) && matchesStatus(customer, status));
-  const attentionCount = customers.filter(needsAttention).length;
-  const scheduledCount = customers.filter((customer) => Boolean(customer.nextAppointment)).length;
-  const qualifiedCount = customers.filter((customer) => Boolean(customer.leadQualification)).length;
+  const sort = isCustomerSort(parameters.sort) ? parameters.sort : "recent";
+  const result = await listCustomerOperationsPage({
+    page: parsePositiveInteger(parameters.page),
+    query,
+    status,
+    sort,
+  });
 
   return (
     <div className="animate-fade-in-up space-y-7">
@@ -29,20 +36,24 @@ export default async function CustomersPage({
           <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Clientes</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone">Acompanhe quem precisa de atenção, o contexto mais recente e o avanço até o agendamento.</p>
         </div>
-        <p className="text-xs font-semibold text-stone">{filtered.length} de {customers.length} registro(s)</p>
+        <p className="text-xs font-semibold text-stone">{result.total} resultado(s) · página {result.page} de {result.pageCount}</p>
       </header>
 
       <section aria-label="Resumo da base" className="grid overflow-hidden rounded-lg border border-mist bg-white sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Base total" value={customers.length} detail="clientes identificados" />
-        <Metric label="Ação humana" value={attentionCount} detail="aguardando ou reabertos" attention={attentionCount > 0} />
-        <Metric label="Com agenda" value={scheduledCount} detail="próximo evento confirmado" />
-        <Metric label="Qualificados" value={qualifiedCount} detail="perfil comercial analisado" />
+        <Metric label="Base total" value={result.summary.total} detail="clientes identificados" />
+        <Metric label="Atendimento humano" value={result.summary.humanService} detail="aguardando ou em atendimento" attention={result.summary.humanService > 0} />
+        <Metric label="Com agenda" value={result.summary.scheduled} detail="próximo evento confirmado" />
+        <Metric label="Qualificados" value={result.summary.qualified} detail="perfil comercial analisado" />
       </section>
 
-      <form className="grid gap-3 rounded-lg border border-mist bg-white p-4 md:grid-cols-[minmax(0,1fr)_220px_auto] md:items-end">
+      <form className="grid gap-3 rounded-lg border border-mist bg-white p-4 md:grid-cols-[minmax(0,1fr)_200px_200px_auto] md:items-end">
         <label className="text-xs font-semibold text-slate-ink">
           Buscar cliente
-          <input name="q" defaultValue={query} placeholder="Nome, telefone, cidade ou contexto" className="mt-1.5 w-full rounded-md border border-mist bg-soft-ivory/50 px-3 py-2.5 text-sm outline-none transition focus:border-deep-teal focus:bg-white" />
+          <span className="relative mt-1.5 block"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" /><input name="q" defaultValue={query} placeholder="Nome, telefone, cidade ou profissão" className="w-full rounded-md border border-mist bg-soft-ivory/50 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-deep-teal focus:bg-white" /></span>
+        </label>
+        <label className="text-xs font-semibold text-slate-ink">
+          Ordenar por
+          <span className="relative mt-1.5 block"><ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" /><select name="sort" defaultValue={sort} className="w-full appearance-none rounded-md border border-mist bg-soft-ivory/50 py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-deep-teal focus:bg-white"><option value="recent">Interação mais recente</option><option value="oldest">Interação mais antiga</option><option value="name_asc">Nome A–Z</option><option value="name_desc">Nome Z–A</option></select></span>
         </label>
         <label className="text-xs font-semibold text-slate-ink">
           Situação
@@ -57,12 +68,12 @@ export default async function CustomersPage({
         </label>
         <div className="flex gap-2">
           <button type="submit" className="rounded-md bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-forest-teal">Aplicar</button>
-          {(query || status !== "all") && <Link href="/dashboard/clientes" className="rounded-md border border-mist px-4 py-2.5 text-sm font-semibold text-stone transition hover:border-stone hover:text-slate-ink">Limpar</Link>}
+          {(query || status !== "all" || sort !== "recent") && <Link href="/dashboard/clientes" className="rounded-md border border-mist px-4 py-2.5 text-sm font-semibold text-stone transition hover:border-stone hover:text-slate-ink">Limpar</Link>}
         </div>
       </form>
 
       <section className="overflow-hidden rounded-lg border border-mist bg-white">
-        {filtered.length === 0 ? (
+        {result.items.length === 0 ? (
           <div className="px-5 py-16 text-center">
             <p className="text-sm font-semibold text-slate-ink">Nenhum cliente encontrado</p>
             <p className="mt-1 text-xs text-stone">Ajuste a busca ou os filtros para ampliar os resultados.</p>
@@ -70,7 +81,7 @@ export default async function CustomersPage({
         ) : (
           <>
             <div className="divide-y divide-mist lg:hidden">
-              {filtered.map((customer) => <CustomerCard key={customer._id.toString()} customer={customer} />)}
+              {result.items.map((customer) => <CustomerCard key={customer._id.toString()} customer={customer} />)}
             </div>
             <div className="hidden overflow-x-auto lg:block">
               <table className="w-full min-w-[1080px] border-collapse text-left">
@@ -86,7 +97,7 @@ export default async function CustomersPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-mist">
-                  {filtered.map((customer) => (
+                  {result.items.map((customer) => (
                     <tr key={customer._id.toString()} className="transition hover:bg-soft-ivory/55">
                       <td className="px-5 py-4">
                         <p className="text-sm font-semibold text-slate-ink">{customer.name}</p>
@@ -108,6 +119,7 @@ export default async function CustomersPage({
             </div>
           </>
         )}
+        <Pagination pathname="/dashboard/clientes" page={result.page} pageCount={result.pageCount} pageSize={result.pageSize} total={result.total} parameters={{ q: query || undefined, status: status === "all" ? undefined : status, sort: sort === "recent" ? undefined : sort }} />
       </section>
     </div>
   );
@@ -139,21 +151,17 @@ function needsAttention(customer: CustomerOperationsDocument) {
   return customer.messageAfterClosure || customer.serviceStatus === "waiting_human" || customer.agentRun?.status === "failed";
 }
 
-function matchesQuery(customer: CustomerOperationsDocument, query: string) {
-  if (!query) return true;
-  const normalized = query.toLocaleLowerCase("pt-BR");
-  return [customer.name, ...customer.phones, customer.profile?.address?.city, customer.profile?.profession, contextLabel(customer)].some((value) => value?.toLocaleLowerCase("pt-BR").includes(normalized));
-}
-
-function matchesStatus(customer: CustomerOperationsDocument, status: CustomerFilter) {
-  if (status === "all") return true;
-  if (status === "attention") return needsAttention(customer);
-  if (status === "scheduled") return Boolean(customer.nextAppointment);
-  return customer.serviceStatus === status;
-}
-
-function isCustomerFilter(value?: string): value is CustomerFilter {
+function isCustomerFilter(value?: string): value is CustomerOperationsFilter {
   return ["all", "attention", "ai_active", "human_active", "scheduled", "closed"].includes(value ?? "");
+}
+
+function isCustomerSort(value?: string): value is CustomerOperationsSort {
+  return ["recent", "oldest", "name_asc", "name_desc"].includes(value ?? "");
+}
+
+function parsePositiveInteger(value?: string) {
+  const parsed = Number.parseInt(value ?? "1", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function profileLabel(customer: CustomerOperationsDocument) {
