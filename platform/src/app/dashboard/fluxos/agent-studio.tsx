@@ -1,8 +1,9 @@
 "use client";
 
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-type Tab = "conversation" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "automation" | "preview";
+type Tab = "conversation" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
 type Condition = { field: string; operator: Operator; value?: string | number | boolean };
 type ConditionGroup = { all?: Condition[]; any?: Condition[] };
@@ -61,11 +62,25 @@ interface QualificationConfiguration {
   updatedBy: string;
 }
 
+interface FollowUpConfiguration {
+  revision: number;
+  contentHash: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  activeStartHour: number;
+  activeEndHour: number;
+  maxHoursSinceInbound: number;
+  prompt: string;
+  attemptInstructions: string[];
+  updatedAt: string;
+  updatedBy: string;
+}
+
 interface AutomationRule {
   _id: string;
   name: string;
   enabled: boolean;
-  process: "customer_agent" | "lead_qualification";
+  process: "customer_agent";
   event: "message.received" | "customer.profile.updated" | "payment.status.changed" | "appointment.status.changed" | "manual.requested";
   conditions: ConditionGroup;
   debounceMs: number;
@@ -78,6 +93,7 @@ interface AutomationRule {
 interface StudioPayload {
   configuration: AgentConfiguration;
   qualification: QualificationConfiguration;
+  followUp: FollowUpConfiguration;
   automationRules: AutomationRule[];
   availableTools: Array<{ key: string; label: string; description: string; mutates: boolean; protectedInstructions: string }>;
   calendarEventTypes: Array<{ key: string; name: string; durationMinutes: number; resourceId: string }>;
@@ -99,6 +115,7 @@ const tabs: Array<{ id: Tab; label: string }> = [
   { id: "tools", label: "Ferramentas" },
   { id: "limits", label: "Limites" },
   { id: "qualification", label: "Qualificação" },
+  { id: "follow_up", label: "Follow-up" },
   { id: "automation", label: "Automação" },
   { id: "preview", label: "Contrato compilado" },
 ];
@@ -111,6 +128,7 @@ export function AgentStudio() {
   const [payload, setPayload] = useState<StudioPayload | null>(null);
   const [agent, setAgent] = useState<AgentConfiguration | null>(null);
   const [qualification, setQualification] = useState<QualificationConfiguration | null>(null);
+  const [followUp, setFollowUp] = useState<FollowUpConfiguration | null>(null);
   const [automation, setAutomation] = useState<AutomationRule[]>([]);
   const [tab, setTab] = useState<Tab>("conversation");
   const [feedback, setFeedback] = useState("");
@@ -121,6 +139,7 @@ export function AgentStudio() {
     setPayload(data);
     setAgent(structuredClone(data.configuration));
     setQualification(structuredClone(data.qualification));
+    setFollowUp(structuredClone(data.followUp));
     setAutomation(structuredClone(data.automationRules));
   }
 
@@ -132,6 +151,7 @@ export function AgentStudio() {
         setPayload(data);
         setAgent(structuredClone(data.configuration));
         setQualification(structuredClone(data.qualification));
+        setFollowUp(structuredClone(data.followUp));
         setAutomation(structuredClone(data.automationRules));
       })
       .catch((error) => { if (active) setFeedback(error instanceof Error ? error.message : "Falha ao carregar configurações."); });
@@ -140,9 +160,10 @@ export function AgentStudio() {
 
   const agentDirty = Boolean(payload && agent && JSON.stringify(payload.configuration) !== JSON.stringify(agent));
   const qualificationDirty = Boolean(payload && qualification && JSON.stringify(payload.qualification) !== JSON.stringify(qualification));
+  const followUpDirty = Boolean(payload && followUp && JSON.stringify(payload.followUp) !== JSON.stringify(followUp));
   const automationDirty = Boolean(payload && JSON.stringify(payload.automationRules) !== JSON.stringify(automation));
-  const activeDirty = tab === "qualification" ? qualificationDirty : tab === "automation" ? automationDirty : agentDirty;
-  const hasUnsavedChanges = agentDirty || qualificationDirty || automationDirty;
+  const activeDirty = tab === "qualification" ? qualificationDirty : tab === "follow_up" ? followUpDirty : tab === "automation" ? automationDirty : agentDirty;
+  const hasUnsavedChanges = agentDirty || qualificationDirty || followUpDirty || automationDirty;
 
   useEffect(() => {
     let active = true;
@@ -157,6 +178,7 @@ export function AgentStudio() {
         setPayload(data);
         setAgent(structuredClone(data.configuration));
         setQualification(structuredClone(data.qualification));
+        setFollowUp(structuredClone(data.followUp));
         setAutomation(structuredClone(data.automationRules));
       } catch {
         // A later poll retries without replacing the current editor state.
@@ -175,11 +197,13 @@ export function AgentStudio() {
   }, [hasUnsavedChanges, saving]);
 
   async function save() {
-    if (!payload || !agent || !qualification || !activeDirty) return;
+    if (!payload || !agent || !qualification || !followUp || !activeDirty) return;
     setSaving(true);
     setFeedback("");
     const body = tab === "qualification"
       ? { scope: "qualification", qualification }
+      : tab === "follow_up"
+        ? { scope: "follow_up", followUp }
       : tab === "automation"
         ? { scope: "automation", automationRules: automation }
         : { scope: "agent", expectedRevision: agent.revision, configuration: editableAgent(agent) };
@@ -200,7 +224,7 @@ export function AgentStudio() {
     }
   }
 
-  if (!payload || !agent || !qualification) {
+  if (!payload || !agent || !qualification || !followUp) {
     return <p className="py-16 text-center text-sm text-stone">{feedback || "Carregando Agent Studio..."}</p>;
   }
 
@@ -233,12 +257,13 @@ export function AgentStudio() {
       {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} guidance={agent.toolGuidance} change={(enabledTools, toolGuidance) => setAgent({ ...agent, enabledTools, toolGuidance })} />}
       {tab === "limits" && <LimitsEditor value={agent} change={setAgent} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
+      {tab === "follow_up" && <FollowUpEditor value={followUp} change={setFollowUp} />}
       {tab === "automation" && <AutomationEditor rules={automation} change={setAutomation} />}
       {tab === "preview" && <Preview value={payload.previews} />}
     </main>
 
     <footer className="flex items-center justify-between border-t border-mist pt-5">
-      <p className="text-xs text-stone">{activeDirty ? "Alterações ainda não salvas" : `Atualizado por ${tab === "qualification" ? qualification.updatedBy : tab === "automation" ? "automação" : agent.updatedBy}`}</p>
+      <p className="text-xs text-stone">{activeDirty ? "Alterações ainda não salvas" : `Atualizado por ${tab === "qualification" ? qualification.updatedBy : tab === "follow_up" ? followUp.updatedBy : tab === "automation" ? "automação" : agent.updatedBy}`}</p>
       <button type="button" onClick={() => void save()} disabled={!activeDirty || saving || tab === "preview"} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-45">{saving ? "Salvando..." : "Salvar configuração ativa"}</button>
     </footer>
   </div>;
@@ -346,11 +371,64 @@ function QualificationEditor({ value, change }: { value: QualificationConfigurat
   return <div className="space-y-5"><div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-slate-ink">Qualificação de leads</h2><p className="mt-1 text-xs text-stone">Tarefa separada do agente, usando a mesma infraestrutura de modelo.</p></div><Toggle checked={value.enabled} onChange={(enabled) => change({ ...value, enabled })} label="Ativa" /></div><Field label="Instruções"><textarea rows={20} value={value.prompt} onChange={(event) => change({ ...value, prompt: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></Field><Field label="Máximo de tokens"><input type="number" min={512} max={16384} value={value.maxCompletionTokens} onChange={(event) => change({ ...value, maxCompletionTokens: Number(event.target.value) })} className={inputClass} /></Field></div>;
 }
 
+function FollowUpEditor({ value, change }: { value: FollowUpConfiguration; change: (value: FollowUpConfiguration) => void }) {
+  const startHours = Array.from({ length: 24 }, (_, hour) => hour);
+  const endHours = Array.from({ length: 24 }, (_, index) => index + 1);
+  const updateAttempt = (index: number, instruction: string) => change({
+    ...value,
+    attemptInstructions: value.attemptInstructions.map((current, currentIndex) => currentIndex === index ? instruction : current),
+  });
+
+  return <div className="space-y-7">
+    <label className="inline-flex cursor-pointer items-start gap-3">
+      <input type="checkbox" checked={value.enabled} onChange={(event) => change({ ...value, enabled: event.target.checked })} className="mt-1 h-4 w-4 accent-deep-teal" />
+      <span><span className="block text-base font-semibold text-slate-ink">Follow-up sem resposta</span><span className="mt-1 block text-xs font-normal text-stone">Recontata leads sem consulta futura durante o horário disponível.</span></span>
+    </label>
+
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field label="Intervalo entre mensagens (minutos)"><input type="number" min={2} max={1440} value={value.intervalMinutes} onChange={(event) => change({ ...value, intervalMinutes: Number(event.target.value) })} className={inputClass} /></Field>
+      <Field label="Validade após a última mensagem (horas)"><input type="number" min={1} max={24} value={value.maxHoursSinceInbound} onChange={(event) => change({ ...value, maxHoursSinceInbound: Number(event.target.value) })} className={inputClass} /></Field>
+    </div>
+
+    <fieldset>
+      <legend className="text-sm font-semibold text-slate-ink">Horário disponível</legend>
+      <div className="mt-2 grid max-w-xl grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3">
+        <Field label="De"><select value={value.activeStartHour} onChange={(event) => change({ ...value, activeStartHour: Number(event.target.value) })} className={inputClass}>{startHours.map((hour) => <option key={hour} value={hour}>{formatHour(hour)}</option>)}</select></Field>
+        <span className="pb-2.5 text-sm text-stone">às</span>
+        <Field label="Até"><select value={value.activeEndHour} onChange={(event) => change({ ...value, activeEndHour: Number(event.target.value) })} className={inputClass}>{endHours.map((hour) => <option key={hour} value={hour}>{formatHour(hour)}</option>)}</select></Field>
+      </div>
+    </fieldset>
+
+    <section className="border-t border-mist pt-6">
+      <h3 className="text-sm font-semibold text-slate-ink">Informações adicionais</h3>
+      <details className="group mt-3 border-y border-mist">
+        <summary className="flex cursor-pointer list-none items-center justify-between py-3 text-sm font-semibold text-slate-ink">
+          Instruções padrão
+          <ChevronDown aria-hidden="true" className="h-4 w-4 text-stone transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-mist pb-4 pt-3"><textarea aria-label="Instruções padrão" rows={12} value={value.prompt} onChange={(event) => change({ ...value, prompt: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></div>
+      </details>
+
+      <div className="mt-6 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-ink">Instruções por tentativa</h3>
+        <button type="button" onClick={() => change({ ...value, attemptInstructions: [...value.attemptInstructions, ""] })} disabled={value.attemptInstructions.length >= 12} className={buttonClass}><Plus aria-hidden="true" className="mr-1.5 inline h-4 w-4" />Adicionar tentativa</button>
+      </div>
+      <div className="mt-2 divide-y divide-mist border-y border-mist">
+        {value.attemptInstructions.map((instruction, index) => <div key={index} className="grid gap-3 py-4 sm:grid-cols-[110px_minmax(0,1fr)_36px] sm:items-start">
+          <label htmlFor={`follow-up-attempt-${index}`} className="pt-2 text-sm font-semibold text-slate-ink">Tentativa {index + 1}</label>
+          <textarea id={`follow-up-attempt-${index}`} rows={3} maxLength={2000} value={instruction} onChange={(event) => updateAttempt(index, event.target.value)} className={`${textareaClass} mt-0 text-sm`} />
+          <button type="button" title={`Remover instrução da tentativa ${index + 1}`} aria-label={`Remover instrução da tentativa ${index + 1}`} onClick={() => change({ ...value, attemptInstructions: value.attemptInstructions.filter((_, currentIndex) => currentIndex !== index) })} className="mt-1 inline-flex h-9 w-9 items-center justify-center text-burnt-coral hover:text-slate-ink"><Trash2 aria-hidden="true" className="h-4 w-4" /></button>
+        </div>)}
+      </div>
+    </section>
+  </div>;
+}
+
 function AutomationEditor({ rules, change }: { rules: AutomationRule[]; change: (rules: AutomationRule[]) => void }) {
   function update(index: number, patch: Partial<AutomationRule>) { change(rules.map((rule, ruleIndex) => ruleIndex === index ? { ...rule, ...patch } : rule)); }
   return <div className="space-y-5"><SectionHeader title="Gatilhos" description="Eventos criam jobs independentes; debounce agrupa atualizações próximas." action="Adicionar regra" onAction={() => change([...rules, { _id: `rule-${rules.length + 1}`, name: "Nova regra", enabled: false, process: "customer_agent", event: "manual.requested", conditions: {}, debounceMs: 0, cooldownMinutes: 0, rerunWhenSourceChanges: true, updatedAt: new Date().toISOString(), updatedBy: "dashboard" }])} />
     {rules.map((rule, index) => <section key={`${rule._id}-${index}`} className="space-y-4 border-b border-mist pb-6"><div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]"><Field label="Nome"><input value={rule.name} onChange={(event) => update(index, { name: event.target.value })} className={inputClass} /></Field><Field label="Identificador"><input value={rule._id} onChange={(event) => update(index, { _id: event.target.value })} className={inputClass} /></Field><div className="flex items-end gap-4 pb-2"><Toggle checked={rule.enabled} onChange={(enabled) => update(index, { enabled })} label="Ativa" /><button type="button" onClick={() => change(rules.filter((_, ruleIndex) => ruleIndex !== index))} className="text-sm font-semibold text-burnt-coral">Remover</button></div></div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Field label="Processo"><select value={rule.process} onChange={(event) => update(index, { process: event.target.value as AutomationRule["process"] })} className={inputClass}><option value="customer_agent">Agente do cliente</option><option value="lead_qualification">Qualificação</option></select></Field><Field label="Evento"><select value={rule.event} onChange={(event) => update(index, { event: event.target.value as AutomationRule["event"] })} className={inputClass}><option value="message.received">Mensagem recebida</option><option value="customer.profile.updated">Cadastro atualizado</option><option value="payment.status.changed">Pagamento alterado</option><option value="appointment.status.changed">Agenda alterada</option><option value="manual.requested">Solicitação manual</option></select></Field><Field label="Debounce (ms)"><input type="number" value={rule.debounceMs} onChange={(event) => update(index, { debounceMs: Number(event.target.value) })} className={inputClass} /></Field><Field label="Cooldown (min)"><input type="number" value={rule.cooldownMinutes} onChange={(event) => update(index, { cooldownMinutes: Number(event.target.value) })} className={inputClass} /></Field></div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Field label="Processo"><select value={rule.process} onChange={(event) => update(index, { process: event.target.value as AutomationRule["process"] })} className={inputClass}><option value="customer_agent">Agente do cliente</option></select></Field><Field label="Evento"><select value={rule.event} onChange={(event) => update(index, { event: event.target.value as AutomationRule["event"] })} className={inputClass}><option value="message.received">Mensagem recebida</option><option value="customer.profile.updated">Cadastro atualizado</option><option value="payment.status.changed">Pagamento alterado</option><option value="appointment.status.changed">Agenda alterada</option><option value="manual.requested">Solicitação manual</option></select></Field><Field label="Debounce (ms)"><input type="number" value={rule.debounceMs} onChange={(event) => update(index, { debounceMs: Number(event.target.value) })} className={inputClass} /></Field><Field label="Cooldown (min)"><input type="number" value={rule.cooldownMinutes} onChange={(event) => update(index, { cooldownMinutes: Number(event.target.value) })} className={inputClass} /></Field></div>
       <Toggle checked={rule.rerunWhenSourceChanges} onChange={(rerunWhenSourceChanges) => update(index, { rerunWhenSourceChanges })} label="Reexecutar quando a origem mudar" />
       <ConditionEditor value={rule.conditions} change={(conditions) => update(index, { conditions })} />
     </section>)}
@@ -374,4 +452,5 @@ function Field({ label, children }: { label: string; children: ReactNode }) { re
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) { return <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-ink"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-deep-teal" />{label}</label>; }
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
+function formatHour(hour: number) { return `${String(hour).padStart(2, "0")}:00`; }
 function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }

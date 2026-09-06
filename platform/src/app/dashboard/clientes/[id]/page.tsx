@@ -108,7 +108,7 @@ export default async function CustomerPage({
           <div className="space-y-5">
             <LeadQualificationPanel
               customerId={customer._id.toString()}
-              qualification={customer.leadQualification?.version === 2
+              qualification={customer.leadQualification?.version === 5
                 && customer.leadQualification.profileFit
                 && customer.leadQualification.combinedFit ? {
                 ...customer.leadQualification,

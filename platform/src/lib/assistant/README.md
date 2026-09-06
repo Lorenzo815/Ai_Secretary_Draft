@@ -13,6 +13,9 @@ model iteration.
 5. The model returns either `final` or one `tool_request` using a strict schema.
 6. Tool results accumulate until a final response or a configured hard limit.
 7. Runs and steps are recorded with a safe configuration snapshot.
+8. Eligible replies schedule a `customer_follow_up` job.
+9. A follow-up reuses the agent with an explicit trigger and schedules the next cycle after sending.
+10. Only a successfully sent follow-up schedules the independent lead-qualification job.
 
 ## Ownership
 
@@ -26,6 +29,7 @@ model iteration.
 | Server authorization and execution | `tools/execution.ts`, tool modules |
 | Generic triggers and jobs | `../automation` |
 | Independent lead qualification | `../qualification` |
+| Follow-up policy and eligibility | `../follow-up` |
 
 ## Invariants
 
@@ -36,6 +40,9 @@ model iteration.
 - Pix secrets are exposed only by the payment tool after server-side checks.
 - Scheduling plans use configurable steps and deterministic constraints.
 - Each claimed job pins one configuration revision for its full execution.
+- A new inbound message invalidates the pending follow-up before scheduling its normal response.
+- Follow-ups are sent only inside the configured active hours, before the WhatsApp 24-hour cutoff and while no future appointment exists.
+- Drop-off analysis is evidence-based; silence alone is not treated as proof of lost interest.
 
 ## Validation
 

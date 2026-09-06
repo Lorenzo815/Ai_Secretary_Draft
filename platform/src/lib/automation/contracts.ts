@@ -1,9 +1,10 @@
 import type { ObjectId } from "mongodb";
 import type { AgentConditionGroup } from "../assistant/agent/contracts";
 
-export type AutomationProcessKey = "customer_agent" | "lead_qualification";
+export type AutomationProcessKey = "customer_agent" | "customer_follow_up" | "lead_qualification";
 export type AutomationEventType =
   | "message.received"
+  | "assistant.response.sent"
   | "customer.profile.updated"
   | "payment.status.changed"
   | "appointment.status.changed"

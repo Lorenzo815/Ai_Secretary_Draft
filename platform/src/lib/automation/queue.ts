@@ -15,11 +15,12 @@ export async function scheduleAutomationJob(input: {
   process: AutomationProcessKey;
   event: AutomationEvent;
   debounceMs: number;
+  dueAt?: Date;
 }) {
   const collection = await getCollection();
   await ensureIndexes();
   const now = new Date();
-  const dueAt = new Date(now.getTime() + input.debounceMs);
+  const dueAt = input.dueAt ?? new Date(now.getTime() + input.debounceMs);
   await collection.updateOne(
     { process: input.process, customerId: input.event.customerId },
     [{
@@ -107,4 +108,15 @@ async function ensureIndexes() {
     collection.createIndex({ status: 1, dueAt: 1 }),
     collection.createIndex({ status: 1, leaseUntil: 1 }),
   ]);
+}
+
+export async function deferAutomationJob(job: AutomationJobDocument, dueAt: Date) {
+  await (await getCollection()).updateOne(
+    { _id: job._id, revision: job.revision, status: "processing" },
+    { $set: { status: "pending", dueAt, updatedAt: new Date() }, $unset: { leaseUntil: "" } },
+  );
+}
+
+export async function cancelAutomationJob(process: AutomationProcessKey, customerId: ObjectId) {
+  await (await getCollection()).deleteOne({ process, customerId });
 }

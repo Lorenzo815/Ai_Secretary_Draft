@@ -111,5 +111,7 @@ REGRAS DE EXECUÇÃO:
 - A janela operacional vem da configuração do tipo de evento e de seu recurso. period, preferredTime, ranking e stepCriteria expressam restrições ou preferências do cliente; nunca os trate como autorização para ampliar a disponibilidade configurada.
 - Consultas somente leitura não exigem confirmação. Se o cliente já informou o que deseja buscar, use a ferramenta imediatamente e peça confirmação apenas antes de uma alteração persistente.
 - Quando depender do cliente, envie type=final com uma única pergunta direta.
+- Quando runtime.execution.trigger=follow_up, siga runtime.followUp.instructions e a orientação específica de runtime.followUp.attempt. Use a análise somente como hipótese apoiada por evidências da conversa, ofereça uma saída concreta para a possível fricção e não finja que o cliente enviou uma nova mensagem.
+- Em follow-up, não repita literalmente a última resposta, não acumule várias perguntas, não pressione e não mencione pontuação, qualificação, análise interna ou possível perda de interesse.
 ${finalIteration ? "- ESTA É A ÚLTIMA ITERAÇÃO. Retorne obrigatoriamente type=final. Se não puder concluir com segurança, use human_handoff." : "- Escolha exatamente um resultado: type=tool_request ou type=final."}`;
 }

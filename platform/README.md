@@ -46,6 +46,13 @@ Webhooks devem apontar para `/api/webhooks/whatsapp`. O worker chama
 um agendador externo para invocar a rota ou hospede o worker em um processo
 Node contínuo.
 
+Follow-ups sem resposta são configurados no Agent Studio. Por padrão, um novo
+job é criado a cada 2 horas, com envios entre 08:00 e 20:00 no fuso da clínica,
+e expira 24 horas após a última mensagem recebida. Uma nova mensagem ou um
+agendamento futuro invalida o follow-up. A frequência do agendador externo
+determina o atraso adicional de processamento; use chamadas frequentes quando
+a retomada precisar ocorrer próxima do horário configurado.
+
 Tokens e chaves permanecem em variáveis somente de servidor; nunca use o
 prefixo `NEXT_PUBLIC_*` para segredos.
 

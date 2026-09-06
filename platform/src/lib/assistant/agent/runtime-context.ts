@@ -11,6 +11,9 @@ import type { AgentConfigurationDocument, AgentRuntimeContext, DataCollectionRul
 export async function buildAgentRuntimeContext(input: {
   customer: CustomerDocument;
   configuration: AgentConfigurationDocument;
+  trigger: "inbound_message" | "follow_up";
+  followUpInstructions?: string;
+  followUpAttempt?: number;
   iteration: number;
   toolExecutions: number;
   mutationsExecuted: number;
@@ -49,11 +52,23 @@ export async function buildAgentRuntimeContext(input: {
       schedulingPlans: input.configuration.schedulingPlans.filter((plan) => plan.enabled),
     },
     execution: {
+      trigger: input.trigger,
       iteration: input.iteration,
       remainingModelIterations: input.configuration.loopPolicy.maxModelIterations - input.iteration,
       remainingToolExecutions: input.configuration.loopPolicy.maxToolExecutions - input.toolExecutions,
       mutationsExecuted: input.mutationsExecuted,
     },
+    followUp: input.trigger === "follow_up" ? {
+      attempt: input.followUpAttempt ?? 1,
+      instructions: input.followUpInstructions ?? "",
+      analysis: input.customer.leadQualification?.version === 5 ? {
+        explicitSignals: input.customer.leadQualification.explicitSignals,
+        dropOffAnalysis: input.customer.leadQualification.dropOffAnalysis,
+        frictions: input.customer.leadQualification.frictions,
+        openQuestions: input.customer.leadQualification.openQuestions,
+        recommendedApproach: input.customer.leadQualification.recommendedApproach,
+      } : null,
+    } : null,
   };
 }
 

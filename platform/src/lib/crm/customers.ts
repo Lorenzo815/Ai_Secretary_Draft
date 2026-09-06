@@ -1,8 +1,9 @@
 import "server-only";
 
 import { createCipheriv, createHash, createHmac, randomBytes } from "crypto";
-import { Collection, Document, ObjectId } from "mongodb";
+import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import type { LeadInsightTag } from "../qualification/contracts";
 import { CustomerProfileValidationError, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone } from "./validation";
 
 export interface CustomerIdentifier {
@@ -41,12 +42,12 @@ export interface LeadFitScore {
 }
 
 export interface CustomerLeadQualification {
-  version: 2;
+  version: 5;
   generatedAt: Date;
   model: string;
   sourceHash: string;
   profileContext: {
-    ageYears: number;
+    ageYears: number | null;
     neighborhood: string;
     city: string;
     state: string;
@@ -59,6 +60,13 @@ export interface CustomerLeadQualification {
     engagement: "high" | "medium" | "low";
     evidence: Array<{ signal: string; observation: string }>;
   };
+  dropOffAnalysis: {
+    likelyCause: string | null;
+    confidence: "high" | "medium" | "low";
+    evidence: string[];
+    recommendedResponse: string;
+  };
+  insightTags: LeadInsightTag[];
   logistics: {
     clinicCity: string;
     customerCity: string;
@@ -146,6 +154,7 @@ export interface CustomerOperationsPage {
 }
 
 const DB_NAME = "ai_secretary";
+let qualificationHistoryIndexesPromise: Promise<unknown> | undefined;
 
 async function getCustomersCollection(): Promise<Collection<CustomerDocument>> {
   const client = await clientPromise;
@@ -633,10 +642,8 @@ export async function saveCustomerLeadQualification(
   const database = client.db(DB_NAME);
   const customers = database.collection<CustomerDocument>("crm_customers");
   const history = database.collection<CustomerLeadQualificationHistoryDocument>("lead_qualification_history");
-  await Promise.all([
-    history.createIndex({ customerId: 1, version: 1, sourceHash: 1 }, { unique: true }),
-    history.createIndex({ generatedAt: 1 }),
-  ]);
+  qualificationHistoryIndexesPromise ??= ensureQualificationHistoryIndexes(history);
+  await qualificationHistoryIndexesPromise;
 
   const session = client.startSession();
   let customer: CustomerDocument | null = null;
@@ -647,11 +654,7 @@ export async function saveCustomerLeadQualification(
         customerId: id,
         ...qualification,
       };
-      await history.updateOne(
-        { customerId: id, version: qualification.version, sourceHash: qualification.sourceHash },
-        { $setOnInsert: historyEntry },
-        { upsert: true, session },
-      );
+      await history.insertOne(historyEntry, { session });
       customer = await customers.findOneAndUpdate(
         { _id: id },
         { $set: { leadQualification: qualification, updatedAt: new Date() } },
@@ -664,4 +667,18 @@ export async function saveCustomerLeadQualification(
   }
   if (!customer) throw new Error("Cliente não encontrado.");
   return customer;
+}
+
+async function ensureQualificationHistoryIndexes(
+  history: Collection<CustomerLeadQualificationHistoryDocument>,
+) {
+  try {
+    await history.dropIndex("customerId_1_version_1_sourceHash_1");
+  } catch (error) {
+    if (!(error instanceof MongoServerError) || ![26, 27].includes(Number(error.code))) throw error;
+  }
+  await Promise.all([
+    history.createIndex({ customerId: 1, generatedAt: -1 }),
+    history.createIndex({ generatedAt: 1 }),
+  ]);
 }

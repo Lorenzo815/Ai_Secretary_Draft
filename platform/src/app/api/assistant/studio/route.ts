@@ -16,6 +16,7 @@ import {
   getLeadQualificationConfiguration,
   updateLeadQualificationConfiguration,
 } from "@/lib/qualification/config";
+import { getFollowUpConfiguration, updateFollowUpConfiguration } from "@/lib/follow-up/config";
 
 type AgentConfigurationInput = Omit<
   AgentConfigurationDocument,
@@ -32,15 +33,17 @@ export async function GET() {
   const session = await authenticate();
   if (!session) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
 
-  const [configuration, qualification, automationRules, calendarSettings] = await Promise.all([
+  const [configuration, qualification, followUp, automationRules, calendarSettings] = await Promise.all([
     getAgentConfiguration(),
     getLeadQualificationConfiguration(),
+    getFollowUpConfiguration(),
     listAutomationRules(),
     getCalendarSettings(),
   ]);
   return NextResponse.json({
     configuration: sanitizeConfiguration(configuration),
     qualification,
+    followUp,
     automationRules,
     availableTools: listToolMetadata(),
     calendarEventTypes: calendarSettings.eventTypes,
@@ -98,6 +101,32 @@ export async function PUT(request: Request) {
         updatedBy,
       });
       return NextResponse.json({ qualification: updated });
+    }
+
+    if (input.scope === "follow_up") {
+      const followUp = input.followUp as {
+        revision?: number;
+        enabled?: boolean;
+        intervalMinutes?: number;
+        activeStartHour?: number;
+        activeEndHour?: number;
+        maxHoursSinceInbound?: number;
+        prompt?: string;
+        attemptInstructions?: string[];
+      } | undefined;
+      if (!followUp) return NextResponse.json({ error: "Configuração de follow-up inválida." }, { status: 400 });
+      const updated = await updateFollowUpConfiguration({
+        expectedRevision: Number(followUp.revision),
+        enabled: followUp.enabled === true,
+        intervalMinutes: Number(followUp.intervalMinutes),
+        activeStartHour: Number(followUp.activeStartHour),
+        activeEndHour: Number(followUp.activeEndHour),
+        maxHoursSinceInbound: Number(followUp.maxHoursSinceInbound),
+        prompt: followUp.prompt ?? "",
+        attemptInstructions: Array.isArray(followUp.attemptInstructions) ? followUp.attemptInstructions : [],
+        updatedBy,
+      });
+      return NextResponse.json({ followUp: updated });
     }
 
     if (input.scope === "automation") {

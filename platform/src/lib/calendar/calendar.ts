@@ -197,6 +197,14 @@ export async function listAppointments(from: Date, to: Date) {
     .toArray();
 }
 
+export async function hasFutureScheduledAppointment(customerId: ObjectId, now = new Date()) {
+  return Boolean(await (await getAppointmentsCollection()).findOne({
+    customerId,
+    status: "scheduled",
+    startAt: { $gte: now },
+  }, { projection: { _id: 1 } }));
+}
+
 export async function findCustomerAppointments(input: {
   customerId: ObjectId;
   fromDate: string;

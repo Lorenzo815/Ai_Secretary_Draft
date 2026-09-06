@@ -100,11 +100,35 @@ export interface AgentRuntimeContext {
     schedulingPlans: SchedulingPlan[];
   };
   execution: {
+    trigger: "inbound_message" | "follow_up";
     iteration: number;
     remainingModelIterations: number;
     remainingToolExecutions: number;
     mutationsExecuted: number;
   };
+  followUp: {
+    attempt: number;
+    instructions: string;
+    analysis: {
+      explicitSignals: CustomerFollowUpSignals;
+      dropOffAnalysis: {
+        likelyCause: string | null;
+        confidence: "high" | "medium" | "low";
+        evidence: string[];
+        recommendedResponse: string;
+      };
+      frictions: string[];
+      openQuestions: string[];
+      recommendedApproach: string;
+    } | null;
+  } | null;
+}
+
+interface CustomerFollowUpSignals {
+  schedulingIntent: "strong" | "moderate" | "weak" | "unknown";
+  priceSentiment: "positive" | "neutral" | "concerned" | "negative" | "unknown";
+  engagement: "high" | "medium" | "low";
+  evidence: Array<{ signal: string; observation: string }>;
 }
 
 export interface AgentMemory {

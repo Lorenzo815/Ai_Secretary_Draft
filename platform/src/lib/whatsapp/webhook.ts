@@ -1,6 +1,6 @@
 import "server-only";
 
-import { emitAutomationEvent } from "../automation";
+import { cancelAutomationJob, emitAutomationEvent } from "../automation";
 import { findOrCreateCustomerFromWhatsApp } from "../crm";
 import {
   ensureWhatsAppMessageIndexes,
@@ -106,6 +106,7 @@ export async function processWhatsAppWebhook(rawBody: string) {
           timestamp,
         });
         if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
+          await cancelAutomationJob("customer_follow_up", customer._id);
           await emitAutomationEvent({
             type: "message.received",
             customerId: customer._id,

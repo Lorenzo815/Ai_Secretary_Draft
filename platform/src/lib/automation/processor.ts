@@ -12,9 +12,15 @@ import {
 export async function processNextAutomationJob() {
   const job = await claimAutomationJob(getAssistantConfig().leaseMs);
   if (!job) return { processed: false as const };
-  if (job.process === "customer_agent") return processCustomerAgentJob(job);
+  if (job.process === "customer_agent" || job.process === "customer_follow_up") {
+    return processCustomerAgentJob(job);
+  }
 
   try {
+    if (job.event !== "assistant.response.sent" || job.eventPayload?.reason !== "follow_up") {
+      await completeAutomationJob(job._id, job.revision);
+      return { processed: true as const, process: job.process, skipped: "not_follow_up_qualification" };
+    }
     const qualification = await analyzeAndSaveCustomerLeadQualification(job.customerId);
     await completeAutomationJob(job._id, job.revision);
     return {

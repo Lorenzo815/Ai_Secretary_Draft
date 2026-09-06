@@ -8,6 +8,8 @@ import {
 } from "@/lib/crm";
 import AutoRefresh from "../_components/auto-refresh";
 import Pagination from "../_components/pagination";
+import LeadInsightTags from "@/components/lead-insight-tags";
+import CustomerTableRow from "./_components/customer-table-row";
 
 export const dynamic = "force-dynamic";
 
@@ -93,12 +95,15 @@ export default async function CustomersPage({
                     <th className="px-5 py-3">Contexto recente</th>
                     <th className="px-5 py-3">Agenda</th>
                     <th className="px-5 py-3">Última interação</th>
-                    <th className="px-5 py-3 text-right"><span className="sr-only">Ação</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-mist">
                   {result.items.map((customer) => (
-                    <tr key={customer._id.toString()} className="transition hover:bg-soft-ivory/55">
+                    <CustomerTableRow
+                      key={customer._id.toString()}
+                      href={`/dashboard/clientes/${customer._id.toString()}`}
+                      customerName={customer.name}
+                    >
                       <td className="px-5 py-4">
                         <p className="text-sm font-semibold text-slate-ink">{customer.name}</p>
                         <p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p>
@@ -107,12 +112,12 @@ export default async function CustomersPage({
                       <td className="px-5 py-4">
                         <p className="text-sm font-semibold text-slate-ink">{profileLabel(customer)}</p>
                         <p className="mt-0.5 text-xs text-stone">{qualificationLabel(customer)}</p>
+                        <div className="mt-2"><LeadInsightTags tags={customer.leadQualification?.insightTags ?? []} limit={2} compact expandable /></div>
                       </td>
                       <td className="max-w-[310px] px-5 py-4"><p className="line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p></td>
                       <td className="px-5 py-4 text-sm text-slate-ink/75">{customer.nextAppointment ? formatDate(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Não agendado"}</td>
                       <td className="px-5 py-4 text-sm text-slate-ink/75">{formatDate(customer.lastInteractionAt)}</td>
-                      <td className="px-5 py-4 text-right"><Link href={`/dashboard/clientes/${customer._id.toString()}`} className="text-sm font-semibold text-deep-teal hover:text-forest-teal">Ver detalhes</Link></td>
-                    </tr>
+                    </CustomerTableRow>
                   ))}
                 </tbody>
               </table>
@@ -126,7 +131,7 @@ export default async function CustomersPage({
 }
 
 function CustomerCard({ customer }: { customer: CustomerOperationsDocument }) {
-  return <Link href={`/dashboard/clientes/${customer._id.toString()}`} className="block p-4 transition hover:bg-soft-ivory/60"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{customer.name}</p><p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p></div><StatusBadge customer={customer} /></div><p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p><div className="mt-4 grid grid-cols-2 gap-3 border-t border-mist pt-3 text-xs"><div><span className="text-stone">Perfil</span><p className="mt-0.5 font-semibold text-slate-ink">{profileLabel(customer)}</p></div><div><span className="text-stone">Agenda</span><p className="mt-0.5 font-semibold text-slate-ink">{customer.nextAppointment ? formatDate(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Não agendado"}</p></div></div></Link>;
+  return <Link href={`/dashboard/clientes/${customer._id.toString()}`} className="block p-4 transition hover:bg-soft-ivory/60"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{customer.name}</p><p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p></div><StatusBadge customer={customer} /></div><p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p><div className="mt-3"><LeadInsightTags tags={customer.leadQualification?.insightTags ?? []} limit={3} compact /></div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-mist pt-3 text-xs"><div><span className="text-stone">Perfil</span><p className="mt-0.5 font-semibold text-slate-ink">{profileLabel(customer)}</p></div><div><span className="text-stone">Agenda</span><p className="mt-0.5 font-semibold text-slate-ink">{customer.nextAppointment ? formatDate(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Não agendado"}</p></div></div></Link>;
 }
 
 function Metric({ label, value, detail, attention = false }: { label: string; value: number; detail: string; attention?: boolean }) {

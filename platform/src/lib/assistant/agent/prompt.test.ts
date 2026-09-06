@@ -82,4 +82,13 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("use o erro retornado para corrigir os argumentos");
     expect(prompt).toContain("Nunca execute outro candidato como alternativa");
   });
+
+  it("grounds follow-ups in recent evidence without exposing internal analysis", () => {
+    const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
+
+    expect(prompt).toContain("runtime.execution.trigger=follow_up");
+    expect(prompt).toContain("ofereça uma saída concreta para a possível fricção");
+    expect(prompt).toContain("não pressione");
+    expect(prompt).toContain("não mencione pontuação, qualificação, análise interna");
+  });
 });

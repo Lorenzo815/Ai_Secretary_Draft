@@ -6,6 +6,7 @@ import type { AutomationRuleDocument } from "./contracts";
 import { createDefaultAutomationRules } from "./defaults";
 
 const DB_NAME = "ai_secretary";
+const RETIRED_RULE_IDS = ["lead-qualification-on-profile"];
 
 async function getCollection(): Promise<Collection<AutomationRuleDocument>> {
   const client = await clientPromise;
@@ -15,11 +16,14 @@ async function getCollection(): Promise<Collection<AutomationRuleDocument>> {
 export async function listAutomationRules() {
   const collection = await getCollection();
   const defaults = createDefaultAutomationRules();
-  await Promise.all(defaults.map((rule) => collection.updateOne(
-    { _id: rule._id },
-    { $setOnInsert: rule },
-    { upsert: true },
-  )));
+  await Promise.all([
+    collection.deleteMany({ _id: { $in: RETIRED_RULE_IDS } }),
+    ...defaults.map((rule) => collection.updateOne(
+      { _id: rule._id },
+      { $setOnInsert: rule },
+      { upsert: true },
+    )),
+  ]);
   return collection.find({}).sort({ _id: 1 }).toArray();
 }
 
@@ -45,6 +49,9 @@ function validateRules(rules: AutomationRuleDocument[]) {
   }
   for (const rule of rules) {
     if (!rule._id.trim() || !rule.name.trim()) throw new Error("Toda regra de automação precisa de identificador e nome.");
+    if (rule.process !== "customer_agent") {
+      throw new Error("Qualificação e follow-up são acionados exclusivamente pelo fluxo interno de follow-up.");
+    }
     if (!Number.isInteger(rule.debounceMs) || rule.debounceMs < 0 || rule.debounceMs > 24 * 60 * 60 * 1_000) {
       throw new Error(`Debounce inválido na regra ${rule.name}.`);
     }

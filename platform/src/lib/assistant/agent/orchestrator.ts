@@ -8,9 +8,16 @@ import type { AutomationJobDocument } from "../../automation/contracts";
 import {
   claimAutomationJob,
   completeAutomationJob,
+  deferAutomationJob,
   failAutomationJob,
   isAutomationJobCurrent,
 } from "../../automation/queue";
+import {
+  getCustomerFollowUpEligibility,
+  getAutomationJobFollowUpAttempt,
+  scheduleFollowUpQualification,
+  scheduleNextCustomerFollowUp,
+} from "../../follow-up/service";
 import { loadAssistantContext, saveAssistantContext } from "../context";
 import { getAssistantConfig } from "../config";
 import { getGroundedToolReply, wasToolSuccessfullyExecuted } from "../tools/execution";
@@ -56,6 +63,18 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
       await completeAutomationJob(job._id, job.revision);
       return { processed: true as const, skipped: "no_routing_data" };
     }
+    let followUpInstructions: string | undefined;
+    let followUpAttempt: number | undefined;
+    if (job.process === "customer_follow_up") {
+      const eligibility = await getCustomerFollowUpEligibility(job);
+      if (!eligibility.eligible) {
+        if ("deferUntil" in eligibility && eligibility.deferUntil) await deferAutomationJob(job, eligibility.deferUntil);
+        else await completeAutomationJob(job._id, job.revision);
+        return { processed: true as const, skipped: eligibility.reason };
+      }
+      followUpInstructions = eligibility.instructions;
+      followUpAttempt = eligibility.attempt;
+    }
 
     run = await startAgentRun({ customerId: job.customerId, jobRevision: job.revision, configuration });
     const toolHistory: AgentToolHistoryEntry[] = [];
@@ -79,6 +98,9 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
       const runtime = await buildAgentRuntimeContext({
         customer: refreshedCustomer,
         configuration,
+        trigger: job.process === "customer_follow_up" ? "follow_up" : "inbound_message",
+        followUpInstructions,
+        followUpAttempt,
         iteration,
         toolExecutions,
         mutationsExecuted,
@@ -234,6 +256,31 @@ async function finalize(input: {
     await completeAutomationJob(input.job._id, input.job.revision);
     return { processed: true as const, skipped: "newer_message_arrived" };
   }
+  if (input.job.process === "customer_follow_up") {
+    const eligibility = await getCustomerFollowUpEligibility(input.job);
+    if (!eligibility.eligible) {
+      await finishAgentRun({
+        runId: input.run._id,
+        status: "superseded",
+        modelIterations: input.modelIterations,
+        toolExecutions: input.toolExecutions,
+        mutationsExecuted: input.mutationsExecuted,
+      });
+      if ("deferUntil" in eligibility && eligibility.deferUntil) await deferAutomationJob(input.job, eligibility.deferUntil);
+      else await completeAutomationJob(input.job._id, input.job.revision);
+      return { processed: true as const, skipped: eligibility.reason };
+    }
+    if (!(await isAutomationJobCurrent(input.job._id, input.job.revision))) {
+      await finishAgentRun({
+        runId: input.run._id,
+        status: "superseded",
+        modelIterations: input.modelIterations,
+        toolExecutions: input.toolExecutions,
+        mutationsExecuted: input.mutationsExecuted,
+      });
+      return { processed: true as const, skipped: "customer_replied" };
+    }
+  }
   const body = getAgentFinalMessage(input.response, input.groundedReply);
   if (input.response.decision === "human_handoff" || input.response.decision === "emergency") {
     await updateCustomerServiceStatus(input.job.customerId, "waiting_human");
@@ -272,6 +319,24 @@ async function finalize(input: {
     finalDecision: input.response.decision,
   });
   await completeAutomationJob(input.job._id, input.job.revision);
+  if (input.response.decision === "reply") {
+    try {
+      await Promise.all([
+        scheduleNextCustomerFollowUp({
+          customerId: input.job.customerId,
+          lastInboundAt: input.latestInbound.timestamp,
+          attempt: input.job.process === "customer_follow_up"
+            ? getAutomationJobFollowUpAttempt(input.job) + 1
+            : 1,
+        }),
+        input.job.process === "customer_follow_up"
+          ? scheduleFollowUpQualification(input.job.customerId, input.latestInbound.timestamp)
+          : Promise.resolve(),
+      ]);
+    } catch (error) {
+      console.error("Follow-up jobs could not be scheduled", error);
+    }
+  }
   return { processed: true as const, decision: input.response.decision };
 }
 

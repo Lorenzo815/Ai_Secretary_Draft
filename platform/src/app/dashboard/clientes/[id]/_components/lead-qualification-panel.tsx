@@ -1,13 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import LeadInsightTags from "@/components/lead-insight-tags";
+import type { LeadInsightTag } from "@/lib/qualification/contracts";
 
 interface Qualification {
   generatedAt: string;
   model: string;
   profileContext: {
-    ageYears: number;
+    ageYears: number | null;
     neighborhood: string;
     city: string;
     state: string;
@@ -30,6 +32,13 @@ interface Qualification {
     engagement: "high" | "medium" | "low";
     evidence: Array<{ signal: string; observation: string }>;
   };
+  dropOffAnalysis: {
+    likelyCause: string | null;
+    confidence: "high" | "medium" | "low";
+    evidence: string[];
+    recommendedResponse: string;
+  };
+  insightTags: LeadInsightTag[];
   logistics: {
     clinicCity: string;
     customerCity: string;
@@ -66,15 +75,52 @@ export default function LeadQualificationPanel({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [blockedReason, setBlockedReason] = useState("");
+
+  useEffect(() => {
+    let disposed = false;
+
+    async function checkStatus() {
+      try {
+        const response = await fetch(`/api/customers/${customerId}/qualification`, { cache: "no-store" });
+        if (!response.ok || disposed) return;
+        const result = await response.json() as { inProgress: boolean };
+        setBlockedReason(result.inProgress
+          ? "Já existe uma análise em andamento para este cliente. Aguarde a conclusão."
+          : "");
+      } catch {
+        // The POST request remains the source of truth if the status check is unavailable.
+      }
+    }
+
+    void checkStatus();
+    if (!blockedReason) return () => { disposed = true; };
+    const interval = window.setInterval(checkStatus, 3_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
+  }, [blockedReason, customerId]);
 
   async function refreshQualification() {
     setLoading(true);
     setError("");
-    const response = await fetch(`/api/customers/${customerId}/qualification`, { method: "POST" });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) setError(result.error ?? "Não foi possível atualizar a análise.");
-    else router.refresh();
-    setLoading(false);
+    try {
+      const response = await fetch(`/api/customers/${customerId}/qualification`, { method: "POST" });
+      const result = await response.json() as { error?: string; code?: string };
+      if (!response.ok) {
+        const message = result.error ?? "Não foi possível atualizar a análise.";
+        setError(message);
+        if (result.code === "QUALIFICATION_IN_PROGRESS") setBlockedReason(message);
+        return;
+      }
+      setBlockedReason("");
+      router.refresh();
+    } catch {
+      setError("Não foi possível consultar a análise. Verifique a conexão e tente novamente.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -87,16 +133,22 @@ export default function LeadQualificationPanel({
         <button
           type="button"
           onClick={refreshQualification}
-          disabled={loading}
+          disabled={loading || Boolean(blockedReason)}
+          title={loading ? "O modelo está analisando as mensagens deste cliente." : blockedReason || undefined}
           className="rounded-lg border border-deep-teal px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal hover:text-white disabled:cursor-wait disabled:opacity-50"
         >
-          {loading ? "Analisando..." : qualification ? "Atualizar análise" : "Gerar análise"}
+          {loading || blockedReason ? "Análise em andamento..." : qualification ? "Atualizar análise" : "Gerar análise"}
         </button>
       </div>
 
+      {(loading || blockedReason) && (
+        <p role="status" className="mt-3 text-xs leading-5 text-stone">
+          {blockedReason || "O botão fica indisponível enquanto as mensagens são analisadas e validadas."}
+        </p>
+      )}
       {error && <p className="mt-3 text-sm font-semibold text-burnt-coral">{error}</p>}
       {!qualification ? (
-        <p className="mt-4 text-sm text-stone">A análise será gerada quando o cadastro estiver completo.</p>
+        <p className="mt-4 text-sm text-stone">A análise será gerada a partir do cadastro e da conversa disponíveis.</p>
       ) : (
         <div className="mt-5 space-y-6">
             <div className="grid overflow-hidden rounded-lg border border-mist sm:grid-cols-2">
@@ -116,10 +168,14 @@ export default function LeadQualificationPanel({
                 accent
               />
             </div>
+            <section aria-labelledby="qualification-signals-title">
+              <p id="qualification-signals-title" className="mb-2 text-[11px] font-semibold uppercase text-stone">Leitura rápida</p>
+              <LeadInsightTags tags={qualification.insightTags} />
+            </section>
             <p className="text-[11px] leading-5 text-stone">Indicadores para leitura comercial humana. Não definem acesso, prioridade clínica ou tratamento.</p>
 
           <div className="flex flex-wrap gap-x-8 gap-y-3 border-y border-mist py-3 text-xs">
-            <ContextFact label="Idade" value={`${qualification.profileContext.ageYears} anos`} />
+            <ContextFact label="Idade" value={qualification.profileContext.ageYears === null ? "Não informada" : `${qualification.profileContext.ageYears} anos`} />
             <ContextFact label="Bairro" value={qualification.profileContext.neighborhood || "Não informado"} />
             <ContextFact label="Cidade" value={`${qualification.profileContext.city}/${qualification.profileContext.state}`} />
             <p className="basis-full text-[11px] text-stone">Contexto factual, não utilizado no score nem como proxy de renda.</p>
@@ -134,7 +190,6 @@ export default function LeadQualificationPanel({
             <div>
               <h3 className="text-sm font-semibold text-slate-ink">Raciocínio da análise</h3>
               <p className="mt-2 text-sm leading-6 text-slate-ink/80">{qualification.reasoningSummary}</p>
-              <p className="mt-3 text-sm leading-6 text-stone">{qualification.combinedFit.rationale}</p>
             </div>
             <div>
               <h3 className="text-sm font-semibold text-slate-ink">Benchmark da profissão</h3>
@@ -149,6 +204,12 @@ export default function LeadQualificationPanel({
             <AnalysisList title="Pontos favoráveis" items={qualification.strengths} empty="Nenhum sinal favorável suficiente." />
             <AnalysisList title="Fricções observadas" items={qualification.frictions} empty="Nenhuma fricção explícita." />
             <AnalysisList title="Perguntas em aberto" items={qualification.openQuestions} empty="Nenhuma pergunta relevante em aberto." />
+          </div>
+
+          <div className="border-l-2 border-burnt-coral bg-burnt-coral/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase text-stone">Possível causa do silêncio</p>
+            <p className="mt-1 text-sm leading-6 text-slate-ink">{qualification.dropOffAnalysis?.likelyCause ?? "Sem evidência suficiente para inferir uma causa."}</p>
+            <p className="mt-2 text-xs leading-5 text-stone">Retomada sugerida: {qualification.dropOffAnalysis?.recommendedResponse ?? qualification.recommendedApproach}</p>
           </div>
 
           <div className="border-l-2 border-deep-teal bg-soft-ivory px-4 py-3">

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   captureCoexistenceWebhookEvent,
+  cancelAutomationJob,
   emitAutomationEvent,
   ensureWhatsAppMessageIndexes,
   findOrCreateCustomerFromWhatsApp,
@@ -10,6 +11,7 @@ const {
   updateWhatsAppMessageStatus,
 } = vi.hoisted(() => ({
   captureCoexistenceWebhookEvent: vi.fn(),
+  cancelAutomationJob: vi.fn(),
   emitAutomationEvent: vi.fn(),
   ensureWhatsAppMessageIndexes: vi.fn(),
   findOrCreateCustomerFromWhatsApp: vi.fn(),
@@ -18,7 +20,7 @@ const {
   updateWhatsAppMessageStatus: vi.fn(),
 }));
 
-vi.mock("../automation", () => ({ emitAutomationEvent }));
+vi.mock("../automation", () => ({ cancelAutomationJob, emitAutomationEvent }));
 vi.mock("../crm", () => ({ findOrCreateCustomerFromWhatsApp }));
 vi.mock("./embedded-signup", () => ({
   captureCoexistenceWebhookEvent,
@@ -82,5 +84,30 @@ describe("WhatsApp webhook isolation", () => {
     expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
     expect(saveWhatsAppMessage).not.toHaveBeenCalled();
     expect(emitAutomationEvent).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending follow-up before scheduling the reply job", async () => {
+    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    const customerId = { toString: () => "customer-1" };
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+
+    await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{
+        id: "2222222222",
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "1111111111" },
+            contacts: [{ profile: { name: "Cliente" } }],
+            messages: [{ id: "wamid.reply", from: "5511999999999", timestamp: "1788700000", type: "text", text: { body: "Tenho interesse" } }],
+          },
+        }],
+      }],
+    }));
+
+    expect(cancelAutomationJob).toHaveBeenCalledWith("customer_follow_up", customerId);
+    expect(cancelAutomationJob.mock.invocationCallOrder[0]).toBeLessThan(emitAutomationEvent.mock.invocationCallOrder[0]);
   });
 });
