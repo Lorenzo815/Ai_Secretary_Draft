@@ -1,14 +1,17 @@
 "use client";
 
-import { Check, CheckCheck, CircleAlert, SendHorizontal } from "lucide-react";
+import { Check, CheckCheck, CircleAlert, FileText, MessageSquareText, SendHorizontal } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
+import WhatsAppTemplateComposer from "./whatsapp-template-composer";
 
 type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
 
 interface ConversationMessage {
   messageId: string;
   direction: "inbound" | "outbound";
+  type?: string;
+  templateName?: string;
   body: string;
   status: MessageStatus;
   sentBy?: string;
@@ -39,6 +42,10 @@ export default function WhatsAppConversation({
   const [blockedReason, setBlockedReason] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<ConversationMessage[]>([]);
   const [now, setNow] = useState(() => Date.now());
+  const initialWindowActive = availability.canSendText
+    && Boolean(availability.expiresAt)
+    && Date.now() < new Date(availability.expiresAt!).getTime();
+  const [composerMode, setComposerMode] = useState<"text" | "template">(initialWindowActive ? "text" : "template");
   const persistedIds = new Set(initialMessages.map((message) => message.messageId));
   const messages = [
     ...initialMessages,
@@ -50,6 +57,11 @@ export default function WhatsAppConversation({
       ? availability.reason ?? "A janela de atendimento de 24 horas terminou. Use um modelo aprovado para iniciar uma nova conversa."
       : "");
   const canSend = !sending && !windowReason && Boolean(body.trim());
+
+  function appendSentMessage(message: ConversationMessage) {
+    setOptimisticMessages((current) => [...current, message]);
+    startTransition(() => router.refresh());
+  }
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -92,9 +104,8 @@ export default function WhatsAppConversation({
         return;
       }
 
-      setOptimisticMessages((current) => [...current, result.message!]);
+      appendSentMessage(result.message);
       setBody("");
-      startTransition(() => router.refresh());
     } catch {
       setError("Não foi possível conectar ao serviço de mensagens. Tente novamente.");
     } finally {
@@ -124,6 +135,7 @@ export default function WhatsAppConversation({
               className={`max-w-[88%] rounded-lg px-3.5 py-2.5 shadow-sm sm:max-w-[70%] ${message.direction === "outbound" ? "self-end rounded-br-sm bg-deep-teal text-white" : "self-start rounded-bl-sm border border-mist bg-white text-slate-ink"}`}
             >
               <p className="whitespace-pre-wrap break-words text-sm leading-5">{message.body}</p>
+              {message.type === "template" && <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-white/70"><FileText className="size-3" />{message.templateName ?? "Modelo aprovado"}</p>}
               <div className={`mt-1.5 flex items-center justify-end gap-1.5 text-[10px] ${message.direction === "outbound" ? "text-white/70" : "text-stone"}`}>
                 {message.direction === "outbound" && <span>{message.sentBy ? "Equipe" : "Oria"}</span>}
                 <span>{formatDateTime(message.timestamp)}</span>
@@ -133,9 +145,14 @@ export default function WhatsAppConversation({
           ))}
         </div>
 
-        <form
+        <div className="border-t border-mist bg-white p-3 sm:p-4">
+          <div className="mb-4 grid grid-cols-2 overflow-hidden rounded-md border border-mist sm:w-fit sm:min-w-72">
+            <button type="button" onClick={() => setComposerMode("text")} className={`inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-semibold transition-colors ${composerMode === "text" ? "bg-deep-teal text-white" : "bg-white text-stone hover:bg-pearl"}`}><MessageSquareText className="size-4" />Mensagem</button>
+            <button type="button" onClick={() => setComposerMode("template")} className={`inline-flex min-h-10 items-center justify-center gap-2 px-4 text-sm font-semibold transition-colors ${composerMode === "template" ? "bg-deep-teal text-white" : "bg-white text-stone hover:bg-pearl"}`}><FileText className="size-4" />Modelo</button>
+          </div>
+
+          {composerMode === "template" ? <WhatsAppTemplateComposer customerId={customerId} recipientAvailable={Boolean(availability.recipientPhone)} onSent={appendSentMessage} /> : <form
           data-auto-refresh-dirty={body ? "true" : undefined}
-          className="border-t border-mist bg-white p-3 sm:p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void sendMessage();
@@ -166,7 +183,8 @@ export default function WhatsAppConversation({
               {sending ? "Enviando..." : "Enviar"}
             </button>
           </div>
-        </form>
+        </form>}
+        </div>
       </div>
     </section>
   );

@@ -36,6 +36,15 @@ export interface SendTextInput {
   body: string;
 }
 
+export interface SendWhatsAppTemplateInput {
+  to: string;
+  name: string;
+  language: string;
+  bodyParameters?: string[];
+  headerParameters?: string[];
+  buttonUrlParameters?: Array<{ index: number; value: string }>;
+}
+
 export function getWhatsAppConfig(): WhatsAppConfig | null {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -114,6 +123,40 @@ export async function sendTextMessage(input: SendTextInput) {
   };
   const messageId = await sendPayload(config, payload);
   return { messageId, to, body };
+}
+
+export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
+  const config = await requireWhatsAppConfig();
+  const to = normalizePhone(input.to);
+  const components = [
+    input.headerParameters?.length ? {
+      type: "header",
+      parameters: input.headerParameters.map((text) => ({ type: "text", text })),
+    } : null,
+    input.bodyParameters?.length ? {
+      type: "body",
+      parameters: input.bodyParameters.map((text) => ({ type: "text", text })),
+    } : null,
+    ...(input.buttonUrlParameters ?? []).map((parameter) => ({
+      type: "button",
+      sub_type: "url",
+      index: String(parameter.index),
+      parameters: [{ type: "text", text: parameter.value }],
+    })),
+  ].filter(Boolean);
+  const payload = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to,
+    type: "template",
+    template: {
+      name: input.name,
+      language: { code: input.language },
+      ...(components.length > 0 ? { components } : {}),
+    },
+  };
+  const messageId = await sendPayload(config, payload);
+  return { messageId, to, payload };
 }
 
 export function isValidWebhookSignature(rawBody: string, signature: string | null) {

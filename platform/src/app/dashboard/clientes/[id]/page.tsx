@@ -161,6 +161,8 @@ export default async function CustomerPage({
             initialMessages={messages.map((message) => ({
               messageId: message.metaMessageId,
               direction: message.direction,
+              type: message.type,
+              templateName: message.templateName,
               body: message.body,
               status: message.status,
               sentBy: message.sentBy,

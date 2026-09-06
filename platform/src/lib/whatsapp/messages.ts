@@ -15,6 +15,7 @@ export interface WhatsAppMessageDocument {
   direction: MessageDirection;
   type: string;
   body: string;
+  templateName?: string;
   status: MessageStatus;
   sentBy?: string;
   timestamp: Date;

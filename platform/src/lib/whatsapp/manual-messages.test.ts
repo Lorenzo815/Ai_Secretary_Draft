@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   findLatestInboundWhatsAppMessage: vi.fn(),
   saveWhatsAppMessage: vi.fn(),
   sendTextMessage: vi.fn(),
+  sendWhatsAppTemplate: vi.fn(),
+  listWhatsAppTemplates: vi.fn(),
 }));
 
 vi.mock("../automation/queue", () => ({ cancelAutomationJob: mocks.cancelAutomationJob }));
@@ -15,13 +17,21 @@ vi.mock("../crm", () => ({
   findCustomerById: mocks.findCustomerById,
   updateCustomerServiceStatus: mocks.updateCustomerServiceStatus,
 }));
-vi.mock("./client", () => ({ sendTextMessage: mocks.sendTextMessage }));
+vi.mock("./client", () => ({
+  sendTextMessage: mocks.sendTextMessage,
+  sendWhatsAppTemplate: mocks.sendWhatsAppTemplate,
+}));
 vi.mock("./messages", () => ({
   findLatestInboundWhatsAppMessage: mocks.findLatestInboundWhatsAppMessage,
   saveWhatsAppMessage: mocks.saveWhatsAppMessage,
 }));
+vi.mock("./templates", () => ({
+  listWhatsAppTemplates: mocks.listWhatsAppTemplates,
+  validateWhatsAppTemplateSendParameters: vi.fn((_template, parameters) => parameters),
+  renderWhatsAppTemplateBody: vi.fn(() => "Olá, Maria. Confirme seu atendimento."),
+}));
 
-import { sendManualCustomerMessage } from "./manual-messages";
+import { sendManualCustomerMessage, sendManualCustomerTemplate } from "./manual-messages";
 
 describe("manual WhatsApp messages", () => {
   const customerId = new ObjectId();
@@ -78,6 +88,65 @@ describe("manual WhatsApp messages", () => {
       sentBy: "admin@example.com",
     })).rejects.toMatchObject({ code: "SERVICE_WINDOW_CLOSED", status: 409 });
     expect(mocks.sendTextMessage).not.toHaveBeenCalled();
+    expect(mocks.updateCustomerServiceStatus).not.toHaveBeenCalled();
+  });
+
+  it("sends an approved template even when the 24-hour window has expired", async () => {
+    mocks.findLatestInboundWhatsAppMessage.mockResolvedValue({
+      contactPhone: "5511888888888",
+      timestamp: new Date(Date.now() - 25 * 60 * 60_000),
+    });
+    mocks.listWhatsAppTemplates.mockResolvedValue([{
+      id: "template-1",
+      name: "lembrete_agendamento",
+      language: "pt_BR",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: [{ type: "BODY", text: "Olá, {{1}}. Confirme seu atendimento." }],
+    }]);
+    mocks.sendWhatsAppTemplate.mockResolvedValue({ messageId: "wamid.template", to: "5511888888888" });
+
+    const result = await sendManualCustomerTemplate({
+      customerId,
+      templateId: "template-1",
+      parameters: { header: [], body: ["Maria"], buttonUrls: [] },
+      sentBy: "admin@example.com",
+    });
+
+    expect(mocks.sendWhatsAppTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      to: "5511888888888",
+      name: "lembrete_agendamento",
+      language: "pt_BR",
+      bodyParameters: ["Maria"],
+    }));
+    expect(mocks.updateCustomerServiceStatus).toHaveBeenCalledWith(customerId, "human_active");
+    expect(mocks.cancelAutomationJob).toHaveBeenCalledTimes(2);
+    expect(mocks.saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "template",
+      templateName: "lembrete_agendamento",
+      body: "Olá, Maria. Confirme seu atendimento.",
+    }));
+    expect(result).toMatchObject({ messageId: "wamid.template", templateName: "lembrete_agendamento" });
+  });
+
+  it("does not send a template that is no longer approved", async () => {
+    mocks.findLatestInboundWhatsAppMessage.mockResolvedValue(null);
+    mocks.listWhatsAppTemplates.mockResolvedValue([{
+      id: "template-1",
+      name: "lembrete_agendamento",
+      language: "pt_BR",
+      status: "PAUSED",
+      category: "UTILITY",
+      components: [],
+    }]);
+
+    await expect(sendManualCustomerTemplate({
+      customerId,
+      templateId: "template-1",
+      parameters: { header: [], body: [], buttonUrls: [] },
+      sentBy: "admin@example.com",
+    })).rejects.toMatchObject({ code: "TEMPLATE_INVALID", status: 409 });
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
     expect(mocks.updateCustomerServiceStatus).not.toHaveBeenCalled();
   });
 });
