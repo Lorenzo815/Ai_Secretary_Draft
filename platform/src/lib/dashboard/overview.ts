@@ -2,11 +2,13 @@ import "server-only";
 
 import type { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { LEAD_QUALIFICATION_VERSION, type LeadInsightTagTone } from "../qualification/contracts";
 
 const DB_NAME = "ai_secretary";
 
 interface CohortCustomerDocument {
   _id: ObjectId;
+  name: string;
   relationship?: { status?: string };
   profile?: Record<string, unknown>;
   leadQualification?: {
@@ -14,22 +16,10 @@ interface CohortCustomerDocument {
     generatedAt?: Date;
     profileFit?: { score?: number };
     combinedFit?: { score?: number };
+    insightTags?: Array<{ label: string; tone: LeadInsightTagTone }>;
   };
   createdAt: Date;
 }
-
-interface QualificationAnalyticsDocument {
-  customerId: ObjectId;
-  version: number;
-  generatedAt: Date;
-  profileFit: { score: number };
-  combinedFit: { score: number };
-}
-
-type QualificationScoreDocument = Pick<
-  QualificationAnalyticsDocument,
-  "customerId" | "generatedAt" | "profileFit" | "combinedFit"
->;
 
 interface PaymentAnalyticsDocument {
   customerId?: ObjectId;
@@ -53,47 +43,35 @@ interface MessageAnalyticsDocument {
   body: string;
 }
 
-export async function getDashboardOverview() {
+export async function getDashboardOverview(periodDays = 30) {
   const client = await clientPromise;
   const database = client.db(DB_NAME);
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
-  const last14Days = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1_000);
-  const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1_000);
-  const nextSevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1_000);
-  const calendarSettings = await database.collection<{ _id: string; timezone?: string }>("calendar_settings").findOne(
-    { _id: "default-calendar" },
-    { projection: { timezone: 1 } },
-  );
-  const timezone = typeof calendarSettings?.timezone === "string"
-    ? calendarSettings.timezone
-    : "America/Sao_Paulo";
+  const periodStart = new Date(now.getTime() - periodDays * 24 * 60 * 60 * 1_000);
 
   const [
-    customerStatuses,
     messageDirections,
-    messageFailures,
+    messageStatusCounts,
     jobStatuses,
     upcomingAppointments,
-    appointmentsNextSevenDays,
-    agentRunsLast24Hours,
     cohortCustomers,
     recentPayments,
     recentAppointments,
     agentRunStatusCounts,
-    dailyMessageCounts,
     responseMessages,
     pendingPayments,
-    qualificationHistory,
+    aiCallStatusCounts,
+    aiCallTaskCounts,
   ] = await Promise.all([
-    database.collection("crm_customers").aggregate<{ _id: string; count: number }>([
-      { $group: { _id: { $ifNull: ["$serviceStatus", "ai_active"] }, count: { $sum: 1 } } },
-    ]).toArray(),
     database.collection("whatsapp_messages").aggregate<{ _id: string; count: number }>([
       { $match: { timestamp: { $gte: last24Hours } } },
       { $group: { _id: "$direction", count: { $sum: 1 } } },
     ]).toArray(),
-    database.collection("whatsapp_messages").countDocuments({ status: "failed", timestamp: { $gte: last24Hours } }),
+    database.collection("whatsapp_messages").aggregate<{ _id: string; count: number }>([
+      { $match: { timestamp: { $gte: last24Hours } } },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]).toArray(),
     database.collection("automation_jobs").aggregate<{ _id: string; count: number }>([
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]).toArray(),
@@ -101,61 +79,48 @@ export async function getDashboardOverview() {
       { status: "scheduled", startAt: { $gte: now } },
       { projection: { _id: 0, customerName: 1, eventType: 1, startAt: 1, endAt: 1, timezone: 1 } },
     ).sort({ startAt: 1 }).limit(6).toArray(),
-    database.collection("calendar_appointments").countDocuments({ status: "scheduled", startAt: { $gte: now, $lt: nextSevenDays } }),
-    database.collection("assistant_runs").countDocuments({ startedAt: { $gte: last24Hours }, status: "completed" }),
     database.collection<CohortCustomerDocument>("crm_customers").find(
-      { createdAt: { $gte: last30Days } },
-      { projection: { _id: 1, relationship: 1, profile: 1, leadQualification: 1 } },
+      { createdAt: { $gte: periodStart } },
+      { projection: { _id: 1, name: 1, relationship: 1, profile: 1, leadQualification: 1 } },
     ).toArray(),
     database.collection<PaymentAnalyticsDocument>("payment_requests").find(
-      { createdAt: { $gte: last30Days } },
+      { createdAt: { $gte: periodStart } },
       { projection: { _id: 0, customerId: 1, status: 1, amountCents: 1, createdAt: 1 } },
     ).toArray(),
     database.collection<AppointmentAnalyticsDocument>("calendar_appointments").find(
-      { createdAt: { $gte: last30Days } },
+      { createdAt: { $gte: periodStart } },
       { projection: { _id: 0, customerId: 1, eventType: 1, status: 1, source: 1 } },
     ).toArray(),
     database.collection("assistant_runs").aggregate<{ _id: string; count: number }>([
-      { $match: { startedAt: { $gte: last30Days } } },
+      { $match: { startedAt: { $gte: periodStart } } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]).toArray(),
-    database.collection("whatsapp_messages").aggregate<{ _id: { date: string; direction: string }; count: number }>([
-      { $match: { timestamp: { $gte: last14Days }, direction: { $in: ["inbound", "outbound"] } } },
-      { $group: {
-        _id: {
-          date: { $dateToString: { date: "$timestamp", format: "%Y-%m-%d", timezone } },
-          direction: "$direction",
-        },
-        count: { $sum: 1 },
-      } },
-    ]).toArray(),
     database.collection<MessageAnalyticsDocument>("whatsapp_messages").find(
-      { timestamp: { $gte: last30Days }, direction: { $in: ["inbound", "outbound"] } },
+      { timestamp: { $gte: periodStart }, direction: { $in: ["inbound", "outbound"] } },
       { projection: { _id: 0, customerId: 1, direction: 1, timestamp: 1, body: 1 } },
     ).sort({ timestamp: 1 }).toArray(),
     database.collection<PaymentAnalyticsDocument>("payment_requests").find(
       { status: "awaiting_human_confirmation" },
       { projection: { _id: 0, customerId: 1, amountCents: 1, createdAt: 1 } },
     ).sort({ createdAt: 1 }).limit(20).toArray(),
-    database.collection<QualificationAnalyticsDocument>("lead_qualification_history").find(
-      { version: 2, generatedAt: { $gte: last30Days } },
-      { projection: { _id: 0, customerId: 1, version: 1, generatedAt: 1, profileFit: 1, combinedFit: 1 } },
-    ).sort({ generatedAt: 1 }).toArray(),
+    database.collection("ai_task_calls").aggregate<{ _id: string; count: number }>([
+      { $match: { startedAt: { $gte: periodStart } } },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]).toArray(),
+    database.collection("ai_task_calls").aggregate<{ _id: string; count: number }>([
+      { $match: { startedAt: { $gte: periodStart } } },
+      { $group: { _id: "$taskKey", count: { $sum: 1 } } },
+    ]).toArray(),
   ]);
 
-  const cohortIds = new Set(cohortCustomers.map((customer) => customer._id.toString()));
   const newPatientIds = new Set(cohortCustomers
     .filter((customer) => customer.relationship?.status === "new")
     .map((customer) => customer._id.toString()));
   const profileCompleteIds = new Set(cohortCustomers
     .filter((customer) => customer.relationship?.status === "new" && isProfileComplete(customer.profile))
     .map((customer) => customer._id.toString()));
-  const engagedIds = distinctCustomerIds(
-    responseMessages.filter((message) => message.direction === "outbound"),
-    profileCompleteIds,
-  );
-  const paymentRequestedIds = distinctCustomerIds(recentPayments, engagedIds);
+  const paymentRequestedIds = distinctCustomerIds(recentPayments, newPatientIds);
   const paymentConfirmedIds = distinctCustomerIds(
     recentPayments.filter((payment) => payment.status === "paid"),
     paymentRequestedIds,
@@ -165,22 +130,28 @@ export async function getDashboardOverview() {
       appointment.eventType === "doctor_consultation"
       && appointment.status !== "cancelled"
     )),
-    paymentConfirmedIds,
+    newPatientIds,
   );
-  const outboundMessages = responseMessages.filter((message) => message.direction === "outbound");
-  const questionMessages = outboundMessages.filter((message) => message.body?.trim().endsWith("?"));
+  const activeConversationIds = new Set(responseMessages.flatMap((message) => {
+    const customerId = message.customerId?.toString();
+    return customerId && message.timestamp >= last24Hours ? [customerId] : [];
+  }));
   const responseDurations = calculateResponseDurations(responseMessages);
   const paymentStatusCounts = countBy(recentPayments, (payment) => payment.status as string);
   const appointmentSourceCounts = countBy(recentAppointments, (appointment) => appointment.source as string);
+  const messagesByDirection = Object.fromEntries(messageDirections.map((item) => [item._id, item.count]));
+  const messagesByStatus = Object.fromEntries(messageStatusCounts.map((item) => [item._id, item.count]));
+  const aiCallStatuses = Object.fromEntries(aiCallStatusCounts.map((item) => [item._id, item.count]));
+  const aiCallsByTask = Object.fromEntries(aiCallTaskCounts.map((item) => [item._id, item.count]));
+  const agentRunStatuses = Object.fromEntries(agentRunStatusCounts.map((item) => [item._id, item.count]));
+  const finishedAgentRuns = Number(agentRunStatuses.completed ?? 0) + Number(agentRunStatuses.failed ?? 0);
   const currentQualifications = cohortCustomers.flatMap((customer) => {
     const qualification = customer.leadQualification;
-    return qualification?.version === 2
+    return qualification?.version === LEAD_QUALIFICATION_VERSION
       && qualification.generatedAt instanceof Date
       && Number.isFinite(qualification.profileFit?.score)
       && Number.isFinite(qualification.combinedFit?.score)
       ? [{
-        customerId: customer._id,
-        generatedAt: qualification.generatedAt,
         profileFit: { score: qualification.profileFit!.score! },
         combinedFit: { score: qualification.combinedFit!.score! },
       }]
@@ -189,34 +160,26 @@ export async function getDashboardOverview() {
 
   return {
     generatedAt: now,
-    customerStatuses: Object.fromEntries(customerStatuses.map((item) => [item._id, item.count])),
-    messageDirections: Object.fromEntries(messageDirections.map((item) => [item._id, item.count])),
-    messageFailures,
-    jobStatuses: Object.fromEntries(jobStatuses.map((item) => [item._id, item.count])),
     upcomingAppointments,
-    appointmentsNextSevenDays,
-    agentRunsLast24Hours,
-    timezone,
-    periodDays: 30,
-    activitySeries: buildDailyActivity(now, timezone, dailyMessageCounts),
-    leadFitSeries: buildDailyLeadFit(now, timezone, [...qualificationHistory, ...currentQualifications]),
-    funnel: [
-      { key: "contacts", label: "Contatos", count: cohortIds.size },
-      { key: "new_patients", label: "Novos pacientes", count: newPatientIds.size },
-      { key: "profile_complete", label: "Cadastro completo", count: profileCompleteIds.size },
-      { key: "agent_engaged", label: "Atendimento do agente", count: engagedIds.size },
-      { key: "payment_requested", label: "Sinal solicitado", count: paymentRequestedIds.size },
-      { key: "payment_paid", label: "Sinal confirmado", count: paymentConfirmedIds.size },
-      { key: "scheduled", label: "Consulta agendada", count: scheduledIds.size },
-    ],
-    agentRunStatuses: agentRunStatusCounts.map((item) => ({ key: item._id, count: item.count })),
+    periodDays,
+    messageSummary: {
+      activeConversations: activeConversationIds.size,
+      inbound: Number(messagesByDirection.inbound ?? 0),
+      outbound: Number(messagesByDirection.outbound ?? 0),
+      deliveredOrRead: Number(messagesByStatus.delivered ?? 0) + Number(messagesByStatus.read ?? 0),
+      failed: Number(messagesByStatus.failed ?? 0),
+    },
+    topInsightTags: summarizeInsightTags(cohortCustomers),
     commercialMetrics: {
       newPatients: newPatientIds.size,
       returningPatients: cohortCustomers.filter((customer) => customer.relationship?.status === "returning").length,
+      profileCompleted: profileCompleteIds.size,
+      paymentRequested: paymentRequestedIds.size,
+      paymentConfirmed: paymentConfirmedIds.size,
+      scheduledPatients: scheduledIds.size,
       profileCompletionRate: percentage(profileCompleteIds.size, newPatientIds.size),
       paymentConfirmationRate: percentage(paymentConfirmedIds.size, paymentRequestedIds.size),
       schedulingRate: percentage(scheduledIds.size, newPatientIds.size),
-      explicitQuestionRate: percentage(questionMessages.length, outboundMessages.length),
       medianResponseMinutes: median(responseDurations) / 60_000,
       qualifiedLeads: currentQualifications.length,
       averageProfileFit: Math.round(average(currentQualifications.map((item) => item.profileFit.score))),
@@ -233,6 +196,19 @@ export async function getDashboardOverview() {
     appointmentSources: {
       assistant: Number(appointmentSourceCounts.assistant ?? 0),
       manual: Number(appointmentSourceCounts.manual ?? 0),
+    },
+    aiSummary: {
+      totalCalls: aiCallStatusCounts.reduce((total, item) => total + item.count, 0),
+      failedCalls: Number(aiCallStatuses.failed ?? 0),
+      agentCalls: Number(aiCallsByTask.customer_agent ?? 0),
+      qualificationCalls: Number(aiCallsByTask.lead_qualification ?? 0),
+      completedRuns: Number(agentRunStatuses.completed ?? 0),
+      finishedRuns: finishedAgentRuns,
+      runSuccessRate: finishedAgentRuns > 0
+        ? percentage(Number(agentRunStatuses.completed ?? 0), finishedAgentRuns)
+        : null,
+      pendingJobs: Number(Object.fromEntries(jobStatuses.map((item) => [item._id, item.count])).pending ?? 0),
+      failedJobs: Number(Object.fromEntries(jobStatuses.map((item) => [item._id, item.count])).failed ?? 0),
     },
     pendingPayments: pendingPayments.map((payment) => ({
       customerId: payment.customerId as ObjectId,
@@ -264,6 +240,28 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
     counts[key] = (counts[key] ?? 0) + 1;
     return counts;
   }, {});
+}
+
+function summarizeInsightTags(customers: CohortCustomerDocument[]) {
+  const tags = new Map<string, { label: string; tone: LeadInsightTagTone; count: number }>();
+  for (const customer of customers) {
+    if (customer.leadQualification?.version !== LEAD_QUALIFICATION_VERSION) continue;
+    const customerTags = new Set<string>();
+    for (const tag of customer.leadQualification.insightTags ?? []) {
+      const label = tag.label.trim();
+      if (!label) continue;
+      const key = label.toLocaleLowerCase("pt-BR");
+      if (customerTags.has(key)) continue;
+      customerTags.add(key);
+      const current = tags.get(key);
+      tags.set(key, current
+        ? { ...current, count: current.count + 1 }
+        : { label, tone: tag.tone, count: 1 });
+    }
+  }
+  return [...tags.values()]
+    .sort((first, second) => second.count - first.count || first.label.localeCompare(second.label, "pt-BR"))
+    .slice(0, 6);
 }
 
 function percentage(value: number, total: number) {
@@ -301,65 +299,6 @@ function calculateResponseDurations(messages: Array<{
   return durations.filter((duration) => duration >= 0 && duration <= 24 * 60 * 60 * 1_000);
 }
 
-function buildDailyActivity(
-  now: Date,
-  timezone: string,
-  counts: Array<{ _id: { date: string; direction: string }; count: number }>,
-) {
-  const countMap = new Map(counts.map((item) => [`${item._id.date}:${item._id.direction}`, item.count]));
-  return Array.from({ length: 14 }, (_, index) => {
-    const date = new Date(now.getTime() - (13 - index) * 24 * 60 * 60 * 1_000);
-    const key = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(date);
-    return {
-      date: key,
-      label: new Intl.DateTimeFormat("pt-BR", { timeZone: timezone, day: "2-digit", month: "2-digit" }).format(date),
-      inbound: countMap.get(`${key}:inbound`) ?? 0,
-      outbound: countMap.get(`${key}:outbound`) ?? 0,
-    };
-  });
-}
-
 function average(values: number[]) {
   return values.length > 0 ? values.reduce((total, value) => total + value, 0) / values.length : 0;
-}
-
-function buildDailyLeadFit(
-  now: Date,
-  timezone: string,
-  qualifications: QualificationScoreDocument[],
-) {
-  const dailyCustomerScores = new Map<string, Map<string, QualificationScoreDocument>>();
-  for (const qualification of qualifications) {
-    const date = formatDateKey(qualification.generatedAt, timezone);
-    const scores = dailyCustomerScores.get(date) ?? new Map<string, QualificationScoreDocument>();
-    scores.set(qualification.customerId.toString(), qualification);
-    dailyCustomerScores.set(date, scores);
-  }
-
-  return Array.from({ length: 30 }, (_, index) => {
-    const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1_000);
-    const key = formatDateKey(date, timezone);
-    const scores = [...(dailyCustomerScores.get(key)?.values() ?? [])];
-    return {
-      date: key,
-      label: new Intl.DateTimeFormat("pt-BR", { timeZone: timezone, day: "2-digit", month: "2-digit" }).format(date),
-      profileFit: scores.length > 0 ? Math.round(average(scores.map((item) => item.profileFit.score))) : null,
-      combinedFit: scores.length > 0 ? Math.round(average(scores.map((item) => item.combinedFit.score))) : null,
-      leadCount: scores.length,
-    };
-  });
-}
-
-function formatDateKey(date: Date, timezone: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
 }

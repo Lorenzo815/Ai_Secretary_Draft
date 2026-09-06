@@ -9,8 +9,9 @@ const DB_NAME = "ai_secretary";
 interface JobRecord {
   _id: ObjectId;
   customerId: ObjectId;
-  process: "customer_agent" | "lead_qualification";
+  process: "customer_agent" | "customer_follow_up" | "lead_qualification";
   event: string;
+  eventPayload?: Record<string, unknown>;
   status: "pending" | "processing" | "failed";
   revision: number;
   consecutiveFailures: number;
@@ -48,17 +49,6 @@ interface ModelCallRecord {
   startedAt: Date;
 }
 
-interface PaymentRecord {
-  _id: ObjectId;
-  customerId: ObjectId;
-  amountCents: number;
-  status: "awaiting_human_confirmation" | "paid" | "rejected";
-  createdAt: Date;
-  reviewedAt?: Date;
-  reviewedBy?: string;
-  reviewNote?: string;
-}
-
 export async function getOperationsDashboard() {
   const database = (await clientPromise).db(DB_NAME);
   const now = new Date();
@@ -73,9 +63,9 @@ export async function getOperationsDashboard() {
     ? calendarSettings.timezone
     : "America/Sao_Paulo";
 
-  const [jobs, runs, modelCalls, usageCalls, payments, failedMessages, runStatuses] = await Promise.all([
+  const [jobs, runs, modelCalls, usageCalls, failedMessages, runStatuses, jobStatuses, latencyCalls] = await Promise.all([
     database.collection<JobRecord>("automation_jobs").find({}, {
-      projection: { customerId: 1, process: 1, event: 1, status: 1, revision: 1, consecutiveFailures: 1, lastError: 1, dueAt: 1, updatedAt: 1 },
+      projection: { customerId: 1, process: 1, event: 1, eventPayload: 1, status: 1, revision: 1, consecutiveFailures: 1, lastError: 1, dueAt: 1, updatedAt: 1 },
     }).sort({ updatedAt: -1 }).limit(30).toArray(),
     database.collection<RunRecord>("assistant_runs").find({}, {
       projection: { customerId: 1, status: 1, configRevision: 1, modelIterations: 1, toolExecutions: 1, mutationsExecuted: 1, finalDecision: 1, error: 1, startedAt: 1, completedAt: 1 },
@@ -87,18 +77,22 @@ export async function getOperationsDashboard() {
       { status: "completed", startedAt: { $gte: last14Days } },
       { projection: { _id: 0, usage: 1, normalizedUsage: 1, startedAt: 1 } },
     ).sort({ startedAt: 1 }).toArray(),
-    database.collection<PaymentRecord>("payment_requests").find({}, {
-      projection: { customerId: 1, amountCents: 1, status: 1, createdAt: 1, reviewedAt: 1, reviewedBy: 1, reviewNote: 1 },
-    }).sort({ createdAt: -1 }).limit(30).toArray(),
     database.collection("whatsapp_messages").countDocuments({ status: "failed", timestamp: { $gte: last24Hours } }),
     database.collection("assistant_runs").aggregate<{ _id: string; count: number }>([
       { $match: { startedAt: { $gte: lastSevenDays } } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]).toArray(),
+    database.collection("automation_jobs").aggregate<{ _id: string; count: number }>([
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]).toArray(),
+    database.collection<ModelCallRecord>("ai_task_calls").find(
+      { status: "completed", startedAt: { $gte: lastSevenDays } },
+      { projection: { _id: 0, taskKey: 1, durationMs: 1 } },
+    ).toArray(),
   ]);
 
   const customerIds = new Set<string>();
-  for (const record of [...jobs, ...runs, ...modelCalls, ...payments]) {
+  for (const record of [...jobs, ...runs, ...modelCalls]) {
     if (record.customerId) customerIds.add(record.customerId.toString());
   }
   const customers = await database.collection<{ _id: ObjectId; name: string }>("crm_customers").find(
@@ -114,7 +108,13 @@ export async function getOperationsDashboard() {
   const completedRuns = Number(statusCounts.completed ?? 0);
   const failedRuns = Number(statusCounts.failed ?? 0);
   const finishedRuns = completedRuns + failedRuns;
-  const completedCalls = modelCalls.filter((call) => call.status === "completed" && typeof call.durationMs === "number");
+  const jobStatusCounts = Object.fromEntries(jobStatuses.map((status) => [status._id, status.count]));
+  const agentLatencies = latencyCalls
+    .filter((call) => call.taskKey === "customer_agent")
+    .map((call) => call.durationMs!);
+  const qualificationLatencies = latencyCalls
+    .filter((call) => call.taskKey === "lead_qualification")
+    .map((call) => call.durationMs!);
   const normalizedCalls = modelCalls.map((call) => ({
     ...call,
     normalizedUsage: call.normalizedUsage ?? normalizeModelUsage(call.usage),
@@ -124,18 +124,20 @@ export async function getOperationsDashboard() {
   return {
     generatedAt: now,
     health: {
-      pendingJobs: jobs.filter((job) => job.status === "pending").length,
-      processingJobs: jobs.filter((job) => job.status === "processing").length,
-      failedJobs: jobs.filter((job) => job.status === "failed").length,
+      pendingJobs: Number(jobStatusCounts.pending ?? 0),
+      processingJobs: Number(jobStatusCounts.processing ?? 0),
+      failedJobs: Number(jobStatusCounts.failed ?? 0),
       failedMessages,
-      runSuccessRate: finishedRuns > 0 ? Math.round((completedRuns / finishedRuns) * 100) : 100,
-      medianModelLatencyMs: median(completedCalls.map((call) => call.durationMs!)),
+      completedRuns,
+      finishedRuns,
+      runSuccessRate: finishedRuns > 0 ? Math.round((completedRuns / finishedRuns) * 100) : null,
+      agentLatency: summarizeLatency(agentLatencies),
+      qualificationLatency: summarizeLatency(qualificationLatencies),
     },
     jobs: jobs.map(withCustomer),
     runs: runs.map(withCustomer),
     aiUsage: buildUsageSummary(now, timezone, usageCalls),
     modelCalls: normalizedCalls.map(withCustomer),
-    payments: payments.map(withCustomer),
   };
 }
 
@@ -203,4 +205,18 @@ function formatDateKey(date: Date, timezone: string) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+}
+
+function summarizeLatency(values: number[]) {
+  return {
+    count: values.length,
+    medianMs: median(values),
+    p95Ms: percentile(values, 0.95),
+  };
+}
+
+function percentile(values: number[], percentileValue: number) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((first, second) => first - second);
+  return sorted[Math.ceil(percentileValue * sorted.length) - 1];
 }

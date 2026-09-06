@@ -3,6 +3,7 @@ import "server-only";
 import { Collection, MongoServerError, ObjectId } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
+import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
 
 export interface WeeklyAvailability {
   weekday: number;
@@ -80,6 +81,7 @@ interface PersistAppointmentInput {
 
 interface BookAppointmentInput extends PersistAppointmentInput {
   customerId: ObjectId;
+  deferQualificationTrigger?: boolean;
 }
 
 const DB_NAME = "ai_secretary";
@@ -329,12 +331,16 @@ export async function bookAppointment(input: BookAppointmentInput) {
   const slot = available.slots.find((item) => DateTime.fromISO(item.startAt).toUTC().toMillis() === requested.toUTC().toMillis());
   if (!slot) throw new Error("O horário escolhido não está mais disponível.");
 
-  return persistAppointment(
+  const appointment = await persistAppointment(
     input,
     settings,
     DateTime.fromISO(slot.startAt).toUTC(),
     DateTime.fromISO(slot.endAt).toUTC(),
   );
+  if (!input.deferQualificationTrigger) {
+    await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.createdAt);
+  }
+  return appointment;
 }
 
 export async function bookManualAppointment(input: PersistAppointmentInput) {
@@ -344,12 +350,16 @@ export async function bookManualAppointment(input: PersistAppointmentInput) {
   const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];
   if (!eventType) throw new Error("Tipo de evento inválido.");
 
-  return persistAppointment(
+  const appointment = await persistAppointment(
     input,
     settings,
     requested.toUTC(),
     requested.plus({ minutes: eventType.durationMinutes }).toUTC(),
   );
+  if (input.customerId) {
+    await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.createdAt);
+  }
+  return appointment;
 }
 
 export async function updateCustomerAppointment(input: {

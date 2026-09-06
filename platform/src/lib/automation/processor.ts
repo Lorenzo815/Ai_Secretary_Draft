@@ -17,9 +17,9 @@ export async function processNextAutomationJob() {
   }
 
   try {
-    if (job.event !== "assistant.response.sent" || job.eventPayload?.reason !== "follow_up") {
+    if (!isQualificationTrigger(job.event, job.eventPayload?.reason)) {
       await completeAutomationJob(job._id, job.revision);
-      return { processed: true as const, process: job.process, skipped: "not_follow_up_qualification" };
+      return { processed: true as const, process: job.process, skipped: "unsupported_qualification_trigger" };
     }
     const qualification = await analyzeAndSaveCustomerLeadQualification(job.customerId);
     await completeAutomationJob(job._id, job.revision);
@@ -32,4 +32,12 @@ export async function processNextAutomationJob() {
     await failAutomationJob(job, error);
     throw error;
   }
+}
+
+function isQualificationTrigger(event: string, reason: unknown) {
+  return (
+    (event === "assistant.response.sent" && reason === "follow_up")
+    || (event === "customer.profile.updated" && reason === "profile_completed")
+    || (event === "appointment.status.changed" && reason === "first_appointment_confirmed")
+  );
 }

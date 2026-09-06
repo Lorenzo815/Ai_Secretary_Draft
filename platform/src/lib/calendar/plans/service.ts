@@ -3,6 +3,7 @@ import "server-only";
 import { ObjectId, type Collection } from "mongodb";
 import clientPromise from "../../mongodb";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
+import { scheduleFirstAppointmentQualification } from "../../qualification/triggers";
 import { bookAppointment, findAvailableSlots, getCalendarSettings, updateCustomerAppointments } from "../calendar";
 import {
   selectSchedulingPlanCandidates,
@@ -221,6 +222,7 @@ export async function bookSchedulingPlanOption(input: {
         eventType: step.eventTypeKey,
         source: "assistant",
         visitGroupId: appointmentGroupId,
+        deferQualificationTrigger: true,
       });
       createdIds.push(appointment._id);
     }
@@ -238,6 +240,7 @@ export async function bookSchedulingPlanOption(input: {
     { _id: option._id, status: "processing" },
     { $set: { status: "booked", bookedAt: new Date(), appointmentGroupId }, $unset: { processingAt: "" } },
   );
+  await scheduleFirstAppointmentQualification(input.customerId, createdIds);
   return { settings: await getCalendarSettings(), option, appointmentGroupId };
 }
 

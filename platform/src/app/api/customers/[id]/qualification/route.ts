@@ -34,7 +34,7 @@ export async function POST(
   }
 
   try {
-    const qualification = await analyzeAndSaveCustomerLeadQualification(new ObjectId(id), { force: true });
+    const qualification = await analyzeAndSaveCustomerLeadQualification(new ObjectId(id));
     return NextResponse.json({ qualification });
   } catch (error) {
     if (error instanceof QualificationInProgressError) {

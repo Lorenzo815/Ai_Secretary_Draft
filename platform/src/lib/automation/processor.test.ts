@@ -28,7 +28,7 @@ import { processNextAutomationJob } from "./processor";
 describe("automation processor qualification routing", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("discards qualification jobs that were not created by a processed follow-up", async () => {
+  it("discards qualification jobs without an authorized reason", async () => {
     const job = createQualificationJob("customer.profile.updated");
     claimAutomationJob.mockResolvedValue(job);
 
@@ -36,11 +36,15 @@ describe("automation processor qualification routing", () => {
 
     expect(analyzeAndSaveCustomerLeadQualification).not.toHaveBeenCalled();
     expect(completeAutomationJob).toHaveBeenCalledWith(job._id, job.revision);
-    expect(result).toMatchObject({ skipped: "not_follow_up_qualification" });
+    expect(result).toMatchObject({ skipped: "unsupported_qualification_trigger" });
   });
 
-  it("runs qualification for a job created after a follow-up response", async () => {
-    const job = createQualificationJob("assistant.response.sent", { reason: "follow_up" });
+  it.each([
+    ["assistant.response.sent", "follow_up"],
+    ["customer.profile.updated", "profile_completed"],
+    ["appointment.status.changed", "first_appointment_confirmed"],
+  ] as const)("runs qualification for %s with reason %s", async (event, reason) => {
+    const job = createQualificationJob(event, { reason });
     claimAutomationJob.mockResolvedValue(job);
     analyzeAndSaveCustomerLeadQualification.mockResolvedValue({ version: 5 });
 

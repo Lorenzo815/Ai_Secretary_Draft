@@ -3,7 +3,7 @@ import "server-only";
 import { createCipheriv, createHash, createHmac, randomBytes } from "crypto";
 import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import type { LeadInsightTag } from "../qualification/contracts";
+import { LEAD_QUALIFICATION_VERSION, type LeadInsightTag } from "../qualification/contracts";
 import { CustomerProfileValidationError, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone } from "./validation";
 
 export interface CustomerIdentifier {
@@ -42,7 +42,7 @@ export interface LeadFitScore {
 }
 
 export interface CustomerLeadQualification {
-  version: 5;
+  version: typeof LEAD_QUALIFICATION_VERSION;
   generatedAt: Date;
   model: string;
   sourceHash: string;

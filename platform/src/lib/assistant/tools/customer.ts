@@ -2,6 +2,7 @@ import "server-only";
 
 import { CustomerProfileValidationError, classifyCustomerRelationship, getCustomerProfileSnapshot, updateCustomerProfile } from "../../crm";
 import { emitAutomationEvent } from "../../automation";
+import { scheduleProfileCompletionQualification } from "../../qualification/triggers";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 export async function executeRegisteredCustomerTool(
@@ -36,12 +37,16 @@ export async function executeRegisteredCustomerTool(
       profession: optionalString(args.profession),
     });
     const profile = getCustomerProfileSnapshot(customer);
-    await emitAutomationEvent({
-      type: "customer.profile.updated",
-      customerId: context.customerId,
-      occurredAt: new Date(),
-      payload: { missingFields: profile.missingFields },
-    });
+    const occurredAt = new Date();
+    await Promise.all([
+      emitAutomationEvent({
+        type: "customer.profile.updated",
+        customerId: context.customerId,
+        occurredAt,
+        payload: { missingFields: profile.missingFields },
+      }),
+      scheduleProfileCompletionQualification(context.customerId, profile.missingFields, occurredAt),
+    ]);
     return success("customer.update_profile", profile);
   } catch (error) {
     if (error instanceof CustomerProfileValidationError) {

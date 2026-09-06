@@ -11,11 +11,11 @@ import {
 } from "../crm";
 import { listWhatsAppMessagesForAssistant } from "../whatsapp";
 import { getLeadQualificationConfiguration } from "./config";
+import { LEAD_QUALIFICATION_VERSION } from "./contracts";
 import { assertInsightTagEvidence } from "./evidence";
 import { acquireQualificationLock } from "./lock";
 import { buildQualificationSourceHash } from "./source-hash";
 
-const QUALIFICATION_VERSION = 5;
 const CLINIC_CITY = "Ponta Grossa/PR";
 const CLINIC_TIMEZONE = "America/Sao_Paulo";
 export async function analyzeAndSaveCustomerLeadQualification(
@@ -51,7 +51,7 @@ export async function analyzeAndSaveCustomerLeadQualification(
     conversation,
   };
   const sourceHash = buildQualificationSourceHash(input, taskConfiguration.contentHash);
-  if (!options.force && customer.leadQualification?.version === QUALIFICATION_VERSION && customer.leadQualification.sourceHash === sourceHash) {
+  if (!options.force && customer.leadQualification?.version === LEAD_QUALIFICATION_VERSION && customer.leadQualification.sourceHash === sourceHash) {
     return customer.leadQualification;
   }
 
@@ -80,7 +80,7 @@ export async function analyzeAndSaveCustomerLeadQualification(
       },
     });
     const qualification: CustomerLeadQualification = {
-      version: QUALIFICATION_VERSION,
+      version: LEAD_QUALIFICATION_VERSION,
       generatedAt: new Date(),
       model: response.model,
       sourceHash,
