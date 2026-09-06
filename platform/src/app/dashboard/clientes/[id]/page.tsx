@@ -4,13 +4,14 @@ import { findCustomerById, getCustomerProfileSnapshot } from "@/lib/crm";
 import { getAssistantConversationState } from "@/lib/assistant/context";
 import { listCustomerAgentRuns } from "@/lib/assistant/agent";
 import { getCustomerCalendarOverview } from "@/lib/calendar";
-import { listWhatsAppMessagesForCustomer } from "@/lib/whatsapp";
+import { getManualMessageAvailability, listWhatsAppMessagesForCustomer } from "@/lib/whatsapp";
 import { getLatestPaymentRequest } from "@/lib/payments";
 import AutoRefresh from "../../_components/auto-refresh";
 import CustomerDetailTabs from "./_components/customer-detail-tabs";
 import CustomerAgentPanel from "./_components/customer-agent-panel";
 import LeadQualificationPanel from "./_components/lead-qualification-panel";
 import PaymentReviewPanel from "./_components/payment-review-panel";
+import WhatsAppConversation from "./_components/whatsapp-conversation";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +25,13 @@ export default async function CustomerPage({
   if (!customer) notFound();
   const profile = getCustomerProfileSnapshot(customer);
 
-  const [messages, agentRuns, conversationState, calendarOverview, payment] = await Promise.all([
+  const [messages, agentRuns, conversationState, calendarOverview, payment, messageAvailability] = await Promise.all([
     listWhatsAppMessagesForCustomer(customer._id, customer.phones),
     listCustomerAgentRuns(customer._id),
     getAssistantConversationState(customer._id),
     getCustomerCalendarOverview(customer._id),
     getLatestPaymentRequest(customer._id),
+    getManualMessageAvailability(customer._id),
   ]);
 
   const relationshipLabel = profile.relationshipStatus === "new"
@@ -153,25 +155,24 @@ export default async function CustomerPage({
           </div>
         )}
         conversation={(
-          <section aria-labelledby="history-title">
-            <div>
-              <h2 id="history-title" className="font-heading text-base font-semibold text-slate-ink">Histórico da conversa</h2>
-              <p className="mt-1 text-xs text-stone">Visualização para conferência. O envio de mensagens não está disponível nesta tela.</p>
-            </div>
-            <div className="mt-4 flex min-h-[420px] flex-col gap-3 rounded-lg border border-mist bg-warm-sand/25 p-4 sm:p-6">
-              {messages.length === 0 ? (
-                <p className="m-auto text-sm text-stone">Nenhuma mensagem registrada.</p>
-              ) : messages.map((message) => (
-                <article
-                  key={message.metaMessageId}
-                  className={`max-w-[82%] rounded-lg px-3.5 py-2.5 shadow-sm sm:max-w-[70%] ${message.direction === "outbound" ? "self-end rounded-br-sm bg-deep-teal text-white" : "self-start rounded-bl-sm border border-mist bg-white text-slate-ink"}`}
-                >
-                  <p className="whitespace-pre-wrap break-words text-sm leading-5">{message.body}</p>
-                  <p className={`mt-1.5 text-right text-[10px] ${message.direction === "outbound" ? "text-white/65" : "text-stone"}`}>{formatDateTime(message.timestamp)}</p>
-                </article>
-              ))}
-            </div>
-          </section>
+          <WhatsAppConversation
+            key={messageAvailability.lastInboundAt?.toISOString() ?? "no-inbound"}
+            customerId={customer._id.toString()}
+            initialMessages={messages.map((message) => ({
+              messageId: message.metaMessageId,
+              direction: message.direction,
+              body: message.body,
+              status: message.status,
+              sentBy: message.sentBy,
+              timestamp: message.timestamp.toISOString(),
+            }))}
+            availability={{
+              canSendText: messageAvailability.canSendText,
+              reason: messageAvailability.reason,
+              expiresAt: messageAvailability.expiresAt?.toISOString() ?? null,
+              recipientPhone: messageAvailability.recipientPhone,
+            }}
+          />
         )}
       />
     </div>

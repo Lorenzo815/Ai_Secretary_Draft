@@ -16,6 +16,7 @@ export interface WhatsAppMessageDocument {
   type: string;
   body: string;
   status: MessageStatus;
+  sentBy?: string;
   timestamp: Date;
   updatedAt: Date;
 }
@@ -98,11 +99,26 @@ export async function listWhatsAppMessagesForAssistant(
   return results.reverse();
 }
 
+export async function findLatestInboundWhatsAppMessage(customerId: ObjectId, phones: string[]) {
+  const normalizedPhones = phones.map((phone) => phone.replace(/\D/g, "")).filter(Boolean);
+  return (await getMessagesCollection()).findOne(
+    {
+      direction: "inbound",
+      $or: [
+        { customerId },
+        ...(normalizedPhones.length > 0 ? [{ contactPhone: { $in: normalizedPhones } }] : []),
+      ],
+    },
+    { sort: { timestamp: -1 } },
+  );
+}
+
 export async function ensureWhatsAppMessageIndexes() {
   const messages = await getMessagesCollection();
   await Promise.all([
     messages.createIndex({ metaMessageId: 1 }, { unique: true }),
     messages.createIndex({ contactPhone: 1, timestamp: -1 }),
     messages.createIndex({ customerId: 1, timestamp: -1 }),
+    messages.createIndex({ customerId: 1, direction: 1, timestamp: -1 }),
   ]);
 }
