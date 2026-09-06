@@ -66,6 +66,14 @@ describe("tool registry", () => {
     expect(schema.properties).toHaveProperty("relationshipStatus");
   });
 
+  it("collects related profile fields in manageable groups", () => {
+    const instructions = toolRegistry["customer.update_profile"].promptInstructions;
+
+    expect(instructions).toContain("campos relacionados");
+    expect(instructions).toContain("dois ou três campos");
+    expect(instructions).not.toContain("Pergunte um tópico por vez");
+  });
+
   it.each(["calendar.book", "calendar.reschedule"] as const)("confirms %s from one server candidate", (key) => {
     const schema = toolRegistry[key].argumentsSchema as {
       required: string[];
@@ -79,12 +87,14 @@ describe("tool registry", () => {
     expect(schema.properties).not.toHaveProperty("customerId");
   });
 
-  it("distinguishes displayed positions from chronological availability", () => {
+  it("handles mixed per-step extremes without trusting a limited candidate batch", () => {
     const instructions = toolRegistry["calendar.find_slots"].promptInstructions;
 
     expect(instructions).toContain("isChronologicallyEarliest");
     expect(instructions).toContain("isChronologicallyLatest");
-    expect(instructions).toContain("independentemente da ordem de ranking ou de exibição");
+    expect(instructions).toContain("extremos opostos em etapas diferentes");
+    expect(instructions).toContain("primeira avaliação + última consulta");
+    expect(instructions).toContain("comparam somente o lote limitado");
   });
 
   it("offers exactly one tool request or one final response", () => {

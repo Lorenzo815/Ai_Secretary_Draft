@@ -40,7 +40,9 @@ export const customerToolDefinitions = {
   - Quando o cliente informar se é novo ou retorno, envie relationshipStatus e relationshipConfirmedByCustomer=true. Caso contrário, envie relationshipStatus=null e relationshipConfirmedByCustomer=false.
 - birthDate usa AAAA-MM-DD. CPF e telefones são validados pelo servidor.
 - Ao receber CEP, envie postalCode; o servidor consulta o endereço. Depois pergunte número e complemento, sem exigir complemento quando não houver.
-- Pergunte um tópico por vez, mas salve juntos os dados que o cliente oferecer espontaneamente.
+- Agrupe na mesma pergunta campos relacionados que façam sentido no contexto; não imponha uma pergunta separada para cada campo.
+- Peça apenas um pequeno bloco por vez, normalmente dois ou três campos, para manter a conversa natural sem sobrecarregar o cliente.
+- Salve juntos todos os dados que o cliente oferecer, inclusive quando ele antecipar informações de blocos posteriores.
   - Sempre chame esta tool no mesmo turno em que o cliente fornecer qualquer dado novo, mesmo que outros campos do cadastro permaneçam pendentes.
   - Depois da execução, use somente profile.missingFields do resultado para decidir a próxima pergunta.
 - Nunca copie CPF completo para reply, summary, state ou notes.`,
