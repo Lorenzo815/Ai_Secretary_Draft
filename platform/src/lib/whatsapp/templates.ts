@@ -12,7 +12,7 @@ export type WhatsAppTemplateStatus = "APPROVED" | "DELETED" | "DISABLED" | "IN_A
 export type CreateWhatsAppTemplateButton =
   | { type: "QUICK_REPLY"; text: string }
   | { type: "PHONE_NUMBER"; text: string; phoneNumber: string }
-  | { type: "URL"; text: string; url: string };
+  | { type: "URL"; text: string; url: string; example?: string };
 
 export type WhatsAppTemplateButton =
   | { type: "QUICK_REPLY"; text: string }
@@ -81,6 +81,7 @@ export async function createWhatsAppTemplate(input: CreateWhatsAppTemplateInput)
         name: normalized.name,
         language: normalized.language,
         category: normalized.category,
+        parameter_format: "positional",
         components,
       }),
     },
@@ -151,16 +152,32 @@ function normalizeButtons(buttons: CreateWhatsAppTemplateButton[]): WhatsAppTemp
       return { type: button.type, text, phone_number: phoneNumber };
     }
 
-    let url: URL;
+    const rawUrl = button.url.trim();
+    const variables = Array.from(rawUrl.matchAll(TEMPLATE_VARIABLE_PATTERN), (match) => Number(match[1]));
+    const hasDynamicSuffix = variables.length === 1 && variables[0] === 1 && rawUrl.endsWith("{{1}}");
+    if (variables.length > 0 && !hasDynamicSuffix) {
+      throw new Error("A URL dinâmica deve conter somente {{1}} no final.");
+    }
+    const example = button.example?.trim();
+    if (hasDynamicSuffix && !example) {
+      throw new Error("Informe um exemplo para o parâmetro do link dinâmico.");
+    }
+
+    let parsedUrl: URL;
     try {
-      url = new URL(button.url.trim());
+      parsedUrl = new URL(rawUrl.replace("{{1}}", encodeURIComponent(example ?? "exemplo")));
     } catch {
       throw new Error("Informe uma URL completa e válida para o botão.");
     }
-    if (url.protocol !== "https:") {
+    if (parsedUrl.protocol !== "https:") {
       throw new Error("A URL do botão deve começar com https://.");
     }
-    return { type: button.type, text, url: url.toString() };
+    return {
+      type: button.type,
+      text,
+      url: hasDynamicSuffix ? rawUrl : parsedUrl.toString(),
+      ...(hasDynamicSuffix ? { example: [example!] } : {}),
+    };
   });
 }
 
@@ -186,16 +203,30 @@ async function requestGraph<T>(
     signal: AbortSignal.timeout(15_000),
   });
   const result = await response.json() as T & {
-    error?: { message?: string; type?: string; code?: number; error_subcode?: number };
+    error?: {
+      message?: string;
+      type?: string;
+      code?: number;
+      error_subcode?: number;
+      error_user_title?: string;
+      error_user_msg?: string;
+      error_data?: { details?: string };
+      fbtrace_id?: string;
+    };
   };
   if (!response.ok || result.error) {
     const details = [
       result.error?.type,
       result.error?.code ? `code ${result.error.code}` : undefined,
       result.error?.error_subcode ? `subcode ${result.error.error_subcode}` : undefined,
+      result.error?.fbtrace_id ? `trace ${result.error.fbtrace_id}` : undefined,
     ].filter(Boolean).join(", ");
+    const message = result.error?.error_user_msg
+      ?? result.error?.error_data?.details
+      ?? result.error?.message
+      ?? `HTTP ${response.status}`;
     throw new Error(
-      `A Meta recusou a operação com modelos${details ? ` (${details})` : ""}: ${result.error?.message ?? `HTTP ${response.status}`}`,
+      `A Meta recusou a operação com modelos${details ? ` (${details})` : ""}: ${message}`,
     );
   }
   return result;

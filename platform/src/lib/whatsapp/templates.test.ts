@@ -69,6 +69,7 @@ describe("WhatsApp template management", () => {
       name: "lembrete_agendamento",
       language: "pt_BR",
       category: "UTILITY",
+      parameter_format: "positional",
       components: [{
         type: "BODY",
         text: "Olá, {{1}}. Seu atendimento será em {{2}}.",
@@ -133,6 +134,52 @@ describe("WhatsApp template management", () => {
     });
   });
 
+  it("preserves a dynamic URL placeholder and sends its required example", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "459", status: "PENDING", category: "UTILITY" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createWhatsAppTemplate({
+      name: "acompanhar_agendamento",
+      language: "pt_BR",
+      category: "UTILITY",
+      body: "Acompanhe seu atendimento pelo botão abaixo.",
+      buttons: [{
+        type: "URL",
+        text: "Acompanhar",
+        url: "https://example.com/agenda/{{1}}",
+        example: "consulta-123",
+      }],
+    });
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(request.body)).components[1]).toEqual({
+      type: "BUTTONS",
+      buttons: [{
+        type: "URL",
+        text: "Acompanhar",
+        url: "https://example.com/agenda/{{1}}",
+        example: ["consulta-123"],
+      }],
+    });
+  });
+
+  it("rejects a dynamic URL without an example", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createWhatsAppTemplate({
+      name: "acompanhar_agendamento",
+      language: "pt_BR",
+      category: "UTILITY",
+      body: "Acompanhe seu atendimento.",
+      buttons: [{ type: "URL", text: "Acompanhar", url: "https://example.com/{{1}}" }],
+    })).rejects.toThrow("Informe um exemplo para o parâmetro do link dinâmico");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects mixed quick replies and call-to-action buttons", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -173,6 +220,32 @@ describe("WhatsApp template management", () => {
 
     await expect(listWhatsAppTemplates()).rejects.toThrow(
       "A Meta recusou a operação com modelos (OAuthException, code 200): Missing permission",
+    );
+  });
+
+  it("surfaces detailed Meta template validation errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: {
+          message: "Invalid parameter",
+          type: "OAuthException",
+          code: 100,
+          error_subcode: 2388023,
+          error_user_msg: "O exemplo da variável {{2}} é obrigatório.",
+          fbtrace_id: "trace-123",
+        },
+      }),
+    }));
+
+    await expect(createWhatsAppTemplate({
+      name: "lembrete_agendamento",
+      language: "pt_BR",
+      category: "UTILITY",
+      body: "Seu atendimento está confirmado.",
+    })).rejects.toThrow(
+      "A Meta recusou a operação com modelos (OAuthException, code 100, subcode 2388023, trace trace-123): O exemplo da variável {{2}} é obrigatório.",
     );
   });
 

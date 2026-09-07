@@ -73,6 +73,7 @@ export default function TemplatesManager({
   const [urlEnabled, setUrlEnabled] = useState(false);
   const [urlText, setUrlText] = useState("Abrir site");
   const [url, setUrl] = useState("");
+  const [urlExample, setUrlExample] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -94,11 +95,11 @@ export default function TemplatesManager({
     if (buttonMode === "CALL_TO_ACTION") {
       return [
         ...(phoneEnabled ? [{ type: "PHONE_NUMBER" as const, text: phoneText, phoneNumber }] : []),
-        ...(urlEnabled ? [{ type: "URL" as const, text: urlText, url }] : []),
+        ...(urlEnabled ? [{ type: "URL" as const, text: urlText, url, example: urlExample }] : []),
       ];
     }
     return [];
-  }, [buttonMode, phoneEnabled, phoneNumber, phoneText, quickReplies, url, urlEnabled, urlText]);
+  }, [buttonMode, phoneEnabled, phoneNumber, phoneText, quickReplies, url, urlEnabled, urlExample, urlText]);
 
   useEffect(() => {
     setExamples((current) => Array.from(
@@ -217,7 +218,7 @@ export default function TemplatesManager({
               </section>
               <section className="rounded-md border border-mist p-3">
                 <label className="flex cursor-pointer items-center gap-3"><input type="checkbox" checked={urlEnabled} onChange={(event) => setUrlEnabled(event.target.checked)} className="h-4 w-4 accent-deep-teal" /><Link2 className="h-4 w-4 text-deep-teal" /><span className="text-sm font-semibold text-slate-ink">Link</span></label>
-                {urlEnabled && <div className="mt-3 grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)]"><label className="text-xs font-semibold text-slate-ink">Texto<input value={urlText} onChange={(event) => setUrlText(event.target.value)} required maxLength={25} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" /></label><label className="text-xs font-semibold text-slate-ink">URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} required placeholder="https://exemplo.com" className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" /></label></div>}
+                {urlEnabled && <div className="mt-3 grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)]"><label className="text-xs font-semibold text-slate-ink">Texto<input value={urlText} onChange={(event) => setUrlText(event.target.value)} required maxLength={25} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" /></label><label className="text-xs font-semibold text-slate-ink">URL<input type="text" inputMode="url" value={url} onChange={(event) => setUrl(event.target.value)} required placeholder="https://exemplo.com/agenda/{{1}}" className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" /></label>{url.includes("{{1}}") && <label className="text-xs font-semibold text-slate-ink sm:col-start-2">Exemplo do parâmetro<input value={urlExample} onChange={(event) => setUrlExample(event.target.value)} required placeholder="consulta-123" className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" /></label>}</div>}
               </section>
             </div>}
           </div>
