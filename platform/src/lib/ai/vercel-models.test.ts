@@ -44,7 +44,7 @@ describe("Vercel model catalog", () => {
           provider_name: "premium-provider",
           pricing: { prompt: "0.000002", completion: "0.000010" },
           uptime_last_1h: 99.9,
-          supported_parameters: ["response_format"],
+          supported_parameters: ["response_format", "tools", "tool_choice"],
           has_zdr: true,
         },
         {
@@ -67,8 +67,10 @@ describe("Vercel model catalog", () => {
         inputPricePerMillion: 2,
         outputPricePerMillion: 10,
         supportsStructuredOutput: true,
+        supportsTools: true,
         zeroDataRetention: true,
       }),
     ]);
   });
+
 });

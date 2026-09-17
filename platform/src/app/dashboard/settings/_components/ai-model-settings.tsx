@@ -18,6 +18,7 @@ interface ModelEndpoint {
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
   uptimeLastHour: number | null;
+  supportsTools: boolean;
   supportsStructuredOutput: boolean;
   zeroDataRetention: boolean;
 }
@@ -52,6 +53,7 @@ interface ApiResult {
   models?: CatalogModel[];
   endpoints?: ModelEndpoint[];
   health?: { provider: Provider; model: string; mode: "connection" | "model"; inferenceProvider: string | null; durationMs: number; checkedAt: string };
+  capability?: { provider: Provider; model: string; inferenceProvider: string | null; mode: "json_schema" | "tool_call" | "unsupported"; durationMs: number; checkedAt: string };
   diagnostic?: { upstreamStatus: number | null; code: string | null; type: string | null; requestId: string | null };
   error?: string;
 }
@@ -302,6 +304,7 @@ function EndpointPicker({ model, value, onChange }: { model: string; value: stri
   const [endpoints, setEndpoints] = useState<ModelEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [probe, setProbe] = useState<{ state: "idle" | "checking" | "success" | "error"; mode?: "json_schema" | "tool_call" | "unsupported"; durationMs?: number; message?: string }>({ state: "idle" });
 
   useEffect(() => {
     let active = true;
@@ -316,6 +319,25 @@ function EndpointPicker({ model, value, onChange }: { model: string; value: stri
     return () => { active = false; };
   }, [model]);
 
+  useEffect(() => setProbe({ state: "idle" }), [model, value]);
+
+  async function verifyCapability() {
+    if (value === "auto") return;
+    setProbe({ state: "checking" });
+    try {
+      const response = await fetch("/api/settings/ai-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "vercel", model, mode: "capability", inferenceProvider: value }),
+      });
+      const result = await response.json() as ApiResult;
+      if (!response.ok || !result.capability) throw new Error(result.error ?? "Não foi possível verificar a saída estruturada.");
+      setProbe({ state: "success", mode: result.capability.mode, durationMs: result.capability.durationMs });
+    } catch (reason) {
+      setProbe({ state: "error", message: reason instanceof Error ? reason.message : "Não foi possível verificar a saída estruturada." });
+    }
+  }
+
   const selectedExists = value === "auto" || endpoints.some((endpoint) => endpoint.provider === value);
   const selected = endpoints.find((endpoint) => endpoint.provider === value);
   return <div className="mt-3 border-t border-mist pt-3">
@@ -327,7 +349,15 @@ function EndpointPicker({ model, value, onChange }: { model: string; value: stri
     </label>
     {loading && <span className="mt-1.5 block text-[11px] font-normal text-stone">Consultando preços por provedor...</span>}
     {error && <span role="alert" className="mt-1.5 block text-[11px] font-normal text-red-700">{error}</span>}
-    {!loading && !error && selected && <span className="mt-1.5 block text-[11px] font-normal leading-4 text-stone">Uptime 1h: {formatPercent(selected.uptimeLastHour)} · {selected.zeroDataRetention ? "ZDR disponível" : "ZDR não informado"} · {selected.supportsStructuredOutput ? "Saída estruturada" : "Saída estruturada não anunciada"}</span>}
+    {!loading && !error && selected && <span className="mt-1.5 block text-[11px] font-normal leading-4 text-stone">Uptime 1h: {formatPercent(selected.uptimeLastHour)} · {selected.zeroDataRetention ? "ZDR disponível" : "ZDR não informado"}</span>}
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <button type="button" onClick={verifyCapability} disabled={loading || Boolean(error) || value === "auto" || probe.state === "checking"} className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-mist bg-white px-2.5 text-[11px] font-semibold text-slate-ink disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${probe.state === "checking" ? "animate-spin" : ""}`} />{probe.state === "checking" ? "Verificando..." : "Verificar saída real"}</button>
+      {value === "auto" && <span className="text-[11px] font-normal leading-4 text-stone">Fixe um provedor para testar o endpoint de forma determinística.</span>}
+    </div>
+    {probe.state === "success" && probe.mode === "json_schema" && <span role="status" className="mt-2 block text-[11px] font-semibold text-emerald-700">Teste real: JSON Schema validado · {probe.durationMs} ms</span>}
+    {probe.state === "success" && probe.mode === "tool_call" && <span role="status" className="mt-2 block text-[11px] font-semibold text-amber-800">Teste real: JSON Schema falhou; function call validada · {probe.durationMs} ms</span>}
+    {probe.state === "success" && probe.mode === "unsupported" && <span role="alert" className="mt-2 block text-[11px] font-semibold text-red-700">Teste real: o endpoint não produziu saída válida por JSON Schema nem function call.</span>}
+    {probe.state === "error" && <span role="alert" className="mt-2 block text-[11px] font-semibold text-red-700">{probe.message}</span>}
     <span className="mt-1 block text-[11px] font-normal leading-4 text-stone">A escolha fixa restringe a execução a esse provedor. Automático prioriza disponibilidade do Gateway.</span>
   </div>;
 }
@@ -394,7 +424,7 @@ function ModelDetails({ model }: { model?: CatalogModel }) {
     <span><strong className="text-slate-ink">Entrada / 1M</strong><br />{formatPrice(model.inputPricePerMillion)}</span>
     <span><strong className="text-slate-ink">Saída / 1M</strong><br />{formatPrice(model.outputPricePerMillion)}</span>
     <span title="Índice técnico baseado em capacidades anunciadas; não é benchmark de inteligência."><strong className="text-slate-ink">Índice Oria</strong><br />{model.suitabilityIndex}/100</span>
-    <span className="col-span-2 sm:col-span-3"><strong className="text-slate-ink">Capacidades anunciadas</strong><br />{[model.supportsReasoning && "Raciocínio", model.supportsTools && "Ferramentas", model.supportsImages && "Imagens", model.supportsStructuredOutput && "Saída estruturada"].filter(Boolean).join(" · ") || "Nenhuma informada"}</span>
+    <span className="col-span-2 sm:col-span-3"><strong className="text-slate-ink">Capacidades anunciadas</strong><br />{[model.supportsReasoning && "Raciocínio", model.supportsTools && "Ferramentas", model.supportsImages && "Imagens"].filter(Boolean).join(" · ") || "Nenhuma informada"}</span>
     {!model.supportsImages && <span className="col-span-2 font-semibold text-amber-700 sm:col-span-4">Este modelo não aceita imagens. Selecione “Aceita imagens” no filtro para processar fotos recebidas pelo WhatsApp.</span>}
   </span>;
 }
@@ -403,10 +433,10 @@ function formatTokens(value: number | null) {
   return value === null ? "Não informado" : new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function formatPrice(value: number | null) {
-  return value === null ? "Não informado" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(value);
-}
-
 function formatPercent(value: number | null) {
   return value === null ? "Não informado" : `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 2 }).format(value)}%`;
+}
+
+function formatPrice(value: number | null) {
+  return value === null ? "Não informado" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(value);
 }

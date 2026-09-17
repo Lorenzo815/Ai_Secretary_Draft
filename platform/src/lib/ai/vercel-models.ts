@@ -7,6 +7,7 @@ export interface VercelModelEndpoint {
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
   uptimeLastHour: number | null;
+  supportsTools: boolean;
   supportsStructuredOutput: boolean;
   zeroDataRetention: boolean;
 }
@@ -166,6 +167,7 @@ export async function listVercelModelEndpoints(modelId: string): Promise<VercelM
         inputPricePerMillion: pricePerMillion(endpoint.pricing?.prompt),
         outputPricePerMillion: pricePerMillion(endpoint.pricing?.completion),
         uptimeLastHour: finiteNumber(endpoint.uptime_last_1h),
+        supportsTools: parameters.includes("tools") && parameters.includes("tool_choice"),
         supportsStructuredOutput: parameters.includes("response_format") || parameters.includes("structured_output"),
         zeroDataRetention: endpoint.has_zdr === true,
       };

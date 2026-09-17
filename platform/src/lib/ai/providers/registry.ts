@@ -5,6 +5,7 @@ import type OpenAI from "openai";
 import { azureProvider } from "./azure";
 import type { AiProvider, AiProviderAdapter, ProviderCredential } from "./types";
 import { withModelRateLimitRetry } from "../retry";
+import { probeStructuredOutputClient } from "../structured-output-probe";
 import { vercelProvider } from "./vercel";
 
 const adapters: Record<AiProvider, AiProviderAdapter> = {
@@ -61,5 +62,27 @@ export async function checkProviderHealth(
     inferenceProvider: inferenceProvider ?? null,
     durationMs: Date.now() - startedAt,
     checkedAt: new Date().toISOString(),
+  };
+}
+
+export async function probeProviderStructuredOutput(
+  provider: AiProvider,
+  model: string,
+  inferenceProvider?: string,
+) {
+  const adapter = getProviderAdapter(provider);
+  const credential = await adapter.getCredential();
+  if (!credential) throw new Error(`A credencial do provedor ${provider} não está configurada.`);
+  const result = await probeStructuredOutputClient(
+    getProviderClient(provider, model, credential),
+    model,
+    provider === "vercel" ? inferenceProvider : undefined,
+  );
+  return {
+    provider,
+    model,
+    inferenceProvider: inferenceProvider ?? null,
+    checkedAt: new Date().toISOString(),
+    ...result,
   };
 }

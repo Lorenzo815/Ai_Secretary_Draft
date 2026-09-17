@@ -9,12 +9,15 @@ import {
   type AiProvider,
   type AiTaskKey,
 } from "@/lib/ai/provider-config";
-import { listVercelLanguageModels, listVercelModelEndpoints } from "@/lib/ai/vercel-models";
+import {
+  listVercelLanguageModels,
+  listVercelModelEndpoints,
+} from "@/lib/ai/vercel-models";
 import {
   clearStoredVercelGatewayApiKey,
   saveVercelGatewayApiKey,
 } from "@/lib/ai/provider-credentials";
-import { checkProviderHealth } from "@/lib/ai/providers/registry";
+import { checkProviderHealth, probeProviderStructuredOutput } from "@/lib/ai/providers/registry";
 
 async function authenticate() {
   return getServerSession(authOptions);
@@ -91,7 +94,7 @@ export async function POST(request: Request) {
   const input = await request.json() as {
     provider?: AiProvider;
     model?: string;
-    mode?: "connection" | "model";
+    mode?: "connection" | "model" | "capability";
     inferenceProvider?: string;
     azurePassword?: string;
   };
@@ -104,14 +107,22 @@ export async function POST(request: Request) {
   const model = input.model?.trim();
   if (!model || model.length > 200) return NextResponse.json({ error: "Modelo inválido." }, { status: 400 });
   const mode = input.mode ?? "connection";
-  if (mode !== "connection" && mode !== "model") {
+  if (mode !== "connection" && mode !== "model" && mode !== "capability") {
     return NextResponse.json({ error: "Tipo de teste inválido." }, { status: 400 });
   }
   const inferenceProvider = input.inferenceProvider?.trim();
   if (inferenceProvider && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(inferenceProvider)) {
     return NextResponse.json({ error: "Provedor de inferência inválido." }, { status: 400 });
   }
+  if (mode === "capability" && input.provider === "vercel" && !inferenceProvider) {
+    return NextResponse.json({ error: "Fixe um provedor de inferência para executar um teste determinístico." }, { status: 400 });
+  }
   try {
+    if (mode === "capability") {
+      return NextResponse.json({
+        capability: await probeProviderStructuredOutput(input.provider, model, inferenceProvider),
+      });
+    }
     return NextResponse.json({
       health: await checkProviderHealth(input.provider, model, mode, inferenceProvider),
     });

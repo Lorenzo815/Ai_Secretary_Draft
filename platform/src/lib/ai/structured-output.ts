@@ -9,6 +9,8 @@ import { getProviderClient } from "./providers/registry";
 import type { AiProvider } from "./providers/types";
 import { resolveAiModel } from "./routing";
 
+type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
+
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
 const TRACE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
@@ -60,26 +62,28 @@ export async function generateStructuredOutput<T>(
   });
 
   try {
-    const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
+    const generated = await requestStructuredContent(client, {
       model: resolved.model,
       messages: request.messages,
-      max_completion_tokens: request.maxCompletionTokens ?? 4_096,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: request.schemaName,
-          strict: true,
-          schema: request.schema,
-        },
-      },
-      ...(resolved.provider === "vercel" && resolved.inferenceProvider ? {
-        providerOptions: { gateway: { only: [resolved.inferenceProvider] } },
-      } : {}),
-    }));
-    const response = retried.value;
-    const content = response.choices[0]?.message.content;
-    if (!content) throw new Error(`A tarefa ${request.taskKey} retornou uma resposta vazia.`);
-    const value = request.parse(content);
+      schemaName: request.schemaName,
+      schema: request.schema,
+      maxCompletionTokens: request.maxCompletionTokens ?? 4_096,
+      inferenceProvider: resolved.provider === "vercel" ? resolved.inferenceProvider : null,
+      parse: request.parse,
+    });
+    const { response, retried, outputMode, content, value } = generated;
+    const choice = response.choices[0];
+    if (!content) {
+      throw new EmptyStructuredOutputError(`A tarefa ${request.taskKey} retornou uma resposta vazia.`, {
+        requestId: response._request_id ?? undefined,
+        finishReason: choice?.finish_reason,
+        usage: response.usage,
+        normalizedUsage: normalizeModelUsage(response.usage),
+        attempts: retried.attempts,
+        outputMode,
+        hasToolCalls: Boolean(choice?.message.tool_calls?.length),
+      });
+    }
     const durationMs = Date.now() - startedAt.getTime();
     await completeTrace(traceId, {
       durationMs,
@@ -156,7 +160,126 @@ async function failTrace(traceId: ObjectId | null, durationMs: number, error: un
         durationMs,
         errorName: error instanceof Error ? error.name : "UnknownError",
         errorMessage: error instanceof Error ? error.message.slice(0, 1_000) : String(error).slice(0, 1_000),
+        ...(error instanceof EmptyStructuredOutputError ? error.diagnostic : {}),
       },
     },
   ).catch((traceError) => console.error("AI task trace failure could not be recorded", traceError));
+}
+
+class EmptyStructuredOutputError extends Error {
+  name = "EmptyStructuredOutputError";
+
+  constructor(
+    message: string,
+    readonly diagnostic: {
+      requestId?: string;
+      finishReason?: string | null;
+      usage?: object | null;
+      normalizedUsage?: NormalizedModelUsage | null;
+      attempts: number;
+      outputMode: StructuredOutputMode;
+      hasToolCalls: boolean;
+    },
+  ) {
+    super(message);
+  }
+}
+
+async function requestStructuredContent<T>(
+  client: ReturnType<typeof getProviderClient>,
+  input: {
+    model: string;
+    messages: ChatCompletionMessageParam[];
+    schemaName: string;
+    schema: Record<string, unknown>;
+    maxCompletionTokens: number;
+    inferenceProvider: string | null;
+    parse: (content: string) => T;
+  },
+) {
+  const providerOptions = input.inferenceProvider
+    ? { providerOptions: { gateway: { only: [input.inferenceProvider] } } }
+    : {};
+  try {
+    const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
+      model: input.model,
+      messages: input.messages,
+      max_completion_tokens: input.maxCompletionTokens,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: input.schemaName, strict: true, schema: input.schema },
+      },
+      ...providerOptions,
+    }));
+    const content = retried.value.choices[0]?.message.content;
+    if (content) return { response: retried.value, retried, outputMode: "json_schema" as const, content, value: input.parse(content) };
+  } catch (error) {
+    if (!isStructuredTransportFailure(error)) throw error;
+  }
+
+  const tool = {
+    type: "function" as const,
+    function: {
+      name: input.schemaName,
+      description: "Retorna o resultado estruturado desta tarefa.",
+      strict: true,
+      parameters: input.schema,
+    },
+  };
+  try {
+    return await requestToolContent(client, input, tool, providerOptions, true);
+  } catch (error) {
+    if (!isThinkingToolChoiceRejection(error)) throw error;
+    return requestToolContent(client, input, tool, providerOptions, false);
+  }
+}
+
+async function requestToolContent<T>(
+  client: ReturnType<typeof getProviderClient>,
+  input: {
+    model: string;
+    messages: ChatCompletionMessageParam[];
+    schemaName: string;
+    maxCompletionTokens: number;
+    parse: (content: string) => T;
+  },
+  tool: { type: "function"; function: { name: string; description: string; strict: boolean; parameters: Record<string, unknown> } },
+  providerOptions: object,
+  forceTool: boolean,
+) {
+  const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
+    model: input.model,
+    messages: forceTool ? input.messages : [
+      ...input.messages,
+      { role: "system", content: `Responda chamando exclusivamente a função ${input.schemaName}.` },
+    ],
+    max_completion_tokens: input.maxCompletionTokens,
+    tools: [tool],
+    ...(forceTool ? { tool_choice: { type: "function" as const, function: { name: input.schemaName } } } : {}),
+    parallel_tool_calls: false,
+    ...providerOptions,
+  }));
+  const response = retried.value;
+  const toolCall = response.choices[0]?.message.tool_calls?.find((call) => (
+    "function" in call && call.function.name === input.schemaName
+  ));
+  const content = toolCall && "function" in toolCall ? toolCall.function.arguments : undefined;
+  return {
+    response,
+    retried,
+    outputMode: forceTool ? "tool_call" as const : "tool_call_auto" as const,
+    content,
+    value: content ? input.parse(content) : undefined as T,
+  };
+}
+
+function isStructuredTransportFailure(error: unknown) {
+  if (error instanceof SyntaxError || error instanceof EmptyStructuredOutputError) return true;
+  return Boolean(error && typeof error === "object" && "status" in error && (error.status === 400 || error.status === 422));
+}
+
+function isThinkingToolChoiceRejection(error: unknown) {
+  if (!error || typeof error !== "object" || !("status" in error) || error.status !== 400) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /thinking mode.*tool_choice/i.test(message);
 }
