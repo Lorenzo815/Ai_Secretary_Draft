@@ -164,6 +164,16 @@ export default async function CustomerPage({
               type: message.type,
               templateName: message.templateName,
               body: message.body,
+              media: message.media ? {
+                mimeType: message.media.mimeType,
+                caption: message.media.caption,
+                filename: message.media.filename,
+              } : undefined,
+              replyTo: message.replyTo ? {
+                body: message.replyTo.body,
+                direction: message.replyTo.direction,
+                type: message.replyTo.type,
+              } : undefined,
               status: message.status,
               sentBy: message.sentBy,
               timestamp: message.timestamp.toISOString(),

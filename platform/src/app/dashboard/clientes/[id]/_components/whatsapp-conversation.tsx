@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, CheckCheck, CircleAlert, FileText, MessageSquareText, SendHorizontal } from "lucide-react";
+import Image from "next/image";
+import { Check, CheckCheck, CircleAlert, FileText, ImageIcon, MessageSquareText, SendHorizontal, Video } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
 import WhatsAppTemplateComposer from "./whatsapp-template-composer";
@@ -13,6 +14,16 @@ interface ConversationMessage {
   type?: string;
   templateName?: string;
   body: string;
+  media?: {
+    mimeType?: string;
+    caption?: string;
+    filename?: string;
+  };
+  replyTo?: {
+    body?: string;
+    direction?: "inbound" | "outbound";
+    type?: string;
+  };
   status: MessageStatus;
   sentBy?: string;
   timestamp: string;
@@ -134,7 +145,11 @@ export default function WhatsAppConversation({
               key={message.messageId}
               className={`max-w-[88%] rounded-lg px-3.5 py-2.5 shadow-sm sm:max-w-[70%] ${message.direction === "outbound" ? "self-end rounded-br-sm bg-deep-teal text-white" : "self-start rounded-bl-sm border border-mist bg-white text-slate-ink"}`}
             >
-              <p className="whitespace-pre-wrap break-words text-sm leading-5">{message.body}</p>
+              {message.replyTo && <QuotedMessage replyTo={message.replyTo} outbound={message.direction === "outbound"} />}
+              {message.media && <MessageMedia message={message} />}
+              {message.body && message.body !== message.media?.filename && (
+                <p className={`${message.media || message.replyTo ? "mt-2" : ""} whitespace-pre-wrap break-words text-sm leading-5`}>{message.body}</p>
+              )}
               {message.type === "template" && <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-white/70"><FileText className="size-3" />{message.templateName ?? "Modelo aprovado"}</p>}
               <div className={`mt-1.5 flex items-center justify-end gap-1.5 text-[10px] ${message.direction === "outbound" ? "text-white/70" : "text-stone"}`}>
                 {message.direction === "outbound" && <span>{message.sentBy ? "Equipe" : "Oria"}</span>}
@@ -188,6 +203,73 @@ export default function WhatsAppConversation({
       </div>
     </section>
   );
+}
+
+function QuotedMessage({
+  replyTo,
+  outbound,
+}: {
+  replyTo: NonNullable<ConversationMessage["replyTo"]>;
+  outbound: boolean;
+}) {
+  return (
+    <div className={`mb-2 border-l-2 px-2.5 py-2 text-xs ${outbound ? "border-white/60 bg-white/10 text-white/85" : "border-deep-teal bg-soft-ivory text-slate-ink/80"}`}>
+      <p className={`mb-0.5 font-semibold ${outbound ? "text-white" : "text-deep-teal"}`}>
+        {replyTo.direction === "outbound" ? "Oria ou equipe" : replyTo.direction === "inbound" ? "Cliente" : "Mensagem citada"}
+      </p>
+      <p className="line-clamp-3 whitespace-pre-wrap break-words">
+        {replyTo.body || getMessageTypeLabel(replyTo.type)}
+      </p>
+    </div>
+  );
+}
+
+function MessageMedia({ message }: { message: ConversationMessage }) {
+  if (message.type === "image") {
+    return <ConversationImage message={message} />;
+  }
+  const Icon = message.type === "video" ? Video : message.type === "image" ? ImageIcon : FileText;
+  return (
+    <div className="flex min-w-52 items-center gap-2.5 rounded-md bg-black/5 px-3 py-2.5">
+      <Icon aria-hidden="true" className="size-5 shrink-0" />
+      <div className="min-w-0">
+        <p className="truncate text-xs font-semibold">{message.media?.filename || getMessageTypeLabel(message.type)}</p>
+        {message.media?.mimeType && <p className="mt-0.5 truncate text-[10px] opacity-70">{message.media.mimeType}</p>}
+      </div>
+    </div>
+  );
+}
+
+function ConversationImage({ message }: { message: ConversationMessage }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="flex min-w-52 items-center gap-2.5 rounded-md bg-black/5 px-3 py-2.5">
+        <ImageIcon aria-hidden="true" className="size-5 shrink-0" />
+        <p className="text-xs font-semibold">Imagem indisponível</p>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-md bg-black/5">
+      <Image
+        src={`/api/whatsapp/media/${encodeURIComponent(message.messageId)}`}
+        alt={message.media?.caption || message.media?.filename || "Imagem recebida pelo WhatsApp"}
+        width={640}
+        height={480}
+        unoptimized
+        onError={() => setFailed(true)}
+        className="max-h-96 h-auto w-full object-contain"
+      />
+    </div>
+  );
+}
+
+function getMessageTypeLabel(type?: string) {
+  if (type === "image") return "Imagem";
+  if (type === "video") return "Vídeo";
+  if (type === "document") return "Documento";
+  return "Conteúdo não disponível";
 }
 
 function ServiceWindowStatus({ availability, expired }: { availability: MessageAvailability; expired: boolean }) {
