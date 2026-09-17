@@ -37,6 +37,7 @@ export const customerToolDefinitions = {
       profession: nullableString,
     }),
     promptInstructions: `customer.update_profile salva somente dados explicitamente informados pelo cliente; envie null nos campos ausentes.
+  - Envie null para todo campo já salvo no cadastro. A ferramenta preenche campos ausentes e ignora valores repetidos de campos já persistidos.
   - Quando o cliente informar se é novo ou retorno, envie relationshipStatus e relationshipConfirmedByCustomer=true. Caso contrário, envie relationshipStatus=null e relationshipConfirmedByCustomer=false.
 - birthDate usa AAAA-MM-DD. CPF e telefones são validados pelo servidor.
 - Ao receber CEP, envie postalCode; o servidor consulta o endereço. Depois pergunte número e complemento, sem exigir complemento quando não houver.

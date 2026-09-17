@@ -259,28 +259,28 @@ export async function updateCustomerProfile(id: ObjectId, input: {
   const now = new Date();
   const fields: Record<string, unknown> = { "profile.updatedAt": now, updatedAt: now };
 
-  if (input.relationshipStatus !== undefined) {
+  if (input.relationshipStatus !== undefined && !current.relationship) {
     fields.relationship = { status: input.relationshipStatus, source: "customer", classifiedAt: now };
     fields.serviceStatus = input.relationshipStatus === "returning" ? "waiting_human" : "ai_active";
   }
-  if (input.fullName !== undefined) {
+  if (input.fullName !== undefined && !current.profile?.fullName) {
     const fullName = input.fullName.trim().replace(/\s+/g, " ");
     if (!isValidFullName(fullName)) throw new CustomerProfileValidationError("Informe nome e sobrenome.");
     fields.name = fullName;
     fields["profile.fullName"] = fullName;
   }
-  if (input.birthDate !== undefined) {
+  if (input.birthDate !== undefined && !current.profile?.birthDate) {
     if (!isValidBirthDate(input.birthDate)) throw new CustomerProfileValidationError("A data de nascimento deve ser válida e usar AAAA-MM-DD.");
     fields["profile.birthDate"] = input.birthDate;
   }
-  if (input.cpf !== undefined) {
+  if (input.cpf !== undefined && !current.profile?.cpf) {
     if (!isValidCpf(input.cpf)) throw new CustomerProfileValidationError("O CPF informado é inválido.");
     fields["profile.cpf"] = protectCpf(normalizeCpf(input.cpf));
   }
   if (input.postalCode !== undefined) {
     const postalCode = normalizePostalCode(input.postalCode);
     if (postalCode.length !== 8) throw new CustomerProfileValidationError("O CEP deve conter 8 dígitos.");
-    if (current.profile?.address && normalizePostalCode(current.profile.address.postalCode) === postalCode) {
+    if (current.profile?.address) {
       if (input.addressNumber?.trim()) fields["profile.address.number"] = input.addressNumber.trim();
       if (input.addressComplement?.trim()) fields["profile.address.complement"] = input.addressComplement.trim();
     } else {
@@ -301,7 +301,7 @@ export async function updateCustomerProfile(id: ObjectId, input: {
       fields["profile.address.complement"] = input.addressComplement.trim();
     }
   }
-  if (input.profession !== undefined) {
+  if (input.profession !== undefined && !current.profile?.profession) {
     const profession = input.profession.trim();
     if (profession.length < 2) throw new CustomerProfileValidationError("Informe uma profissão válida.");
     fields["profile.profession"] = profession.slice(0, 120);
