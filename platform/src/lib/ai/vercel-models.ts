@@ -6,6 +6,8 @@ export interface VercelModelEndpoint {
   provider: string;
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
+  cachedInputPricePerMillion: number | null;
+  cacheWritePricePerMillion: number | null;
   uptimeLastHour: number | null;
   supportsTools: boolean;
   supportsStructuredOutput: boolean;
@@ -21,6 +23,8 @@ export interface VercelLanguageModel {
   maxTokens: number | null;
   inputPricePerMillion: number | null;
   outputPricePerMillion: number | null;
+  cachedInputPricePerMillion: number | null;
+  cacheWritePricePerMillion: number | null;
   supportsTools: boolean;
   supportsImages: boolean;
   supportsReasoning: boolean;
@@ -39,7 +43,7 @@ interface CatalogModel {
   tags?: unknown;
   supported_parameters?: unknown;
   modalities?: { input?: unknown; output?: unknown };
-  pricing?: { input?: unknown; output?: unknown };
+  pricing?: { input?: unknown; output?: unknown; input_cache_read?: unknown; input_cache_write?: unknown };
 }
 
 export async function listVercelLanguageModels(): Promise<VercelLanguageModel[]> {
@@ -74,6 +78,8 @@ export async function listVercelLanguageModels(): Promise<VercelLanguageModel[]>
         maxTokens,
         inputPricePerMillion: pricePerMillion(model.pricing?.input),
         outputPricePerMillion: pricePerMillion(model.pricing?.output),
+        cachedInputPricePerMillion: pricePerMillion(model.pricing?.input_cache_read),
+        cacheWritePricePerMillion: pricePerMillion(model.pricing?.input_cache_write),
         supportsTools,
         supportsImages,
         supportsReasoning,
@@ -134,7 +140,7 @@ function calculateSuitabilityIndex(input: {
 
 interface CatalogEndpoint {
   provider_name?: unknown;
-  pricing?: { prompt?: unknown; completion?: unknown };
+  pricing?: { prompt?: unknown; completion?: unknown; input_cache_read?: unknown; input_cache_write?: unknown };
   uptime_last_1h?: unknown;
   supported_parameters?: unknown;
   has_zdr?: unknown;
@@ -166,6 +172,8 @@ export async function listVercelModelEndpoints(modelId: string): Promise<VercelM
         provider: endpoint.provider_name,
         inputPricePerMillion: pricePerMillion(endpoint.pricing?.prompt),
         outputPricePerMillion: pricePerMillion(endpoint.pricing?.completion),
+        cachedInputPricePerMillion: pricePerMillion(endpoint.pricing?.input_cache_read),
+        cacheWritePricePerMillion: pricePerMillion(endpoint.pricing?.input_cache_write),
         uptimeLastHour: finiteNumber(endpoint.uptime_last_1h),
         supportsTools: parameters.includes("tools") && parameters.includes("tool_choice"),
         supportsStructuredOutput: parameters.includes("response_format") || parameters.includes("structured_output"),

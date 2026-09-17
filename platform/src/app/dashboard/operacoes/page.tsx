@@ -48,7 +48,7 @@ export default async function OperationsPage() {
       <AiUsageSection usage={operations.aiUsage} />
 
       <OperationalSection title="Chamadas de IA" eyebrow="Desempenho" count={operations.modelCalls.length} empty="Nenhuma chamada de IA registrada.">
-        {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p> : <p className="mt-2 text-xs text-stone">{formatCallUsage(call.normalizedUsage)}</p>}</div><p className="shrink-0 text-xs text-stone"><BrowserDateTime value={call.startedAt.toISOString()} /></p></article>)}
+        {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatProvider(call.provider, call.inferenceProvider)} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p> : <p className="mt-2 text-xs text-stone">{formatCallUsage(call.normalizedUsage, call.estimatedCostUsd)}</p>}</div><p className="shrink-0 text-xs text-stone"><BrowserDateTime value={call.startedAt.toISOString()} /></p></article>)}
       </OperationalSection>
     </div>
   );
@@ -56,6 +56,8 @@ export default async function OperationsPage() {
 
 function AiUsageSection({ usage }: { usage: Awaited<ReturnType<typeof getOperationsDashboard>>["aiUsage"] }) {
   const metrics = [
+    { label: "Custo estimado", value: formatOptionalCost(usage.estimatedCostUsd), note: `${usage.callsWithEstimatedCost} chamada(s) com tarifa conhecida` },
+    { label: "Estimativa em BRL", value: formatOptionalBrl(usage.estimatedCostBrl), note: usage.usdBrlRate ? `1 USD = ${formatBrl(usage.usdBrlRate.rate)}` : "Câmbio temporariamente indisponível" },
     { label: "Entrada", value: formatOptionalTokens(usage.inputTokens), note: "Conteúdo enviado à IA" },
     { label: "Saída", value: formatOptionalTokens(usage.outputTokens), note: "Conteúdo gerado pela IA" },
     { label: "Em cache", value: formatOptionalTokens(usage.cachedInputTokens), note: "Entrada que pôde ser reutilizada" },
@@ -67,17 +69,18 @@ function AiUsageSection({ usage }: { usage: Awaited<ReturnType<typeof getOperati
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase text-stone">Consumo da IA</p>
-          <h2 id="ai-usage-title" className="mt-1 font-heading text-xl font-semibold text-slate-ink">Tokens nos últimos {usage.periodDays} dias</h2>
-          <p className="mt-1 text-sm text-stone">{usage.callsWithUsage} de {usage.calls} chamadas informaram consumo.</p>
+          <h2 id="ai-usage-title" className="mt-1 font-heading text-xl font-semibold text-slate-ink">Consumo nos últimos {usage.periodDays} dias</h2>
+          <p className="mt-1 text-sm text-stone">{usage.callsWithUsage} de {usage.calls} chamadas informaram consumo. Custos estimados em USD e BRL.</p>
         </div>
         <div className="flex flex-wrap gap-4 text-xs text-stone" aria-label="Legenda do gráfico">
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-deep-teal" />Entrada nova</span>
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#D2A84A]" />Entrada em cache</span>
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-burnt-coral" />Saída</span>
+          <span className="flex items-center gap-1.5"><i className="h-0.5 w-3 bg-blue-600" />Custo estimado</span>
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist lg:grid-cols-3 xl:grid-cols-6">
         {metrics.map((metric) => (
           <div key={metric.label} className="bg-soft-ivory px-4 py-4">
             <p className="text-xs font-semibold uppercase text-stone">{metric.label}</p>
@@ -88,16 +91,67 @@ function AiUsageSection({ usage }: { usage: Awaited<ReturnType<typeof getOperati
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_0.5fr]">
-        <div className="h-72 min-w-0"><AiUsageChart data={usage.daily} /></div>
+        <div className="h-80 min-w-0"><AiUsageChart hourly={usage.hourly} daily={usage.daily} /></div>
         <aside className="border-l-2 border-deep-teal/25 pl-4" aria-label="Como interpretar os tokens">
           <h3 className="flex items-center gap-2 font-heading text-base font-semibold text-slate-ink"><CircleHelp className="h-4 w-4 text-deep-teal" />Como ler</h3>
           <dl className="mt-3 space-y-3 text-sm leading-5">
             <div><dt className="font-semibold text-slate-ink">Entrada</dt><dd className="text-stone">Prompt, histórico e dados enviados ao modelo.</dd></div>
             <div><dt className="font-semibold text-slate-ink">Saída</dt><dd className="text-stone">Resposta e processamento gerados pelo modelo.</dd></div>
             <div><dt className="font-semibold text-slate-ink">Cache</dt><dd className="text-stone">Parte da entrada reutilizada; costuma ser mais rápida e mais barata.</dd></div>
+            <div><dt className="font-semibold text-slate-ink">Custo</dt><dd className="text-stone">Estimativa por chamada com a tarifa atual do modelo e provedor na API da Vercel; não substitui a fatura.</dd></div>
             <div><dt className="font-semibold text-slate-ink">Não informado</dt><dd className="text-stone">O provider não forneceu essa métrica. Não significa zero.</dd></div>
           </dl>
         </aside>
+      </div>
+
+      <div className="mt-7 border-t border-mist pt-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="font-heading text-base font-semibold text-slate-ink">Por modelo e provedor</h3>
+            <p className="mt-1 text-xs text-stone">Rotas com consumo informado nos últimos {usage.periodDays} dias.</p>
+          </div>
+          <p className="text-xs text-stone">
+            {usage.usdBrlRate
+              ? `Câmbio de ${formatDate(usage.usdBrlRate.date)} · Frankfurter`
+              : "Conversão para BRL indisponível"}
+          </p>
+        </div>
+        {usage.byModelProvider.length > 0 ? (
+          <div className="mt-4 overflow-x-auto border-y border-mist">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <thead className="bg-white text-[11px] font-semibold uppercase text-stone">
+                <tr>
+                  <th className="px-4 py-3">Modelo</th>
+                  <th className="px-4 py-3">Provider ID</th>
+                  <th className="px-4 py-3 text-right">Chamadas</th>
+                  <th className="px-4 py-3 text-right">Tokens</th>
+                  <th className="px-4 py-3 text-right">Custo USD</th>
+                  <th className="px-4 py-3 text-right">Estimativa BRL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usage.byModelProvider.map((row) => (
+                  <tr key={`${row.model}:${row.providerId}`} className="border-t border-mist bg-soft-ivory align-top">
+                    <td className="max-w-72 px-4 py-3 font-semibold text-slate-ink"><span className="block truncate" title={row.model}>{row.model}</span></td>
+                    <td className="px-4 py-3 font-mono text-xs text-stone">{row.providerId}</td>
+                    <td className="px-4 py-3 text-right text-slate-ink">{formatNumber(row.calls)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="block font-semibold text-slate-ink">{formatOptionalTokens(sumOptional(row.inputTokens, row.outputTokens))}</span>
+                      <span className="block text-xs text-stone">{formatOptionalTokens(row.cachedInputTokens)} em cache</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="block font-semibold text-slate-ink">{formatOptionalCost(row.estimatedCostUsd)}</span>
+                      <span className="block text-xs text-stone">{row.callsWithEstimatedCost} de {row.calls} tarifada(s)</span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-ink">{formatOptionalBrl(row.estimatedCostBrl)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-4 border-y border-dashed border-mist py-8 text-center text-sm text-stone">Nenhum consumo por modelo disponível neste período.</p>
+        )}
       </div>
     </section>
   );
@@ -129,16 +183,24 @@ function eventLabel(value: string, reason?: unknown) {
   return ({ "message.received": "Mensagem recebida", "assistant.response.sent": "Resposta do assistente enviada", "customer.profile.updated": "Cadastro atualizado", "payment.status.changed": "Pagamento alterado", "appointment.status.changed": "Agenda alterada", "manual.requested": "Solicitação manual" } as Record<string, string>)[value] ?? value;
 }
 function taskLabel(value: string) { return value === "customer_agent" ? "Agente do cliente" : value === "lead_qualification" ? "Qualificação de lead" : value; }
+function formatProvider(provider?: string, inferenceProvider?: string | null) { return provider === "vercel" ? `Vercel · ${inferenceProvider ?? "auto"}` : provider ?? "Provedor legado"; }
 function formatDuration(milliseconds: number) { return milliseconds <= 0 ? "—" : milliseconds < 1_000 ? `${milliseconds} ms` : `${(milliseconds / 1_000).toFixed(1)} s`; }
 function latencyDetail(latency: { count: number; p95Ms: number }) { return latency.count > 0 ? `p95 ${formatDuration(latency.p95Ms)} · ${latency.count} chamada(s)` : "sem chamadas em 7 dias"; }
 function formatOptionalTokens(value: number | undefined) { return value === undefined ? "Não informado" : formatNumber(value); }
-function formatCallUsage(usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } | null | undefined) {
+function formatOptionalCost(value: number | undefined) { return value === undefined ? "Não informado" : formatCost(value); }
+function formatOptionalBrl(value: number | undefined) { return value === undefined ? "Não informado" : formatBrl(value); }
+function formatCallUsage(usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } | null | undefined, estimatedCostUsd?: number) {
   if (!usage) return "Consumo não informado pelo provider";
   const parts = [
     usage.inputTokens === undefined ? null : `${formatNumber(usage.inputTokens)} entrada`,
     usage.outputTokens === undefined ? null : `${formatNumber(usage.outputTokens)} saída`,
     usage.cachedInputTokens === undefined ? null : `${formatNumber(usage.cachedInputTokens)} em cache`,
+    estimatedCostUsd === undefined ? null : `${formatCost(estimatedCostUsd)} estimado`,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : "Consumo não informado pelo provider";
 }
 function formatNumber(value: number) { return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value); }
+function formatCost(value: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", minimumFractionDigits: 4, maximumFractionDigits: 6 }).format(value); }
+function formatBrl(value: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value); }
+function formatDate(value: string) { return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`)); }
+function sumOptional(...values: Array<number | undefined>) { return values.every((value) => value === undefined) ? undefined : values.reduce<number>((total, value) => total + (value ?? 0), 0); }

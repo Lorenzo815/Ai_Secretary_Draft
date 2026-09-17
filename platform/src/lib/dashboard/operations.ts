@@ -2,7 +2,10 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { estimateModelCallCostUsd, type ModelTokenPricing } from "../ai/model-cost";
 import { normalizeModelUsage, type NormalizedModelUsage } from "../ai/model-usage";
+import { listVercelLanguageModels, listVercelModelEndpoints } from "../ai/vercel-models";
+import { getUsdBrlRate, type UsdBrlRate } from "../currency/usd-brl";
 
 const DB_NAME = "ai_secretary";
 
@@ -38,7 +41,9 @@ interface ModelCallRecord {
   _id: ObjectId;
   customerId?: ObjectId;
   taskKey: string;
+  provider?: "vercel" | "azure";
   model: string;
+  inferenceProvider?: string | null;
   status: "started" | "completed" | "failed";
   durationMs?: number;
   finishReason?: string;
@@ -54,7 +59,7 @@ export async function getOperationsDashboard() {
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
   const lastSevenDays = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1_000);
-  const last14Days = new Date(now.getTime() - 13 * 24 * 60 * 60 * 1_000);
+  const last30Days = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1_000);
   const calendarSettings = await database.collection<{ _id: string; timezone?: string }>("calendar_settings").findOne(
     { _id: "default-calendar" },
     { projection: { timezone: 1 } },
@@ -71,11 +76,11 @@ export async function getOperationsDashboard() {
       projection: { customerId: 1, status: 1, configRevision: 1, modelIterations: 1, toolExecutions: 1, mutationsExecuted: 1, finalDecision: 1, error: 1, startedAt: 1, completedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
     database.collection<ModelCallRecord>("ai_task_calls").find({}, {
-      projection: { customerId: 1, taskKey: 1, model: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, usage: 1, normalizedUsage: 1, startedAt: 1 },
+      projection: { customerId: 1, taskKey: 1, provider: 1, model: 1, inferenceProvider: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, usage: 1, normalizedUsage: 1, startedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
     database.collection<ModelCallRecord>("ai_task_calls").find(
-      { status: "completed", startedAt: { $gte: last14Days } },
-      { projection: { _id: 0, usage: 1, normalizedUsage: 1, startedAt: 1 } },
+      { status: "completed", startedAt: { $gte: last30Days } },
+      { projection: { _id: 0, provider: 1, model: 1, inferenceProvider: 1, usage: 1, normalizedUsage: 1, startedAt: 1 } },
     ).sort({ startedAt: 1 }).toArray(),
     database.collection("whatsapp_messages").countDocuments({ status: "failed", timestamp: { $gte: last24Hours } }),
     database.collection("assistant_runs").aggregate<{ _id: string; count: number }>([
@@ -100,6 +105,10 @@ export async function getOperationsDashboard() {
     { projection: { name: 1 } },
   ).toArray();
   const customerNames = new Map(customers.map((customer) => [customer._id.toString(), customer.name]));
+  const [vercelPricing, usdBrlRate] = await Promise.all([
+    loadVercelPricing([...modelCalls, ...usageCalls]),
+    getUsdBrlRate(),
+  ]);
   const withCustomer = <RecordType extends { customerId?: ObjectId }>(record: RecordType) => ({
     ...record,
     customerName: record.customerId ? customerNames.get(record.customerId.toString()) ?? "Cliente removido" : "Tarefa de sistema",
@@ -118,6 +127,10 @@ export async function getOperationsDashboard() {
   const normalizedCalls = modelCalls.map((call) => ({
     ...call,
     normalizedUsage: call.normalizedUsage ?? normalizeModelUsage(call.usage),
+    estimatedCostUsd: estimateModelCallCostUsd(
+      call.normalizedUsage ?? normalizeModelUsage(call.usage),
+      pricingForCall(call, vercelPricing),
+    ),
     usage: undefined,
   }));
 
@@ -136,7 +149,7 @@ export async function getOperationsDashboard() {
     },
     jobs: jobs.map(withCustomer),
     runs: runs.map(withCustomer),
-    aiUsage: buildUsageSummary(now, timezone, usageCalls),
+    aiUsage: buildUsageSummary(now, timezone, usageCalls, vercelPricing, usdBrlRate),
     modelCalls: normalizedCalls.map(withCustomer),
   };
 }
@@ -148,30 +161,50 @@ function median(values: number[]) {
   return sorted.length % 2 === 0 ? Math.round((sorted[middle - 1] + sorted[middle]) / 2) : sorted[middle];
 }
 
-function buildUsageSummary(now: Date, timezone: string, calls: ModelCallRecord[]) {
+function buildUsageSummary(
+  now: Date,
+  timezone: string,
+  calls: ModelCallRecord[],
+  vercelPricing: Map<string, ModelTokenPricing>,
+  usdBrlRate?: UsdBrlRate,
+) {
   const normalizedCalls = calls.flatMap((call) => {
     const usage = call.normalizedUsage ?? normalizeModelUsage(call.usage);
-    return usage ? [{ date: formatDateKey(call.startedAt, timezone), usage }] : [];
+    return usage ? [{
+      date: formatDateKey(call.startedAt, timezone),
+      hour: formatHourKey(call.startedAt, timezone),
+      model: call.model,
+      providerId: providerIdForCall(call),
+      usage,
+      estimatedCostUsd: estimateModelCallCostUsd(usage, pricingForCall(call, vercelPricing)),
+    }] : [];
   });
   const usages = normalizedCalls.map((call) => call.usage);
+  const estimatedCosts = normalizedCalls.map((call) => call.estimatedCostUsd);
   const callsWithCacheData = usages.filter((usage) => usage.cachedInputTokens !== undefined && usage.inputTokens !== undefined);
   const cacheEligibleInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.inputTokens));
   const cachedInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.cachedInputTokens));
-  const dailyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number }>();
+  const dailyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; estimatedCostUsd: number }>();
+  const hourlyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; estimatedCostUsd: number }>();
+  const groupedCalls = new Map<string, typeof normalizedCalls>();
 
   for (const call of normalizedCalls) {
-    const current = dailyUsage.get(call.date) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
-    const cachedTokens = call.usage.cachedInputTokens ?? 0;
-    current.inputTokens += Math.max((call.usage.inputTokens ?? 0) - cachedTokens, 0);
-    current.cachedInputTokens += cachedTokens;
-    current.outputTokens += call.usage.outputTokens ?? 0;
-    dailyUsage.set(call.date, current);
+    addUsage(dailyUsage, call.date, call.usage, call.estimatedCostUsd);
+    addUsage(hourlyUsage, call.hour, call.usage, call.estimatedCostUsd);
+    const groupKey = `${call.model.toLowerCase()}::${call.providerId.toLowerCase()}`;
+    groupedCalls.set(groupKey, [...(groupedCalls.get(groupKey) ?? []), call]);
   }
 
+  const estimatedCostUsd = sumKnown(estimatedCosts);
+
   return {
-    periodDays: 14,
+    periodDays: 30,
     calls: calls.length,
     callsWithUsage: normalizedCalls.length,
+    callsWithEstimatedCost: estimatedCosts.filter((cost) => cost !== undefined).length,
+    estimatedCostUsd,
+    estimatedCostBrl: convertUsdToBrl(estimatedCostUsd, usdBrlRate),
+    usdBrlRate,
     inputTokens: sumKnown(usages.map((usage) => usage.inputTokens)),
     outputTokens: sumKnown(usages.map((usage) => usage.outputTokens)),
     totalTokens: sumKnown(usages.map((usage) => usage.totalTokens)),
@@ -181,16 +214,116 @@ function buildUsageSummary(now: Date, timezone: string, calls: ModelCallRecord[]
     cacheRate: cacheEligibleInputTokens && cachedInputTokens !== undefined
       ? Math.round((cachedInputTokens / cacheEligibleInputTokens) * 1_000) / 10
       : undefined,
-    daily: Array.from({ length: 14 }, (_, index) => {
-      const date = new Date(now.getTime() - (13 - index) * 24 * 60 * 60 * 1_000);
+    byModelProvider: [...groupedCalls.values()].map((group) => {
+      const groupCosts = group.map((call) => call.estimatedCostUsd);
+      const groupCostUsd = sumKnown(groupCosts);
+      return {
+        model: group[0].model,
+        providerId: group[0].providerId,
+        calls: group.length,
+        callsWithEstimatedCost: groupCosts.filter((cost) => cost !== undefined).length,
+        inputTokens: sumKnown(group.map((call) => call.usage.inputTokens)),
+        cachedInputTokens: sumKnown(group.map((call) => call.usage.cachedInputTokens)),
+        outputTokens: sumKnown(group.map((call) => call.usage.outputTokens)),
+        estimatedCostUsd: groupCostUsd,
+        estimatedCostBrl: convertUsdToBrl(groupCostUsd, usdBrlRate),
+      };
+    }).sort((left, right) => (
+      (right.estimatedCostUsd ?? -1) - (left.estimatedCostUsd ?? -1)
+      || right.calls - left.calls
+      || left.model.localeCompare(right.model)
+    )),
+    hourly: Array.from({ length: 24 }, (_, index) => {
+      const date = new Date(now.getTime() - (23 - index) * 60 * 60 * 1_000);
+      const key = formatHourKey(date, timezone);
+      return {
+        date: key,
+        label: new Intl.DateTimeFormat("pt-BR", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(date),
+        ...(hourlyUsage.get(key) ?? emptyUsageBucket()),
+      };
+    }),
+    daily: Array.from({ length: 30 }, (_, index) => {
+      const date = new Date(now.getTime() - (29 - index) * 24 * 60 * 60 * 1_000);
       const key = formatDateKey(date, timezone);
       return {
         date: key,
         label: new Intl.DateTimeFormat("pt-BR", { timeZone: timezone, day: "2-digit", month: "2-digit" }).format(date),
-        ...(dailyUsage.get(key) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }),
+        ...(dailyUsage.get(key) ?? emptyUsageBucket()),
       };
     }),
   };
+}
+
+function convertUsdToBrl(value: number | undefined, usdBrlRate?: UsdBrlRate) {
+  return value === undefined || !usdBrlRate ? undefined : value * usdBrlRate.rate;
+}
+
+function addUsage(
+  buckets: Map<string, ReturnType<typeof emptyUsageBucket>>,
+  key: string,
+  usage: NormalizedModelUsage,
+  estimatedCostUsd?: number,
+) {
+  const current = buckets.get(key) ?? emptyUsageBucket();
+  const cachedTokens = Math.min(usage.cachedInputTokens ?? 0, usage.inputTokens ?? 0);
+  current.inputTokens += Math.max((usage.inputTokens ?? 0) - cachedTokens, 0);
+  current.cachedInputTokens += cachedTokens;
+  current.outputTokens += usage.outputTokens ?? 0;
+  current.estimatedCostUsd += estimatedCostUsd ?? 0;
+  buckets.set(key, current);
+}
+
+function emptyUsageBucket() {
+  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+}
+
+async function loadVercelPricing(calls: ModelCallRecord[]) {
+  const vercelCalls = calls.filter(isVercelCall);
+  const modelIds = [...new Set(vercelCalls.map((call) => call.model))];
+  const modelsWithPinnedProvider = [...new Set(
+    vercelCalls.filter((call) => call.inferenceProvider).map((call) => call.model),
+  )];
+  const pricing = new Map<string, ModelTokenPricing>();
+  if (modelIds.length === 0) return pricing;
+
+  const [catalogResult, ...endpointResults] = await Promise.allSettled([
+    listVercelLanguageModels(),
+    ...modelsWithPinnedProvider.map((modelId) => listVercelModelEndpoints(modelId)),
+  ]);
+
+  if (catalogResult.status === "fulfilled") {
+    for (const model of catalogResult.value) {
+      if (modelIds.includes(model.id)) pricing.set(pricingKey(model.id), model);
+    }
+  }
+
+  endpointResults.forEach((result, index) => {
+    if (result.status !== "fulfilled") return;
+    const modelId = modelsWithPinnedProvider[index];
+    for (const endpoint of result.value) {
+      pricing.set(pricingKey(modelId, endpoint.provider), endpoint);
+    }
+  });
+
+  return pricing;
+}
+
+function pricingForCall(call: ModelCallRecord, pricing: Map<string, ModelTokenPricing>) {
+  if (!isVercelCall(call)) return undefined;
+  return pricing.get(pricingKey(call.model, call.inferenceProvider));
+}
+
+function pricingKey(model: string, inferenceProvider?: string | null) {
+  return `${model.toLowerCase()}::${inferenceProvider?.toLowerCase() ?? "auto"}`;
+}
+
+function providerIdForCall(call: ModelCallRecord) {
+  if (call.inferenceProvider) return call.inferenceProvider;
+  return isVercelCall(call) ? "auto" : call.provider ?? "legacy";
+}
+
+function isVercelCall(call: ModelCallRecord) {
+  return call.provider === "vercel" || (call.provider === undefined && call.model.includes("/"));
 }
 
 function sumKnown(values: Array<number | undefined>) {
@@ -204,6 +337,17 @@ function formatDateKey(date: Date, timezone: string) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+  }).format(date);
+}
+
+function formatHourKey(date: Date, timezone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
   }).format(date);
 }
 
