@@ -54,6 +54,14 @@ O worker chama
 um agendador externo para invocar a rota ou hospede o worker em um processo
 Node contínuo.
 
+Chamadas de modelo que recebem HTTP 429 são repetidas pela camada comum de IA,
+independentemente de Azure ou Vercel. A política honra `Retry-After` em segundos
+ou data HTTP e usa backoff exponencial quando o header não existe. O padrão é
+de 4 tentativas, com espera máxima de 30 segundos entre elas. Ajuste somente se
+necessário com `AI_RATE_LIMIT_MAX_ATTEMPTS` (1 a 6) e
+`AI_RATE_LIMIT_MAX_DELAY_MS` (1.000 a 120.000). Retries mantêm o mesmo modelo e
+provedor; respostas 401, 402 e demais erros não são repetidas.
+
 Follow-ups sem resposta são configurados no Agent Studio. Por padrão, um novo
 job é criado a cada 2 horas, com envios entre 08:00 e 20:00 no fuso da clínica,
 e expira 24 horas após a última mensagem recebida. Uma nova mensagem ou um

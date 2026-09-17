@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import type OpenAI from "openai";
 import { azureProvider } from "./azure";
 import type { AiProvider, AiProviderAdapter, ProviderCredential } from "./types";
+import { withModelRateLimitRetry } from "../retry";
 import { vercelProvider } from "./vercel";
 
 const adapters: Record<AiProvider, AiProviderAdapter> = {
@@ -42,16 +43,16 @@ export async function checkProviderHealth(
   if (!credential) throw new Error(`A credencial do provedor ${provider} não está configurada.`);
   const client = getProviderClient(provider, model, credential);
   if (mode === "model") {
-    await client.chat.completions.create({
+    await withModelRateLimitRetry(() => client.chat.completions.create({
       model,
       messages: [{ role: "user", content: "Reply only OK." }],
       max_completion_tokens: 8,
       ...(provider === "vercel" && inferenceProvider ? {
         providerOptions: { gateway: { only: [inferenceProvider] } },
       } : {}),
-    });
+    }));
   } else {
-    await adapter.checkHealth(client, model);
+    await withModelRateLimitRetry(() => adapter.checkHealth(client, model));
   }
   return {
     provider,

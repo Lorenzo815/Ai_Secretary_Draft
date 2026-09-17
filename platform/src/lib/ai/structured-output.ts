@@ -4,6 +4,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
+import { withModelRateLimitRetry } from "./retry";
 import { getProviderClient } from "./providers/registry";
 import type { AiProvider } from "./providers/types";
 import { resolveAiModel } from "./routing";
@@ -32,6 +33,7 @@ export interface StructuredModelResult<T> {
   finishReason?: string | null;
   usage?: object | null;
   normalizedUsage?: NormalizedModelUsage | null;
+  attempts: number;
   durationMs: number;
 }
 
@@ -58,7 +60,7 @@ export async function generateStructuredOutput<T>(
   });
 
   try {
-    const response = await client.chat.completions.create({
+    const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
       model: resolved.model,
       messages: request.messages,
       max_completion_tokens: request.maxCompletionTokens ?? 4_096,
@@ -73,7 +75,8 @@ export async function generateStructuredOutput<T>(
       ...(resolved.provider === "vercel" && resolved.inferenceProvider ? {
         providerOptions: { gateway: { only: [resolved.inferenceProvider] } },
       } : {}),
-    });
+    }));
+    const response = retried.value;
     const content = response.choices[0]?.message.content;
     if (!content) throw new Error(`A tarefa ${request.taskKey} retornou uma resposta vazia.`);
     const value = request.parse(content);
@@ -84,6 +87,7 @@ export async function generateStructuredOutput<T>(
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
       normalizedUsage: normalizeModelUsage(response.usage),
+      attempts: retried.attempts,
     });
     return {
       value,
@@ -93,6 +97,7 @@ export async function generateStructuredOutput<T>(
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
       normalizedUsage: normalizeModelUsage(response.usage),
+      attempts: retried.attempts,
       durationMs,
     };
   } catch (error) {
@@ -131,7 +136,7 @@ async function startTrace(input: {
 
 async function completeTrace(
   traceId: ObjectId | null,
-  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null },
+  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null; attempts?: number },
 ) {
   if (!traceId) return;
   await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
