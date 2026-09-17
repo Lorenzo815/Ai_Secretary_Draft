@@ -170,7 +170,7 @@ export default function LeadQualificationPanel({
             </div>
             <section aria-labelledby="qualification-signals-title">
               <p id="qualification-signals-title" className="mb-2 text-[11px] font-semibold uppercase text-stone">Leitura rápida</p>
-              <LeadInsightTags tags={qualification.insightTags} />
+              <LeadInsightTags tags={qualification.insightTags} showEvidence />
             </section>
             <p className="text-[11px] leading-5 text-stone">Indicadores para leitura comercial humana. Não definem acesso, prioridade clínica ou tratamento.</p>
 

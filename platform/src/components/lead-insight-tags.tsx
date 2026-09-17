@@ -12,15 +12,33 @@ export default function LeadInsightTags({
   limit,
   compact = false,
   expandable = false,
+  showEvidence = false,
 }: {
   tags: LeadInsightTag[];
   limit?: number;
   compact?: boolean;
   expandable?: boolean;
+  showEvidence?: boolean;
 }) {
   const visibleTags = typeof limit === "number" ? tags.slice(0, limit) : tags;
   const hiddenTags = typeof limit === "number" ? tags.slice(limit) : [];
   if (visibleTags.length === 0) return null;
+  if (showEvidence) {
+    return (
+      <ul className="divide-y divide-mist border-y border-mist" aria-label="Sinais e evidências da qualificação">
+        {visibleTags.map((tag, index) => (
+          <li key={`${tag.category}-${tag.label}-${index}`} className="grid gap-1.5 py-3 sm:grid-cols-[minmax(160px,0.45fr)_minmax(0,1fr)] sm:gap-4">
+            <div>
+              <span className={`inline-flex max-w-full rounded-full border px-2 py-1 text-[11px] font-semibold leading-4 ${toneStyles[tag.tone]}`}>
+                {formatDisplayText(tag.category)} · {formatDisplayText(tag.label)}
+              </span>
+            </div>
+            <p className="text-xs leading-5 text-slate-ink/75">{formatEvidence(tag.evidence)}</p>
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   return (
     <div className="flex flex-wrap gap-1.5" aria-label="Sinais da qualificação">
