@@ -104,4 +104,48 @@ describe("updateCustomerProfile address updates", () => {
     expect(update.$set).not.toHaveProperty("profile.address");
     expect(update.$set).not.toHaveProperty("profile.profession");
   });
+
+  it("encrypts a new CPF with the auth secret fallback in production", async () => {
+    const previousPiiKey = process.env.PII_ENCRYPTION_KEY;
+    const previousNextAuthSecret = process.env.NEXTAUTH_SECRET;
+    const previousAuthSecret = process.env.AUTH_SECRET;
+    delete process.env.PII_ENCRYPTION_KEY;
+    process.env.NEXTAUTH_SECRET = "stable-auth-secret";
+    delete process.env.AUTH_SECRET;
+    const customerId = new ObjectId();
+    const customer = {
+      _id: customerId,
+      phones: ["5511999999999"],
+      profile: { updatedAt: new Date() },
+    };
+    findOne.mockResolvedValue(customer);
+    findOneAndUpdate.mockImplementation(async (_filter, update) => ({
+      ...customer,
+      profile: {
+        ...customer.profile,
+        cpf: (update as { $set: Record<string, unknown> }).$set["profile.cpf"],
+      },
+    }));
+
+    try {
+      await updateCustomerProfile(customerId, { cpf: "529.982.247-25" });
+    } finally {
+      restoreEnvironment("PII_ENCRYPTION_KEY", previousPiiKey);
+      restoreEnvironment("NEXTAUTH_SECRET", previousNextAuthSecret);
+      restoreEnvironment("AUTH_SECRET", previousAuthSecret);
+    }
+
+    const update = findOneAndUpdate.mock.calls[0]?.[1] as { $set: Record<string, unknown> };
+    const protectedCpf = update.$set["profile.cpf"] as Record<string, string>;
+    expect(protectedCpf).toMatchObject({ last4: "4725" });
+    expect(protectedCpf.encrypted).not.toContain("52998224725");
+    expect(protectedCpf).toHaveProperty("iv");
+    expect(protectedCpf).toHaveProperty("authTag");
+    expect(protectedCpf).toHaveProperty("hash");
+  });
 });
+
+function restoreEnvironment(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

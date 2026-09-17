@@ -424,8 +424,9 @@ async function resolvePostalCode(value: string): Promise<CustomerAddress> {
 
 function protectCpf(cpf: string) {
   const secret = process.env.PII_ENCRYPTION_KEY
-    ?? (process.env.NODE_ENV === "development" ? process.env.NEXTAUTH_SECRET : undefined);
-  if (!secret) throw new Error("PII_ENCRYPTION_KEY não está configurada.");
+    ?? process.env.NEXTAUTH_SECRET
+    ?? process.env.AUTH_SECRET;
+  if (!secret) throw new Error("PII_ENCRYPTION_KEY, NEXTAUTH_SECRET ou AUTH_SECRET deve estar configurada.");
   const key = createHash("sha256").update(secret).digest();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
