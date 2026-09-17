@@ -278,12 +278,19 @@ export async function updateCustomerProfile(id: ObjectId, input: {
     fields["profile.cpf"] = protectCpf(normalizeCpf(input.cpf));
   }
   if (input.postalCode !== undefined) {
-    const address = await resolvePostalCode(input.postalCode);
-    fields["profile.address"] = {
-      ...address,
-      number: input.addressNumber?.trim() || current.profile?.address?.number,
-      complement: input.addressComplement?.trim() || current.profile?.address?.complement,
-    };
+    const postalCode = normalizePostalCode(input.postalCode);
+    if (postalCode.length !== 8) throw new CustomerProfileValidationError("O CEP deve conter 8 dígitos.");
+    if (current.profile?.address && normalizePostalCode(current.profile.address.postalCode) === postalCode) {
+      if (input.addressNumber?.trim()) fields["profile.address.number"] = input.addressNumber.trim();
+      if (input.addressComplement?.trim()) fields["profile.address.complement"] = input.addressComplement.trim();
+    } else {
+      const address = await resolvePostalCode(postalCode);
+      fields["profile.address"] = {
+        ...address,
+        number: input.addressNumber?.trim() || current.profile?.address?.number,
+        complement: input.addressComplement?.trim() || current.profile?.address?.complement,
+      };
+    }
   } else {
     if (input.addressNumber !== undefined) {
       if (!current.profile?.address) throw new CustomerProfileValidationError("Informe primeiro um CEP válido.");
@@ -380,19 +387,31 @@ export async function ensureCustomerIndexes() {
 }
 
 async function resolvePostalCode(value: string): Promise<CustomerAddress> {
-  const postalCode = value.replace(/\D/g, "");
+  const postalCode = normalizePostalCode(value);
   if (postalCode.length !== 8) throw new CustomerProfileValidationError("O CEP deve conter 8 dígitos.");
-  const response = await fetch(`https://viacep.com.br/ws/${postalCode}/json/`, {
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new Error("Não foi possível consultar o CEP agora.");
-  const result = await response.json() as {
+  let response: Response;
+  try {
+    response = await fetch(`https://viacep.com.br/ws/${postalCode}/json/`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (error) {
+    throw new PostalCodeLookupError(error instanceof Error && error.name === "TimeoutError"
+      ? "postal_code_lookup_timeout"
+      : "postal_code_lookup_network_error");
+  }
+  if (!response.ok) throw new PostalCodeLookupError(`postal_code_lookup_http_${response.status}`);
+  let result: {
     erro?: boolean;
     logradouro?: string;
     bairro?: string;
     localidade?: string;
     uf?: string;
   };
+  try {
+    result = await response.json() as typeof result;
+  } catch {
+    throw new PostalCodeLookupError("postal_code_lookup_invalid_response");
+  }
   if (result.erro || !result.localidade || !result.uf) throw new CustomerProfileValidationError("CEP não encontrado.");
   return {
     postalCode,
@@ -681,4 +700,15 @@ async function ensureQualificationHistoryIndexes(
     history.createIndex({ customerId: 1, generatedAt: -1 }),
     history.createIndex({ generatedAt: 1 }),
   ]);
+}
+
+function normalizePostalCode(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+class PostalCodeLookupError extends Error {
+  constructor(readonly code: string) {
+    super("Não foi possível consultar o CEP agora.");
+    this.name = "PostalCodeLookupError";
+  }
 }

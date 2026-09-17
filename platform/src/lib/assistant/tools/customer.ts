@@ -52,8 +52,23 @@ export async function executeRegisteredCustomerTool(
     if (error instanceof CustomerProfileValidationError) {
       return customerInputError(error.message);
     }
+    console.error("Customer assistant tool failed", {
+      tool: `customer.${tool}`,
+      customerId: context.customerId.toString(),
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      errorCode: getErrorCode(error),
+    });
     return operationalError();
   }
+}
+
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") return undefined;
+  const code = "code" in error ? error.code : undefined;
+  if (typeof code === "string" || typeof code === "number") return code;
+  const cause = "cause" in error ? error.cause : undefined;
+  if (!cause || typeof cause !== "object" || !("code" in cause)) return undefined;
+  return typeof cause.code === "string" || typeof cause.code === "number" ? cause.code : undefined;
 }
 
 function optionalString(value: unknown) {
@@ -100,6 +115,6 @@ function operationalError(): ToolExecution {
       type: "operational_error",
       error: "Não foi possível atualizar o cadastro agora.",
     }),
-    retryable: false,
+    retryable: true,
   };
 }
