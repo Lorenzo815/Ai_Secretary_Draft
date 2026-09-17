@@ -72,6 +72,40 @@ body {
 .stagger > *:nth-child(4) { animation-delay: 180ms; }
 .stagger > *:nth-child(5) { animation-delay: 240ms; }
 
+@keyframes oria-loading-progress {
+  0% { transform: translateX(-100%); }
+  55% { transform: translateX(35%); }
+  100% { transform: translateX(220%); }
+}
+
+@keyframes oria-skeleton-pulse {
+  0%, 100% { opacity: 0.48; }
+  50% { opacity: 0.9; }
+}
+
+.oria-loading-track {
+  width: 9rem;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #E7E5E4;
+}
+
+.oria-loading-progress {
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: #0F766E;
+  animation: oria-loading-progress 1.25s ease-in-out infinite;
+}
+
+.oria-skeleton {
+  border-radius: 6px;
+  background: #E7E5E4;
+  animation: oria-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
