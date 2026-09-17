@@ -13,12 +13,15 @@ export default function BrowserDateTime({
   className,
 }: {
   value: string;
-  dateStyle?: "full" | "long" | "medium" | "short" | undefined;
-  timeStyle?: "full" | "long" | "medium" | "short" | undefined;
+  dateStyle?: "full" | "long" | "medium" | "short" | null;
+  timeStyle?: "full" | "long" | "medium" | "short" | null;
   className?: string;
 }) {
   const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
-  const formatter = hydrated ? new Intl.DateTimeFormat("pt-BR", { dateStyle, timeStyle }) : null;
+  const formatter = hydrated ? new Intl.DateTimeFormat("pt-BR", {
+    ...(dateStyle ? { dateStyle } : {}),
+    ...(timeStyle ? { timeStyle } : {}),
+  }) : null;
   const timeZone = formatter?.resolvedOptions().timeZone;
 
   return (

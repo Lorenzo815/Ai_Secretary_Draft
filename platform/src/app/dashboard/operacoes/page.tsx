@@ -21,7 +21,7 @@ export default async function OperationsPage() {
           <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Operações</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone">Monitore filas, execuções do agente, entregas e consumo da IA sem acessar conteúdo sensível.</p>
         </div>
-        <p className="text-xs font-semibold text-stone">Atualizado <BrowserDateTime value={operations.generatedAt.toISOString()} dateStyle={undefined} /></p>
+        <p className="text-xs font-semibold text-stone">Atualizado <BrowserDateTime value={operations.generatedAt.toISOString()} dateStyle={null} /></p>
       </header>
 
       <section aria-label="Saúde operacional" className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-mist bg-mist lg:grid-cols-3 xl:grid-cols-6">

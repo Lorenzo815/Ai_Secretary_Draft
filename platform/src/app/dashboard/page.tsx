@@ -116,7 +116,7 @@ export default async function DashboardPage({
               </Link>
             ))}
           </nav>
-          <span className="text-xs text-stone">Atualizado <BrowserDateTime value={overview.generatedAt.toISOString()} dateStyle={undefined} /></span>
+          <span className="text-xs text-stone">Atualizado <BrowserDateTime value={overview.generatedAt.toISOString()} dateStyle={null} /></span>
         </div>
       </header>
 
