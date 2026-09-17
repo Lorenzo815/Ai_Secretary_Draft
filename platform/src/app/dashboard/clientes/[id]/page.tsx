@@ -12,6 +12,8 @@ import CustomerAgentPanel from "./_components/customer-agent-panel";
 import LeadQualificationPanel from "./_components/lead-qualification-panel";
 import PaymentReviewPanel from "./_components/payment-review-panel";
 import WhatsAppConversation from "./_components/whatsapp-conversation";
+import BrowserDateTime from "@/components/browser-date-time";
+import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -97,7 +99,7 @@ export default async function CustomerPage({
               <h2 id="calendar-overview-title" className="mt-1 font-heading text-base font-semibold text-slate-ink">Próximo atendimento</h2>
               {calendarOverview.appointment ? (
                 <div className="mt-5 space-y-5">
-                  <Detail label="Data e hora" value={formatDateTime(calendarOverview.appointment.startAt)} />
+                  <Detail label="Data e hora" value={<BrowserDateTime value={calendarOverview.appointment.startAt.toISOString()} />} />
                   <Detail label="Profissional" value={calendarOverview.appointment.providerId === "default-doctor" ? "Profissional responsável" : calendarOverview.appointment.providerId} />
                 </div>
               ) : (
@@ -191,14 +193,7 @@ export default async function CustomerPage({
   );
 }
 
-function formatDateTime(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <p className="text-xs font-semibold uppercase text-stone">{label}</p>

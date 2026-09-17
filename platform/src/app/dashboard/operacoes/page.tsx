@@ -4,6 +4,7 @@ import { Activity, Bot, CircleHelp, Clock3, MessageSquareWarning, TriangleAlert 
 import { getOperationsDashboard } from "@/lib/dashboard/operations";
 import AutoRefresh from "../_components/auto-refresh";
 import AiUsageChart from "./_components/ai-usage-chart";
+import BrowserDateTime from "@/components/browser-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ export default async function OperationsPage() {
           <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Operações</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone">Monitore filas, execuções do agente, entregas e consumo da IA sem acessar conteúdo sensível.</p>
         </div>
-        <p className="text-xs font-semibold text-stone">Atualizado {formatTime(operations.generatedAt)}</p>
+        <p className="text-xs font-semibold text-stone">Atualizado <BrowserDateTime value={operations.generatedAt.toISOString()} dateStyle={undefined} /></p>
       </header>
 
       <section aria-label="Saúde operacional" className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-mist bg-mist lg:grid-cols-3 xl:grid-cols-6">
@@ -36,18 +37,18 @@ export default async function OperationsPage() {
 
       <div className="grid gap-7 xl:grid-cols-[1.05fr_0.95fr]">
         <OperationalSection title="Fila de automação" eyebrow="Agora" count={operations.jobs.length} empty="Nenhum job aguardando processamento.">
-          {operations.jobs.map((job) => <article key={job._id.toString()} className="grid gap-2 border-t border-mist py-4 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={job.status} /><p className="truncate text-sm font-semibold text-slate-ink">{processLabel(job.process)}</p></div><Link href={`/dashboard/clientes/${job.customerId.toString()}`} className="mt-1 block truncate text-xs font-semibold text-deep-teal hover:text-forest-teal">{job.customerName}</Link><p className="mt-1 text-xs text-stone">{eventLabel(job.event, job.eventPayload?.reason)} · revisão {job.revision}{job.consecutiveFailures > 0 ? ` · ${job.consecutiveFailures} tentativa(s) com falha` : ""}</p>{job.lastError && <p className="mt-2 line-clamp-2 text-xs leading-5 text-burnt-coral">{job.lastError}</p>}</div><p className="text-xs text-stone sm:text-right">{job.status === "pending" ? `Agendado para ${formatDateTime(job.dueAt)}` : `Atualizado ${formatDateTime(job.updatedAt)}`}</p></article>)}
+          {operations.jobs.map((job) => <article key={job._id.toString()} className="grid gap-2 border-t border-mist py-4 first:border-t-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={job.status} /><p className="truncate text-sm font-semibold text-slate-ink">{processLabel(job.process)}</p></div><Link href={`/dashboard/clientes/${job.customerId.toString()}`} className="mt-1 block truncate text-xs font-semibold text-deep-teal hover:text-forest-teal">{job.customerName}</Link><p className="mt-1 text-xs text-stone">{eventLabel(job.event, job.eventPayload?.reason)} · revisão {job.revision}{job.consecutiveFailures > 0 ? ` · ${job.consecutiveFailures} tentativa(s) com falha` : ""}</p>{job.lastError && <p className="mt-2 line-clamp-2 text-xs leading-5 text-burnt-coral">{job.lastError}</p>}</div><p className="text-xs text-stone sm:text-right">{job.status === "pending" ? <>Agendado para <BrowserDateTime value={job.dueAt.toISOString()} /></> : <>Atualizado <BrowserDateTime value={job.updatedAt.toISOString()} /></>}</p></article>)}
         </OperationalSection>
 
         <OperationalSection title="Execuções do agente" eyebrow="Auditoria" count={operations.runs.length} empty="Nenhuma execução registrada.">
-          {operations.runs.map((run) => <article key={run._id.toString()} className="border-t border-mist py-4 first:border-t-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={run.status} /><Link href={`/dashboard/clientes/${run.customerId.toString()}`} className="truncate text-sm font-semibold text-slate-ink hover:text-deep-teal">{run.customerName}</Link></div><p className="mt-1 text-xs text-stone">Configuração r{run.configRevision} · {run.modelIterations} iteração(ões) · {run.toolExecutions} ferramenta(s) · {run.mutationsExecuted} alteração(ões)</p></div><p className="shrink-0 text-xs text-stone">{formatDateTime(run.startedAt)}</p></div>{run.error && <p className="mt-2 line-clamp-2 text-xs leading-5 text-burnt-coral">{run.error}</p>}</article>)}
+          {operations.runs.map((run) => <article key={run._id.toString()} className="border-t border-mist py-4 first:border-t-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={run.status} /><Link href={`/dashboard/clientes/${run.customerId.toString()}`} className="truncate text-sm font-semibold text-slate-ink hover:text-deep-teal">{run.customerName}</Link></div><p className="mt-1 text-xs text-stone">Configuração r{run.configRevision} · {run.modelIterations} iteração(ões) · {run.toolExecutions} ferramenta(s) · {run.mutationsExecuted} alteração(ões)</p></div><p className="shrink-0 text-xs text-stone"><BrowserDateTime value={run.startedAt.toISOString()} /></p></div>{run.error && <p className="mt-2 line-clamp-2 text-xs leading-5 text-burnt-coral">{run.error}</p>}</article>)}
         </OperationalSection>
       </div>
 
       <AiUsageSection usage={operations.aiUsage} />
 
       <OperationalSection title="Chamadas de IA" eyebrow="Desempenho" count={operations.modelCalls.length} empty="Nenhuma chamada de IA registrada.">
-        {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p> : <p className="mt-2 text-xs text-stone">{formatCallUsage(call.normalizedUsage)}</p>}</div><p className="shrink-0 text-xs text-stone">{formatDateTime(call.startedAt)}</p></article>)}
+        {operations.modelCalls.map((call) => <article key={call._id.toString()} className="flex items-start justify-between gap-3 border-t border-mist py-4 first:border-t-0"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Status value={call.status} /><p className="truncate text-sm font-semibold text-slate-ink">{taskLabel(call.taskKey)}</p></div><p className="mt-1 truncate text-xs text-stone">{call.customerName} · {call.model} · {formatDuration(call.durationMs ?? 0)}</p>{call.errorMessage ? <p className="mt-2 line-clamp-2 text-xs text-burnt-coral">{call.errorMessage}</p> : <p className="mt-2 text-xs text-stone">{formatCallUsage(call.normalizedUsage)}</p>}</div><p className="shrink-0 text-xs text-stone"><BrowserDateTime value={call.startedAt.toISOString()} /></p></article>)}
       </OperationalSection>
     </div>
   );
@@ -141,5 +142,3 @@ function formatCallUsage(usage: { inputTokens?: number; outputTokens?: number; c
   return parts.length > 0 ? parts.join(" · ") : "Consumo não informado pelo provider";
 }
 function formatNumber(value: number) { return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value); }
-function formatDateTime(value: Date) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(value); }
-function formatTime(value: Date) { return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(value); }

@@ -15,6 +15,7 @@ import { CustomerOperationsDocument, listCustomerOperations } from "@/lib/crm";
 import { getDashboardOverview } from "@/lib/dashboard/overview";
 import AutoRefresh from "./_components/auto-refresh";
 import { PanelHeader, SectionHeader } from "./_components/dashboard-section-header";
+import BrowserDateTime from "@/components/browser-date-time";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +48,7 @@ export default async function DashboardPage({
         href: customer ? `/dashboard/clientes/${customer._id.toString()}` : "/dashboard",
         label: "Confirmar sinal recebido",
         customerName: customer?.name ?? "Cliente",
-        detail: `${formatCurrency(payment.amountCents)} · aguardando desde ${formatDateTime(payment.createdAt)}`,
+        detail: <>{formatCurrency(payment.amountCents)} · aguardando desde <BrowserDateTime value={payment.createdAt.toISOString()} /></>,
         tone: "coral" as const,
         timestamp: payment.createdAt.getTime(),
       };
@@ -115,7 +116,7 @@ export default async function DashboardPage({
               </Link>
             ))}
           </nav>
-          <span className="text-xs text-stone">Atualizado {formatTime(overview.generatedAt)}</span>
+          <span className="text-xs text-stone">Atualizado <BrowserDateTime value={overview.generatedAt.toISOString()} dateStyle={undefined} /></span>
         </div>
       </header>
 
@@ -174,7 +175,7 @@ export default async function DashboardPage({
           <PanelHeader icon={CalendarDays} eyebrow="Agenda" title="Próximos eventos" action={{ href: "/dashboard/calendario", label: "Abrir calendário" }} />
           <div className="mt-5 divide-y divide-mist border-y border-mist">
             {overview.upcomingAppointments.length === 0 && <p className="py-8 text-center text-sm text-stone">Nenhum evento futuro.</p>}
-            {overview.upcomingAppointments.map((appointment, index) => <div key={`${appointment.customerName || "sem-cliente"}-${appointment.startAt.toISOString()}-${index}`} className="flex items-center justify-between gap-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{appointment.customerName || "Sem cliente"}</p><p className="mt-0.5 text-xs text-stone">{formatEventType(appointment.eventType as string | undefined)}</p></div><p className="shrink-0 text-right text-xs font-semibold text-deep-teal">{formatDateTime(appointment.startAt)}</p></div>)}
+            {overview.upcomingAppointments.map((appointment, index) => <div key={`${appointment.customerName || "sem-cliente"}-${appointment.startAt.toISOString()}-${index}`} className="flex items-center justify-between gap-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{appointment.customerName || "Sem cliente"}</p><p className="mt-0.5 text-xs text-stone">{formatEventType(appointment.eventType as string | undefined)}</p></div><p className="shrink-0 text-right text-xs font-semibold text-deep-teal"><BrowserDateTime value={appointment.startAt.toISOString()} /></p></div>)}
           </div>
         </div>
             </section>
@@ -281,17 +282,6 @@ function formatEventType(eventType?: string) {
   if (eventType === "evaluation") return "Avaliação";
   if (eventType === "blocked") return "Bloqueio de agenda";
   return "Consulta";
-}
-
-function formatDateTime(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function formatTime(date: Date) {
-  return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function formatCurrency(valueCents: number) {

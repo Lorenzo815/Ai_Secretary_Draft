@@ -9,6 +9,8 @@ import {
 import AutoRefresh from "../_components/auto-refresh";
 import Pagination from "../_components/pagination";
 import LeadInsightTags from "@/components/lead-insight-tags";
+import BrowserDateTime from "@/components/browser-date-time";
+import CustomerServiceStatusControl from "@/components/customer-service-status-control";
 import CustomerTableRow from "./_components/customer-table-row";
 
 export const dynamic = "force-dynamic";
@@ -108,15 +110,15 @@ export default async function CustomersPage({
                         <p className="text-sm font-semibold text-slate-ink">{customer.name}</p>
                         <p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p>
                       </td>
-                      <td className="px-5 py-4"><StatusBadge customer={customer} /><p className="mt-1.5 text-xs text-stone">{ownerLabel(customer)}</p></td>
+                      <td className="px-5 py-4"><StatusBadge customer={customer} /><div className="mt-2"><CustomerServiceStatusControl customerId={customer._id.toString()} initialStatus={customer.serviceStatus ?? "ai_active"} variant="compact" /></div></td>
                       <td className="px-5 py-4">
                         <p className="text-sm font-semibold text-slate-ink">{profileLabel(customer)}</p>
                         <p className="mt-0.5 text-xs text-stone">{qualificationLabel(customer)}</p>
                         <div className="mt-2"><LeadInsightTags tags={customer.leadQualification?.insightTags ?? []} limit={2} compact expandable /></div>
                       </td>
                       <td className="max-w-[310px] px-5 py-4"><p className="line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p></td>
-                      <td className="px-5 py-4 text-sm text-slate-ink/75">{customer.nextAppointment ? formatDate(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Não agendado"}</td>
-                      <td className="px-5 py-4 text-sm text-slate-ink/75">{formatDate(customer.lastInteractionAt)}</td>
+                      <td className="px-5 py-4 text-sm text-slate-ink/75">{customer.nextAppointment ? <BrowserDateTime value={customer.nextAppointment.startAt.toISOString()} /> : "Não agendado"}</td>
+                      <td className="px-5 py-4 text-sm text-slate-ink/75"><BrowserDateTime value={customer.lastInteractionAt.toISOString()} /></td>
                     </CustomerTableRow>
                   ))}
                 </tbody>
@@ -131,7 +133,7 @@ export default async function CustomersPage({
 }
 
 function CustomerCard({ customer }: { customer: CustomerOperationsDocument }) {
-  return <Link href={`/dashboard/clientes/${customer._id.toString()}`} className="block p-4 transition hover:bg-soft-ivory/60"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{customer.name}</p><p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p></div><StatusBadge customer={customer} /></div><p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p><div className="mt-3"><LeadInsightTags tags={customer.leadQualification?.insightTags ?? []} limit={3} compact /></div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-mist pt-3 text-xs"><div><span className="text-stone">Perfil</span><p className="mt-0.5 font-semibold text-slate-ink">{profileLabel(customer)}</p></div><div><span className="text-stone">Agenda</span><p className="mt-0.5 font-semibold text-slate-ink">{customer.nextAppointment ? formatDate(customer.nextAppointment.startAt, customer.nextAppointment.timezone) : "Não agendado"}</p></div></div></Link>;
+  return <article className="p-4"><Link href={`/dashboard/clientes/${customer._id.toString()}`} className="block transition hover:opacity-80"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-ink">{customer.name}</p><p className="mt-0.5 text-xs text-stone">{formatPhone(customer.phones[0])}</p></div><StatusBadge customer={customer} /></div><p className="mt-3 line-clamp-2 text-sm leading-5 text-slate-ink/75">{contextLabel(customer)}</p><div className="mt-3"><LeadInsightTags tags={customer.leadQualification?.insightTags ?? []} limit={3} compact /></div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-mist pt-3 text-xs"><div><span className="text-stone">Perfil</span><p className="mt-0.5 font-semibold text-slate-ink">{profileLabel(customer)}</p></div><div><span className="text-stone">Agenda</span><p className="mt-0.5 font-semibold text-slate-ink">{customer.nextAppointment ? <BrowserDateTime value={customer.nextAppointment.startAt.toISOString()} /> : "Não agendado"}</p></div></div></Link><div className="mt-4 border-t border-mist pt-3"><CustomerServiceStatusControl customerId={customer._id.toString()} initialStatus={customer.serviceStatus ?? "ai_active"} variant="compact" /></div></article>;
 }
 
 function Metric({ label, value, detail, attention = false }: { label: string; value: number; detail: string; attention?: boolean }) {
@@ -185,19 +187,11 @@ function confidenceLabel(value: "high" | "medium" | "low") {
   return value === "high" ? "alta confiança" : value === "medium" ? "confiança média" : "baixa confiança";
 }
 
-function ownerLabel(customer: CustomerOperationsDocument) {
-  return customer.serviceStatus === "waiting_human" || customer.serviceStatus === "human_active" || customer.messageAfterClosure ? "Responsável: equipe" : customer.serviceStatus === "closed" ? "Sem responsável" : "Responsável: IA";
-}
-
 function contextLabel(customer: CustomerOperationsDocument) {
   const summary = customer.conversationState?.summary.split("\nÚltima resposta enviada:")[0]?.trim();
   if (summary) return summary;
   if (customer.latestMessage) return `${customer.latestMessage.direction === "inbound" ? "Cliente" : "Oria"}: ${customer.latestMessage.body}`;
   return "Sem contexto registrado.";
-}
-
-function formatDate(value: Date, timeZone?: string) {
-  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", ...(timeZone ? { timeZone } : {}) }).format(value);
 }
 
 function formatPhone(value?: string) {

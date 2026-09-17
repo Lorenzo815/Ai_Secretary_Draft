@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
-
-type ServiceStatus = "ai_active" | "waiting_human" | "human_active" | "closed";
+import CustomerServiceStatusControl, { type ServiceStatus } from "@/components/customer-service-status-control";
 
 interface AgentRunView {
   id: string;
@@ -28,36 +26,11 @@ export default function CustomerAgentPanel({
   runs: AgentRunView[];
   conversationState: { summary: string; updatedAt: string } | null;
 }) {
-  const [serviceStatus, setServiceStatus] = useState(initialServiceStatus);
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState("");
-
-  async function changeStatus(status: ServiceStatus) {
-    setSaving(true);
-    setFeedback("");
-    try {
-      const response = await fetch(`/api/customers/${customerId}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const data = await response.json() as { status?: ServiceStatus; error?: string };
-      if (!response.ok || !data.status) throw new Error(data.error ?? "Não foi possível alterar o status.");
-      setServiceStatus(data.status);
-      setFeedback("Status do atendimento atualizado.");
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Não foi possível alterar o status.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return <section aria-labelledby="agent-title" className="space-y-6 border-y border-mist py-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div><p className="text-xs font-semibold uppercase text-deep-teal">Automação</p><h2 id="agent-title" className="mt-1 font-heading text-base font-semibold text-slate-ink">Agente do cliente</h2></div>
-      <div className="flex flex-wrap gap-2">{(["ai_active", "waiting_human", "human_active", "closed"] as const).map((status) => <button key={status} type="button" aria-pressed={serviceStatus === status} disabled={saving} onClick={() => void changeStatus(status)} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${serviceStatus === status ? "border-deep-teal bg-deep-teal text-white" : "border-mist bg-white text-stone"}`}>{statusLabel(status)}</button>)}</div>
     </div>
-    {feedback && <p className="text-sm text-deep-teal">{feedback}</p>}
+    <CustomerServiceStatusControl customerId={customerId} initialStatus={initialServiceStatus} />
     {conversationState && <div><p className="text-xs font-semibold uppercase text-stone">Memória operacional</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-ink">{conversationState.summary || "Sem resumo acumulado."}</p><p className="mt-1 text-xs text-stone">Atualizada em {formatDateTime(conversationState.updatedAt)}</p></div>}
     <div><div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase text-stone">Execuções recentes</p><span className="text-xs text-stone">{runs.length}</span></div>
       {runs.length === 0 ? <p className="mt-3 text-sm text-stone">Nenhuma execução do agente registrada.</p> : <>
@@ -74,6 +47,5 @@ export default function CustomerAgentPanel({
   </section>;
 }
 
-function statusLabel(status: ServiceStatus) { return status === "ai_active" ? "IA ativa" : status === "waiting_human" ? "Aguardando equipe" : status === "human_active" ? "Equipe ativa" : "Encerrado"; }
 function runStatus(status: AgentRunView["status"]) { return status === "completed" ? "Concluída" : status === "failed" ? "Falhou" : status === "superseded" ? "Substituída" : "Executando"; }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)); }
