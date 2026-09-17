@@ -74,6 +74,15 @@ describe("tool registry", () => {
     expect(instructions).not.toContain("Pergunte um tópico por vez");
   });
 
+  it("accepts payer email for automatic Pix creation", () => {
+    const schema = toolRegistry["payment.request_deposit"].argumentsSchema as {
+      required: string[];
+      properties: Record<string, unknown>;
+    };
+    expect(schema.required).toEqual(["confirmedByCustomer", "payerEmail"]);
+    expect(schema.properties).toHaveProperty("payerEmail");
+  });
+
   it.each(["calendar.book", "calendar.reschedule"] as const)("confirms %s from one server candidate", (key) => {
     const schema = toolRegistry[key].argumentsSchema as {
       required: string[];

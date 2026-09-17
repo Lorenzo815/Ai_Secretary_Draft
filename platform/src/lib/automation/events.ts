@@ -6,7 +6,7 @@ import type { AutomationEvent } from "./contracts";
 import { scheduleAutomationJob } from "./queue";
 import { listAutomationRules } from "./repository";
 
-export async function emitAutomationEvent(event: AutomationEvent) {
+export async function emitAutomationEvent(event: AutomationEvent, options?: { immediate?: boolean }) {
   const [rules, customer] = await Promise.all([
     listAutomationRules(),
     findCustomerById(event.customerId.toString()),
@@ -35,6 +35,7 @@ export async function emitAutomationEvent(event: AutomationEvent) {
     process: rule.process,
     event,
     debounceMs: rule.debounceMs,
+    ...(options?.immediate ? { dueAt: new Date() } : {}),
   })));
   return matching.map((rule) => rule.process);
 }

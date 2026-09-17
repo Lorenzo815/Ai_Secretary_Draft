@@ -42,18 +42,39 @@ export function buildAgentMessages(input: {
     timestamp: message.timestamp.toISOString(),
     type: message.type,
     text: message.body.slice(0, 4_096),
+    ...(message.media ? {
+      media: {
+        type: message.type,
+        mimeType: message.media.mimeType,
+        caption: message.media.caption,
+        filename: message.media.filename,
+        attachedToPrompt: Boolean(message.media.dataUrl),
+      },
+    } : {}),
+    ...(message.replyTo ? { replyTo: message.replyTo } : {}),
   }));
+  const imageParts = input.messages.flatMap((message) => (
+    message.direction === "inbound" && message.type === "image" && message.media?.dataUrl
+      ? [{ type: "image_url" as const, image_url: { url: message.media.dataUrl, detail: "low" as const } }]
+      : []
+  ));
   return [
     { role: "system", content: AGENT_STRUCTURAL_POLICY },
     { role: "developer", content: buildAgentDeveloperPrompt(input.configuration, input.finalIteration) },
     {
       role: "user",
-      content: JSON.stringify({
-        previousSummary: input.previousSummary,
-        recentMessages: transcript,
-        runtime: input.runtime,
-        toolHistory: input.toolHistory,
-      }),
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            previousSummary: input.previousSummary,
+            recentMessages: transcript,
+            runtime: input.runtime,
+            toolHistory: input.toolHistory,
+          }),
+        },
+        ...imageParts,
+      ],
     },
   ];
 }

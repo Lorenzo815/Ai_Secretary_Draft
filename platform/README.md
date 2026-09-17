@@ -6,7 +6,7 @@ agenda, pagamentos e automação com IA.
 ## Desenvolvimento
 
 Configure as variáveis de ambiente do MongoDB, NextAuth, WhatsApp, Azure
-OpenAI, criptografia de PII e worker. Depois execute:
+OpenAI, Mercado Pago, criptografia de PII e worker. Depois execute:
 
 ```bash
 npm install
@@ -40,7 +40,15 @@ invariantes e pontos de extensão.
 
 ## Implantação
 
-Webhooks devem apontar para `/api/webhooks/whatsapp`. O worker chama
+Webhooks do WhatsApp devem apontar para `/api/webhooks/whatsapp`. Para
+confirmação automática do Pix, cadastre a URL pública
+`/api/webhooks/mercado-pago` nas notificações de pagamentos do Mercado Pago.
+Configure `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` no
+ambiente ou armazene-os pela tela de configurações. O armazenamento no banco
+exige `PAYMENT_CREDENTIALS_ENCRYPTION_KEY` com 32 bytes em Base64. Variáveis de
+ambiente sempre têm prioridade sobre credenciais armazenadas.
+
+O worker chama
 `POST /api/internal/assistant/process` com
 `Authorization: Bearer ASSISTANT_WORKER_SECRET`. Em ambientes serverless, use
 um agendador externo para invocar a rota ou hospede o worker em um processo

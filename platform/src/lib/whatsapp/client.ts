@@ -4,6 +4,8 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
 const DEFAULT_GRAPH_VERSION = "v25.0";
+const MAX_ASSISTANT_IMAGE_BYTES = 5 * 1024 * 1024;
+const ASSISTANT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export interface WhatsAppConfig {
   accessToken: string;
@@ -218,4 +220,43 @@ async function sendPayload(config: WhatsAppConfig, payload: object) {
     );
   }
   return result.messages[0].id;
+}
+
+export async function fetchWhatsAppImageDataUrl(mediaId: string) {
+  const config = await requireWhatsAppConfig();
+  const metadataResponse = await fetch(
+    `https://graph.facebook.com/${config.graphVersion}/${encodeURIComponent(mediaId)}`,
+    {
+      headers: { Authorization: `Bearer ${config.accessToken}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  const metadata = await metadataResponse.json() as {
+    url?: string;
+    mime_type?: string;
+    file_size?: number;
+  };
+  if (!metadataResponse.ok || !metadata.url) {
+    throw new Error(`Não foi possível obter a mídia do WhatsApp (HTTP ${metadataResponse.status}).`);
+  }
+  if (!metadata.mime_type || !ASSISTANT_IMAGE_TYPES.has(metadata.mime_type)) {
+    throw new Error("O formato da imagem recebida não é suportado pela IA.");
+  }
+  if (Number(metadata.file_size) > MAX_ASSISTANT_IMAGE_BYTES) {
+    throw new Error("A imagem recebida excede o limite de 5 MB para processamento.");
+  }
+  const mediaResponse = await fetch(metadata.url, {
+    headers: { Authorization: `Bearer ${config.accessToken}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!mediaResponse.ok) {
+    throw new Error(`Não foi possível baixar a mídia do WhatsApp (HTTP ${mediaResponse.status}).`);
+  }
+  const bytes = Buffer.from(await mediaResponse.arrayBuffer());
+  if (bytes.byteLength > MAX_ASSISTANT_IMAGE_BYTES) {
+    throw new Error("A imagem recebida excede o limite de 5 MB para processamento.");
+  }
+  return `data:${metadata.mime_type};base64,${bytes.toString("base64")}`;
 }

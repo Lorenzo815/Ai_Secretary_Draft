@@ -6,7 +6,7 @@ import { useState } from "react";
 interface PaymentView {
   id: string;
   amountCents: number;
-  status: "awaiting_human_confirmation" | "paid" | "rejected";
+  status: "awaiting_human_confirmation" | "awaiting_provider_confirmation" | "paid" | "rejected" | "provider_error";
   createdAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
@@ -50,8 +50,10 @@ export default function PaymentReviewPanel({
     .format(payment.amountCents / 100);
   const labels = {
     awaiting_human_confirmation: "Aguardando confirmação humana",
+    awaiting_provider_confirmation: "Aguardando Mercado Pago",
     paid: "Pagamento confirmado",
     rejected: "Pagamento recusado",
+    provider_error: "Falha no provedor",
   } as const;
 
   return (
@@ -76,6 +78,10 @@ export default function PaymentReviewPanel({
           <button type="button" disabled={saving} onClick={() => review("reject")} className="min-h-10 rounded-md border border-burnt-coral px-4 text-sm font-semibold text-burnt-coral disabled:opacity-50">Recusar</button>
           <button type="button" disabled={saving} onClick={() => review("confirm")} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white disabled:opacity-50">Confirmar pagamento</button>
         </div>
+      ) : payment.status === "awaiting_provider_confirmation" ? (
+        <p className="mt-3 text-xs text-stone">A confirmação será registrada automaticamente quando o Mercado Pago aprovar o Pix.</p>
+      ) : payment.status === "provider_error" ? (
+        <p className="mt-3 text-xs font-medium text-red-700">Não foi possível criar ou consultar a cobrança automática. Verifique o provedor nas configurações.</p>
       ) : (
         <p className="mt-3 text-xs text-stone">Revisado {payment.reviewedAt ? `em ${formatDate(payment.reviewedAt)}` : ""}{payment.reviewedBy ? ` por ${payment.reviewedBy}` : ""}.</p>
       )}

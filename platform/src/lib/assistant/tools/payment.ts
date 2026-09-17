@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createPaymentRequest } from "../../payments";
+import { createMercadoPagoPaymentRequest, createPaymentRequest, getPaymentProviderConfiguration } from "../../payments";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 export async function executePaymentRequestTool(
@@ -19,12 +19,30 @@ export async function executePaymentRequestTool(
   }
   try {
     const settings = context.configuration;
-    const payment = await createPaymentRequest({
-      customerId: context.customerId,
-      amountCents: settings.payment.signalAmountCents,
-      pixKey: settings.payment.pixKey,
-      recipientName: settings.payment.recipientName,
-    });
+    const providerSettings = await getPaymentProviderConfiguration();
+    let payment;
+    try {
+      payment = providerSettings.activeProvider === "mercado_pago"
+        ? await createMercadoPagoPaymentRequest({
+            customerId: context.customerId,
+            amountCents: settings.payment.signalAmountCents,
+            payerEmail: typeof args.payerEmail === "string" ? args.payerEmail : "",
+          })
+        : await createPaymentRequest({
+            customerId: context.customerId,
+            amountCents: settings.payment.signalAmountCents,
+            pixKey: settings.payment.pixKey,
+            recipientName: settings.payment.recipientName,
+          });
+    } catch (error) {
+      if (providerSettings.activeProvider !== "mercado_pago" || !providerSettings.humanFallbackEnabled) throw error;
+      payment = await createPaymentRequest({
+        customerId: context.customerId,
+        amountCents: settings.payment.signalAmountCents,
+        pixKey: settings.payment.pixKey,
+        recipientName: settings.payment.recipientName,
+      });
+    }
     return {
       output: JSON.stringify({
         ok: true,
@@ -34,6 +52,9 @@ export async function executePaymentRequestTool(
         amountCents: payment.amountCents,
         pixKey: payment.pixKeySnapshot,
         recipientName: payment.recipientNameSnapshot,
+        provider: payment.provider ?? "manual",
+        qrCode: payment.qrCode,
+        ticketUrl: payment.ticketUrl,
       }),
       retryable: false,
     };

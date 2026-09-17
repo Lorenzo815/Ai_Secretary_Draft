@@ -8,13 +8,17 @@ export const paymentToolDefinitions = {
     argumentsSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["confirmedByCustomer"],
-      properties: { confirmedByCustomer: { type: "boolean" } },
+      required: ["confirmedByCustomer", "payerEmail"],
+      properties: {
+        confirmedByCustomer: { type: "boolean" },
+        payerEmail: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
     },
     promptInstructions: `payment.request_deposit exige confirmedByCustomer=true.
 - Use somente depois de o cliente aceitar prosseguir com a primeira consulta e pagar o sinal.
 - Chave, favorecido e valor vêm exclusivamente da configuração administrativa; nunca os invente.
-- Depois da solicitação, o atendimento aguarda confirmação humana do pagamento.`,
+- Para Mercado Pago, colete o e-mail real do pagador antes de chamar e envie em payerEmail. No modo manual, envie null.
+- Depois da solicitação, aguarde a confirmação automática do provedor ou a revisão humana configurada.`,
     execute: async (context, args) => (await import("./payment")).executePaymentRequestTool(context, args),
     getGroundedReply: (output: string) => {
       const result = JSON.parse(output) as {
@@ -22,8 +26,15 @@ export const paymentToolDefinitions = {
         amountCents?: number;
         pixKey?: string;
         recipientName?: string;
+        qrCode?: string;
+        provider?: string;
         type?: string;
       };
+      if (result.ok && result.amountCents && result.provider === "mercado_pago" && result.qrCode) {
+        const amount = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
+          .format(result.amountCents / 100);
+        return `Para garantir o horário, realize o sinal de ${amount} via Pix usando o código copia e cola: ${result.qrCode}. A confirmação será automática após o Mercado Pago aprovar a transação.`;
+      }
       if (result.ok && result.amountCents && result.pixKey && result.recipientName) {
         const amount = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
           .format(result.amountCents / 100);

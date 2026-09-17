@@ -1,6 +1,7 @@
+import { ObjectId } from "mongodb";
 import { describe, expect, it } from "vitest";
 import { createDefaultAgentConfiguration } from "./defaults";
-import { AGENT_STRUCTURAL_POLICY, buildAgentDeveloperPrompt } from "./prompt";
+import { AGENT_STRUCTURAL_POLICY, buildAgentDeveloperPrompt, buildAgentMessages } from "./prompt";
 
 describe("assistant commercial conduct", () => {
   it("connects the customer's goal to value and recommends a next step", () => {
@@ -90,5 +91,50 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("ofereça uma saída concreta para a possível fricção");
     expect(prompt).toContain("não pressione");
     expect(prompt).toContain("não mencione pontuação, qualificação, análise interna");
+  });
+
+  it("sends quoted context and transient WhatsApp images to the model", () => {
+    const messages = buildAgentMessages({
+      configuration: createDefaultAgentConfiguration(),
+      runtime: {} as Parameters<typeof buildAgentMessages>[0]["runtime"],
+      previousSummary: "Sem contexto anterior.",
+      toolHistory: [],
+      finalIteration: false,
+      messages: [{
+        _id: new ObjectId(),
+        metaMessageId: "wamid.image",
+        customerId: new ObjectId(),
+        contactPhone: "5511999999999",
+        direction: "inbound",
+        type: "image",
+        body: "Aqui está",
+        status: "received",
+        timestamp: new Date("2026-09-17T12:00:00Z"),
+        updatedAt: new Date("2026-09-17T12:00:00Z"),
+        media: {
+          id: "media-123",
+          mimeType: "image/jpeg",
+          caption: "Aqui está",
+          dataUrl: "data:image/jpeg;base64,aW1hZ2U=",
+        },
+        replyTo: {
+          metaMessageId: "wamid.original",
+          direction: "outbound",
+          type: "text",
+          body: "Envie uma foto.",
+        },
+      }],
+    });
+    const userMessage = messages[2];
+    expect(userMessage.role).toBe("user");
+    expect(userMessage.content).toEqual(expect.arrayContaining([
+      { type: "image_url", image_url: { url: "data:image/jpeg;base64,aW1hZ2U=", detail: "low" } },
+    ]));
+    const text = Array.isArray(userMessage.content)
+      ? userMessage.content.find((part) => part.type === "text")?.text
+      : "";
+    expect(text).toContain("wamid.original");
+    expect(text).toContain("Envie uma foto.");
+    expect(text).not.toContain("data:image/jpeg");
   });
 });

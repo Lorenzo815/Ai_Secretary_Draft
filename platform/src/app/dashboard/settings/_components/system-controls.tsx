@@ -2,15 +2,26 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, CircleDollarSign, DatabaseZap } from "lucide-react";
+import { Bot, CheckCircle2, CircleAlert, CircleDollarSign, DatabaseZap, KeyRound, LoaderCircle, RefreshCw, Save, Trash2 } from "lucide-react";
+
+type PaymentProvider = "manual" | "mercado_pago";
+interface MercadoPagoStatus {
+  configured: boolean;
+  source: "environment" | "database" | null;
+  environmentConfigured: boolean;
+  databaseConfigured: boolean;
+  storageEncryptionConfigured: boolean;
+}
 
 export default function SystemControls({
   initialProcessingEnabled,
   initialPayment,
+  initialPaymentProvider,
   initialCustomers,
 }: {
   initialProcessingEnabled: boolean;
   initialPayment: { configured: boolean; recipientName: string; signalAmountCents: number };
+  initialPaymentProvider: { activeProvider: PaymentProvider; humanFallbackEnabled: boolean; mercadoPago: MercadoPagoStatus };
   initialCustomers: Array<{ id: string; label: string }>;
 }) {
   const router = useRouter();
@@ -30,6 +41,17 @@ export default function SystemControls({
     signalAmount: initialSignalAmount,
   });
   const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentProvider, setPaymentProvider] = useState(initialPaymentProvider.activeProvider);
+  const [providerBaseline, setProviderBaseline] = useState(initialPaymentProvider.activeProvider);
+  const [humanFallbackEnabled, setHumanFallbackEnabled] = useState(initialPaymentProvider.humanFallbackEnabled);
+  const [fallbackBaseline, setFallbackBaseline] = useState(initialPaymentProvider.humanFallbackEnabled);
+  const [mercadoPagoStatus, setMercadoPagoStatus] = useState(initialPaymentProvider.mercadoPago);
+  const [accessToken, setAccessToken] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [savingCredential, setSavingCredential] = useState(false);
+  const [accountHealth, setAccountHealth] = useState<{ state: "idle" | "checking" | "working" | "failed"; text: string }>({ state: "idle", text: "Conta ainda não testada." });
+  const [webhookUrl, setWebhookUrl] = useState("/api/webhooks/mercado-pago");
   const confirmationAccepted = confirmation.trim() === "APAGAR";
   const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
   const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !deleting;
@@ -38,11 +60,17 @@ export default function SystemControls({
     || recipientName !== paymentBaseline.recipientName
     || signalAmount !== paymentBaseline.signalAmount,
   );
-  const refreshBlocked = paymentDirty || Boolean(confirmation) || saving || savingPayment || deleting;
+  const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline;
+  const credentialDirty = Boolean(accessToken || webhookSecret);
+  const refreshBlocked = paymentDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingProvider || savingCredential || deleting;
 
   useEffect(() => {
     setProcessingEnabled(initialProcessingEnabled);
   }, [initialProcessingEnabled]);
+
+  useEffect(() => {
+    setWebhookUrl(`${window.location.origin}/api/webhooks/mercado-pago`);
+  }, []);
 
   useEffect(() => {
     if (paymentDirty || savingPayment) return;
@@ -134,6 +162,63 @@ export default function SystemControls({
     }
   }
 
+  async function savePaymentProvider() {
+    setSavingProvider(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentProvider: { activeProvider: paymentProvider, humanFallbackEnabled } }),
+      });
+      const result = await response.json() as { credentialStatus?: MercadoPagoStatus; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Não foi possível salvar o pipeline de pagamento.");
+      setProviderBaseline(paymentProvider);
+      setFallbackBaseline(humanFallbackEnabled);
+      if (result.credentialStatus) setMercadoPagoStatus(result.credentialStatus);
+      setMessage("Pipeline de confirmação de pagamento atualizado.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível salvar o pipeline de pagamento.");
+    } finally {
+      setSavingProvider(false);
+    }
+  }
+
+  async function updateMercadoPagoCredential(clear = false) {
+    setSavingCredential(true);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mercadoPago: clear ? { clear: true } : { accessToken, webhookSecret } }),
+      });
+      const result = await response.json() as { credentialStatus?: MercadoPagoStatus; error?: string };
+      if (!response.ok || !result.credentialStatus) throw new Error(result.error ?? "Não foi possível atualizar as credenciais.");
+      setMercadoPagoStatus(result.credentialStatus);
+      setAccessToken("");
+      setWebhookSecret("");
+      setAccountHealth({ state: "idle", text: "Conta ainda não testada." });
+      setMessage(clear ? "Credenciais armazenadas removidas." : "Credenciais Mercado Pago armazenadas com criptografia.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível atualizar as credenciais.");
+    } finally {
+      setSavingCredential(false);
+    }
+  }
+
+  async function testMercadoPagoAccount() {
+    setAccountHealth({ state: "checking", text: "Consultando a conta sem criar transação..." });
+    try {
+      const response = await fetch("/api/settings", { method: "POST" });
+      const result = await response.json() as { account?: { accountId: string; nickname: string; durationMs: number }; error?: string };
+      if (!response.ok || !result.account) throw new Error(result.error ?? "O teste da conta falhou.");
+      setAccountHealth({ state: "working", text: `${result.account.nickname} · conta ${result.account.accountId} · ${result.account.durationMs} ms` });
+    } catch (error) {
+      setAccountHealth({ state: "failed", text: error instanceof Error ? error.message : "O teste da conta falhou." });
+    }
+  }
+
   return (
     <div className="grid gap-5 lg:grid-cols-2" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
       <section aria-labelledby="assistant-processing-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6">
@@ -163,9 +248,26 @@ export default function SystemControls({
         <div className={`mt-5 rounded-md px-3 py-2.5 text-xs font-medium ${processingEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{processingEnabled ? "A Oria está processando a fila normalmente." : "As mensagens continuam salvas, mas aguardam processamento."}</div>
       </section>
 
-      <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Sinal via Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Fonte autorizada para valores informados pela IA.</p></div></div>
-        <form onSubmit={savePayment} className="mt-4 grid gap-3 md:grid-cols-3 md:items-end">
+      <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Pipeline de confirmação do Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Escolha quem confirma a transação e quando a IA pode continuar o atendimento.</p></div></div>
+        <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
+          <div>
+            <fieldset><legend className="text-xs font-semibold text-slate-ink">Confirmação ativa</legend><div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">{([ ["mercado_pago", "Mercado Pago"], ["manual", "Humana"] ] as const).map(([value, label]) => <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold ${paymentProvider === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}><input type="radio" name="paymentProvider" value={value} checked={paymentProvider === value} onChange={() => setPaymentProvider(value)} className="sr-only" />{label}</label>)}</div></fieldset>
+            <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs leading-5 text-stone"><input type="checkbox" checked={humanFallbackEnabled} onChange={(event) => setHumanFallbackEnabled(event.target.checked)} className="mt-1 accent-deep-teal" /><span><strong className="text-slate-ink">Fallback humano</strong><br />Se a cobrança automática não puder ser criada, usa a chave Pix e aguarda revisão da equipe.</span></label>
+            <button type="button" onClick={savePaymentProvider} disabled={!providerDirty || savingProvider || (paymentProvider === "mercado_pago" && !mercadoPagoStatus.configured)} className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{savingProvider ? "Salvando..." : "Salvar pipeline"}</button>
+          </div>
+          <div className="min-w-0 border-t border-mist pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-sm font-semibold text-slate-ink">Conta Mercado Pago</h4><p className="mt-1 text-xs text-stone">{mercadoPagoStatus.source === "environment" ? "Credenciais ativas pelo ambiente." : mercadoPagoStatus.source === "database" ? "Credenciais ativas pelo banco criptografado." : "Credenciais não configuradas."}</p></div><button type="button" onClick={testMercadoPagoAccount} disabled={!mercadoPagoStatus.configured || accountHealth.state === "checking"} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-mist px-3 text-xs font-semibold text-slate-ink disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${accountHealth.state === "checking" ? "animate-spin" : ""}`} />Testar conta</button></div>
+            <div className={`mt-3 flex items-start gap-2 rounded-md px-3 py-2.5 text-xs font-medium ${accountHealth.state === "working" ? "bg-emerald-50 text-emerald-700" : accountHealth.state === "failed" ? "bg-red-50 text-red-700" : "bg-pearl text-stone"}`}>{accountHealth.state === "checking" ? <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" /> : accountHealth.state === "working" ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <CircleAlert className="h-4 w-4 shrink-0" />}<span>{accountHealth.text}</span></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-ink">Access Token<input type="password" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} autoComplete="new-password" placeholder="Novo Access Token" disabled={!mercadoPagoStatus.storageEncryptionConfigured || savingCredential} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" /></label><label className="text-xs font-semibold text-slate-ink">Assinatura secreta do webhook<input type="password" value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} autoComplete="new-password" placeholder="Nova assinatura secreta" disabled={!mercadoPagoStatus.storageEncryptionConfigured || savingCredential} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" /></label></div>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => updateMercadoPagoCredential()} disabled={!mercadoPagoStatus.storageEncryptionConfigured || accessToken.length < 20 || webhookSecret.length < 16 || savingCredential} className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-md bg-slate-ink px-4 text-sm font-semibold text-white disabled:opacity-50"><KeyRound className="h-4 w-4" />{savingCredential ? "Salvando..." : "Armazenar credenciais"}</button>{mercadoPagoStatus.databaseConfigured && <button type="button" onClick={() => updateMercadoPagoCredential(true)} disabled={savingCredential} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Remover</button>}</div>
+            {!mercadoPagoStatus.storageEncryptionConfigured && <p className="mt-2 text-xs font-semibold text-red-700">Configure PAYMENT_CREDENTIALS_ENCRYPTION_KEY com 32 bytes em Base64.</p>}
+            <label className="mt-4 block text-xs font-semibold text-slate-ink">URL para notificações no Mercado Pago<input readOnly value={webhookUrl} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-pearl px-3 text-xs font-normal text-stone" /></label>
+            <p className="mt-2 text-[11px] leading-4 text-stone">Cadastre essa URL como webhook de pagamentos. Variáveis de ambiente têm prioridade e não podem ser alteradas nesta tela.</p>
+          </div>
+        </div>
+        <form onSubmit={savePayment} className="mt-5 grid gap-3 border-t border-mist pt-5 md:grid-cols-3 md:items-end">
+          <p className="md:col-span-3 text-xs font-semibold text-slate-ink">Dados do modo humano e fallback</p>
           <label className="text-xs font-semibold text-slate-ink">
             Chave Pix
             <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!initialPayment.configured} placeholder={initialPayment.configured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
@@ -179,7 +281,7 @@ export default function SystemControls({
             <input value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required inputMode="decimal" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
           </label>
           <button type="submit" disabled={savingPayment || !paymentDirty} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 md:col-start-3">
-            {savingPayment ? "Salvando..." : "Salvar configuração Pix"}
+            {savingPayment ? "Salvando..." : "Salvar dados Pix"}
           </button>
         </form>
       </section>

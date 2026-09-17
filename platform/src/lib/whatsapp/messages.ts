@@ -6,6 +6,22 @@ import clientPromise from "../mongodb";
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
 
+export interface WhatsAppMediaReference {
+  id: string;
+  mimeType?: string;
+  sha256?: string;
+  caption?: string;
+  filename?: string;
+  dataUrl?: string;
+}
+
+export interface WhatsAppReplyReference {
+  metaMessageId: string;
+  body?: string;
+  direction?: MessageDirection;
+  type?: string;
+}
+
 export interface WhatsAppMessageDocument {
   _id: ObjectId;
   customerId?: ObjectId;
@@ -15,6 +31,8 @@ export interface WhatsAppMessageDocument {
   direction: MessageDirection;
   type: string;
   body: string;
+  media?: WhatsAppMediaReference;
+  replyTo?: WhatsAppReplyReference;
   templateName?: string;
   status: MessageStatus;
   sentBy?: string;
@@ -122,4 +140,8 @@ export async function ensureWhatsAppMessageIndexes() {
     messages.createIndex({ customerId: 1, timestamp: -1 }),
     messages.createIndex({ customerId: 1, direction: 1, timestamp: -1 }),
   ]);
+}
+
+export async function findWhatsAppMessageByMetaId(metaMessageId: string) {
+  return (await getMessagesCollection()).findOne({ metaMessageId });
 }

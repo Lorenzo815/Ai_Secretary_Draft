@@ -5,6 +5,7 @@ const {
   cancelAutomationJob,
   emitAutomationEvent,
   ensureWhatsAppMessageIndexes,
+  findWhatsAppMessageByMetaId,
   findOrCreateCustomerFromWhatsApp,
   isOperationalEmbeddedSignupPhoneNumber,
   saveWhatsAppMessage,
@@ -14,6 +15,7 @@ const {
   cancelAutomationJob: vi.fn(),
   emitAutomationEvent: vi.fn(),
   ensureWhatsAppMessageIndexes: vi.fn(),
+  findWhatsAppMessageByMetaId: vi.fn(),
   findOrCreateCustomerFromWhatsApp: vi.fn(),
   isOperationalEmbeddedSignupPhoneNumber: vi.fn(),
   saveWhatsAppMessage: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock("./embedded-signup", () => ({
 }));
 vi.mock("./messages", () => ({
   ensureWhatsAppMessageIndexes,
+  findWhatsAppMessageByMetaId,
   saveWhatsAppMessage,
   updateWhatsAppMessageStatus,
 }));
@@ -47,6 +50,8 @@ describe("WhatsApp webhook isolation", () => {
     ensureWhatsAppMessageIndexes.mockResolvedValue(undefined);
     captureCoexistenceWebhookEvent.mockResolvedValue(true);
     isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(null);
+    emitAutomationEvent.mockResolvedValue(["customer_agent"]);
+    findWhatsAppMessageByMetaId.mockResolvedValue(null);
   });
 
   it("captures history without creating customers or triggering AI", async () => {
@@ -58,7 +63,7 @@ describe("WhatsApp webhook isolation", () => {
       }],
     }));
 
-    expect(result).toEqual({ receivedMessages: 0, statusUpdates: 0, coexistenceEvents: 1 });
+    expect(result).toEqual({ receivedMessages: 0, statusUpdates: 0, coexistenceEvents: 1, processingRequests: 0 });
     expect(captureCoexistenceWebhookEvent).toHaveBeenCalledOnce();
     expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
     expect(emitAutomationEvent).not.toHaveBeenCalled();
@@ -109,5 +114,61 @@ describe("WhatsApp webhook isolation", () => {
 
     expect(cancelAutomationJob).toHaveBeenCalledWith("customer_follow_up", customerId);
     expect(cancelAutomationJob.mock.invocationCallOrder[0]).toBeLessThan(emitAutomationEvent.mock.invocationCallOrder[0]);
+    expect(emitAutomationEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "message.received" }), { immediate: true });
+  });
+
+  it("preserves image metadata and the quoted message snapshot", async () => {
+    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    const customerId = { toString: () => "customer-1" };
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
+    findWhatsAppMessageByMetaId.mockResolvedValue({
+      metaMessageId: "wamid.original",
+      direction: "outbound",
+      type: "text",
+      body: "Envie uma foto do comprovante.",
+    });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+
+    const result = await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "1111111111" },
+            messages: [{
+              id: "wamid.image",
+              from: "5511999999999",
+              type: "image",
+              context: { id: "wamid.original" },
+              image: {
+                id: "media-123",
+                mime_type: "image/jpeg",
+                sha256: "hash-123",
+                caption: "Aqui está",
+              },
+            }],
+          },
+        }],
+      }],
+    }));
+
+    expect(saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "image",
+      body: "Aqui está",
+      media: {
+        id: "media-123",
+        mimeType: "image/jpeg",
+        sha256: "hash-123",
+        caption: "Aqui está",
+      },
+      replyTo: {
+        metaMessageId: "wamid.original",
+        body: "Envie uma foto do comprovante.",
+        direction: "outbound",
+        type: "text",
+      },
+    }));
+    expect(result.processingRequests).toBe(1);
   });
 });

@@ -1,11 +1,8 @@
 import { getServerSession } from "next-auth";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
-import { emitAutomationEvent } from "@/lib/automation";
 import { authOptions } from "@/lib/auth";
-import { updateCustomerServiceStatus } from "@/lib/crm";
-import { reviewPaymentRequest } from "@/lib/payments";
-import { saveWhatsAppMessage, sendTextMessage } from "@/lib/whatsapp";
+import { completePaymentTransition, reviewPaymentRequest } from "@/lib/payments";
 
 export async function POST(
   request: Request,
@@ -31,38 +28,7 @@ export async function POST(
       note: input.note,
     });
 
-    let deliveryWarning: string | undefined;
-    await emitAutomationEvent({
-      type: "payment.status.changed",
-      customerId,
-      occurredAt: new Date(),
-      payload: { status },
-    });
-    if (status === "paid") {
-      const customer = await updateCustomerServiceStatus(customerId, "ai_active");
-      const contactPhone = customer.phones[0];
-      if (contactPhone) {
-        const body = "Pagamento confirmado pela equipe. Agora vamos encontrar as melhores opções para sua Bioimpedância e Consulta com o Dr. Matheus. Você prefere realizá-las próximas uma da outra ou em dias e horários diferentes?";
-        try {
-          const sent = await sendTextMessage({ to: contactPhone, body });
-          await saveWhatsAppMessage({
-            customerId,
-            metaMessageId: sent.messageId,
-            contactPhone,
-            contactName: customer.name,
-            direction: "outbound",
-            type: "text",
-            body,
-            status: "sent",
-            timestamp: new Date(),
-          });
-        } catch (error) {
-          deliveryWarning = error instanceof Error ? error.message : "Não foi possível avisar o cliente.";
-        }
-      }
-    } else {
-      await updateCustomerServiceStatus(customerId, "human_active");
-    }
+    const { deliveryWarning } = await completePaymentTransition(payment, status);
 
     return NextResponse.json({
       payment: { id: payment._id.toString(), status: payment.status },

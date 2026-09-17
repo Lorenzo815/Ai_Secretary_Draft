@@ -3,18 +3,22 @@ import { Bot, ChevronRight, CircleDollarSign, Radio, Settings2 } from "lucide-re
 import { getAgentConfiguration } from "@/lib/assistant/agent";
 import { listCustomers } from "@/lib/crm";
 import { getEmbeddedSignupConfiguration, getEmbeddedSignupConnectionStatus } from "@/lib/whatsapp";
+import { getMercadoPagoCredentialStatus, getPaymentProviderConfiguration } from "@/lib/payments";
 import AutoRefresh from "../../_components/auto-refresh";
 import EmbeddedSignupSettings from "../_components/embedded-signup-settings";
+import AiModelSettings from "../_components/ai-model-settings";
 import SystemControls from "../_components/system-controls";
 
 export const dynamic = "force-dynamic";
 
 export default async function SystemSettingsPage() {
-  const [assistantSettings, customers, embeddedSignup, embeddedConnection] = await Promise.all([
+  const [assistantSettings, customers, embeddedSignup, embeddedConnection, paymentProvider, mercadoPagoStatus] = await Promise.all([
     getAgentConfiguration(),
     listCustomers(),
     getEmbeddedSignupConfiguration(),
     getEmbeddedSignupConnectionStatus(),
+    getPaymentProviderConfiguration(),
+    getMercadoPagoCredentialStatus(),
   ]);
 
   const connectionStatus = embeddedConnection?.status === "operational"
@@ -34,7 +38,7 @@ export default async function SystemSettingsPage() {
     <section aria-label="Resumo operacional" className="grid overflow-hidden rounded-lg border border-mist bg-white sm:grid-cols-3 sm:divide-x sm:divide-mist">
       <StatusSummary icon={Radio} label="WhatsApp" value={connectionStatus} active={embeddedConnection?.status === "operational"} />
       <StatusSummary icon={Bot} label="Respostas automáticas" value={assistantSettings.enabled ? "Ativas" : "Pausadas"} active={assistantSettings.enabled} />
-      <StatusSummary icon={CircleDollarSign} label="Sinal via Pix" value={assistantSettings.payment.pixKey ? "Configurado" : "Pendente"} active={Boolean(assistantSettings.payment.pixKey)} />
+      <StatusSummary icon={CircleDollarSign} label="Confirmação do Pix" value={paymentProvider.activeProvider === "mercado_pago" ? "Mercado Pago" : "Revisão humana"} active={paymentProvider.activeProvider === "mercado_pago" ? mercadoPagoStatus.configured : Boolean(assistantSettings.payment.pixKey)} />
     </section>
 
     <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Canais e credenciais</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Integrações</h2></div>
@@ -51,6 +55,9 @@ export default async function SystemSettingsPage() {
       } : null} />
     </div>
 
+    <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Inteligência e roteamento</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Modelos de IA</h2></div>
+    <AiModelSettings />
+
     <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Regras da operação</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Automação e pagamentos</h2></div>
     <SystemControls
       initialProcessingEnabled={assistantSettings.enabled}
@@ -58,6 +65,11 @@ export default async function SystemSettingsPage() {
         configured: Boolean(assistantSettings.payment.pixKey && assistantSettings.payment.recipientName),
         recipientName: assistantSettings.payment.recipientName,
         signalAmountCents: assistantSettings.payment.signalAmountCents,
+      }}
+      initialPaymentProvider={{
+        activeProvider: paymentProvider.activeProvider,
+        humanFallbackEnabled: paymentProvider.humanFallbackEnabled,
+        mercadoPago: mercadoPagoStatus,
       }}
       initialCustomers={customers.map((customer) => ({
         id: customer._id.toHexString(),

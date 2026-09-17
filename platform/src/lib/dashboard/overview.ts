@@ -69,7 +69,7 @@ export async function getDashboardOverview(periodDays = 30) {
       { $group: { _id: "$direction", count: { $sum: 1 } } },
     ]).toArray(),
     database.collection("whatsapp_messages").aggregate<{ _id: string; count: number }>([
-      { $match: { timestamp: { $gte: last24Hours } } },
+      { $match: { status: { $in: ["awaiting_human_confirmation", "awaiting_provider_confirmation", "provider_error"] } } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]).toArray(),
     database.collection("automation_jobs").aggregate<{ _id: string; count: number }>([
@@ -186,7 +186,9 @@ export async function getDashboardOverview(periodDays = 30) {
       averageCombinedFit: Math.round(average(currentQualifications.map((item) => item.combinedFit.score))),
     },
     paymentSummary: {
-      pendingCount: Number(paymentStatusCounts.awaiting_human_confirmation ?? 0),
+      pendingCount: Number(paymentStatusCounts.awaiting_human_confirmation ?? 0)
+        + Number(paymentStatusCounts.awaiting_provider_confirmation ?? 0)
+        + Number(paymentStatusCounts.provider_error ?? 0),
       paidCount: Number(paymentStatusCounts.paid ?? 0),
       rejectedCount: Number(paymentStatusCounts.rejected ?? 0),
       paidAmountCents: recentPayments

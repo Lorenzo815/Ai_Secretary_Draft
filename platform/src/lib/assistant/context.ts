@@ -2,6 +2,7 @@ import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { fetchWhatsAppImageDataUrl } from "../whatsapp/client";
 import { listWhatsAppMessagesForAssistant } from "../whatsapp/messages";
 
 interface ConversationStateDocument {
@@ -29,6 +30,19 @@ export async function loadAssistantContext(customerId: ObjectId, messageLimit: n
     undefined,
     messageLimit,
   );
+  const recentImages = messages
+    .filter((message) => message.direction === "inbound" && message.type === "image" && message.media?.id)
+    .slice(-2);
+  await Promise.all(recentImages.map(async (message) => {
+    try {
+      message.media!.dataUrl = await fetchWhatsAppImageDataUrl(message.media!.id);
+    } catch (error) {
+      console.error("WhatsApp image could not be loaded for the assistant", {
+        mediaId: message.media!.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }));
 
   return {
     summary: state?.summary ?? "Sem contexto anterior.",

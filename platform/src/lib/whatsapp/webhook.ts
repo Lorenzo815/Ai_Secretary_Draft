@@ -5,6 +5,7 @@ import { findOrCreateCustomerFromWhatsApp } from "../crm";
 import {
   ensureWhatsAppMessageIndexes,
   MessageStatus,
+  findWhatsAppMessageByMetaId,
   saveWhatsAppMessage,
   updateWhatsAppMessageStatus,
 } from "./messages";
@@ -22,9 +23,10 @@ interface WebhookMessage {
   text?: { body?: string };
   button?: { text?: string };
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
-  image?: { caption?: string };
-  video?: { caption?: string };
-  document?: { caption?: string; filename?: string };
+  context?: { id?: string; from?: string };
+  image?: { id?: string; mime_type?: string; sha256?: string; caption?: string };
+  video?: { id?: string; mime_type?: string; sha256?: string; caption?: string };
+  document?: { id?: string; mime_type?: string; sha256?: string; caption?: string; filename?: string };
   reaction?: { emoji?: string };
 }
 
@@ -64,6 +66,7 @@ export async function processWhatsAppWebhook(rawBody: string) {
   let receivedMessages = 0;
   let statusUpdates = 0;
   let coexistenceEvents = 0;
+  const processingCustomers = new Set<string>();
 
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -94,6 +97,10 @@ export async function processWhatsAppWebhook(rawBody: string) {
           name: contact?.profile?.name,
           interactionAt: timestamp,
         });
+        const referenced = message.context?.id
+          ? await findWhatsAppMessageByMetaId(message.context.id)
+          : null;
+        const media = getMessageMedia(message);
         const saved = await saveWhatsAppMessage({
           customerId: customer._id,
           metaMessageId: message.id,
@@ -102,16 +109,28 @@ export async function processWhatsAppWebhook(rawBody: string) {
           direction: "inbound",
           type: message.type ?? "unknown",
           body: getMessageBody(message),
+          ...(media ? { media } : {}),
+          ...(message.context?.id ? {
+            replyTo: {
+              metaMessageId: message.context.id,
+              ...(referenced ? {
+                body: referenced.body,
+                direction: referenced.direction,
+                type: referenced.type,
+              } : {}),
+            },
+          } : {}),
           status: "received",
           timestamp,
         });
         if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
           await cancelAutomationJob("customer_follow_up", customer._id);
-          await emitAutomationEvent({
+          const processes = await emitAutomationEvent({
             type: "message.received",
             customerId: customer._id,
             occurredAt: timestamp,
-          });
+          }, { immediate: true });
+          if (processes.includes("customer_agent")) processingCustomers.add(customer._id.toString());
         }
         receivedMessages += 1;
       }
@@ -125,7 +144,12 @@ export async function processWhatsAppWebhook(rawBody: string) {
     }
   }
 
-  return { receivedMessages, statusUpdates, coexistenceEvents };
+  return {
+    receivedMessages,
+    statusUpdates,
+    coexistenceEvents,
+    processingRequests: processingCustomers.size,
+  };
 }
 
 function getMessageBody(message: WebhookMessage) {
@@ -141,4 +165,16 @@ function getMessageBody(message: WebhookMessage) {
     message.reaction?.emoji ??
     `[${message.type ?? "mensagem"}]`
   );
+}
+
+function getMessageMedia(message: WebhookMessage) {
+  const media = message.image ?? message.video ?? message.document;
+  if (!media?.id) return null;
+  return {
+    id: media.id,
+    ...(media.mime_type ? { mimeType: media.mime_type } : {}),
+    ...(media.sha256 ? { sha256: media.sha256 } : {}),
+    ...(media.caption ? { caption: media.caption } : {}),
+    ...(message.document?.filename ? { filename: message.document.filename } : {}),
+  };
 }
