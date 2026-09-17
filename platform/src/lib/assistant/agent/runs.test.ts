@@ -39,28 +39,41 @@ describe("agent run checkpoints", () => {
     expect(fingerprintAgentToolRequest(redactedRequest)).toBe(fingerprint);
     const firstStep = createStep(firstRun._id, redactedRequest, {
       resultId: "first-result",
-      result: { ok: true },
+      result: successfulResult("customer.update_profile"),
       fingerprint,
       mutation: true,
       retryable: false,
     });
     const repeatedStep = createStep(secondRun._id, redactedRequest, {
       resultId: "latest-result",
-      result: { ok: true },
+      result: successfulResult("customer.update_profile"),
       fingerprint,
       retryable: false,
     });
     const retryableStep = createStep(secondRun._id, createProfileRequest("other"), {
       resultId: "invalid-result",
-      result: { ok: false },
+      result: failedResult("customer.update_profile"),
       retryable: true,
+    });
+    const historicalOperationalStep = createStep(secondRun._id, createProfileRequest("legacy"), {
+      resultId: "operational-result",
+      result: failedResult("customer.update_profile"),
+      retryable: false,
     });
 
     const checkpoint = buildAgentRunCheckpoint(
       [firstRun, secondRun],
-      [firstStep, repeatedStep, retryableStep],
+      [firstStep, repeatedStep, retryableStep, historicalOperationalStep],
     );
 
+
+function successfulResult(tool: string) {
+  return { executedTools: [tool], results: [{ ok: true }] };
+}
+
+function failedResult(tool: string) {
+  return { executedTools: [tool], results: [{ ok: false, type: "operational_error" }] };
+}
     expect(checkpoint.toolHistory).toHaveLength(1);
     expect(checkpoint.toolResultsByFingerprint.get(fingerprint)?.resultId).toBe("latest-result");
     expect(checkpoint).toMatchObject({ modelIterations: 4, toolExecutions: 2, mutationsExecuted: 1 });

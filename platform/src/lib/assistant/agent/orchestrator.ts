@@ -168,7 +168,9 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         const parsedResult = parseToolResult(execution.output);
         const historyEntry = { resultId, request: action, result: parsedResult };
         toolHistory.push(historyEntry);
-        if (!execution.retryable) checkpoint.toolResultsByFingerprint.set(fingerprint, historyEntry);
+        if (wasToolSuccessfullyExecuted(execution.output, action.toolCall.tool)) {
+          checkpoint.toolResultsByFingerprint.set(fingerprint, historyEntry);
+        }
         await recordAgentRunStep({
           runId: run._id,
           customerId: job.customerId,

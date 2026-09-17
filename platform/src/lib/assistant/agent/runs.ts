@@ -166,7 +166,11 @@ export function buildAgentRunCheckpoint(
 ): AgentRunCheckpoint {
   const recovered = new Map<string, AgentToolHistoryEntry>();
   for (const step of steps) {
-    if (step.action.type !== "tool_request" || !step.toolResult?.resultId || step.toolResult.retryable) continue;
+    if (
+      step.action.type !== "tool_request"
+      || !step.toolResult?.resultId
+      || !isSuccessfulPersistedToolResult(step.action.toolCall.tool, step.toolResult.result)
+    ) continue;
     const fingerprint = step.toolResult.fingerprint ?? fingerprintAgentToolRequest(step.action);
     recovered.set(fingerprint, {
       resultId: step.toolResult.resultId,
@@ -184,6 +188,19 @@ export function buildAgentRunCheckpoint(
     toolExecutions: Math.max(...runs.map((run) => run.toolExecutions), 0),
     mutationsExecuted: Math.max(recordedMutations, ...runs.map((run) => run.mutationsExecuted), 0),
   };
+}
+
+function isSuccessfulPersistedToolResult(tool: string, value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const envelope = value as { executedTools?: unknown; results?: unknown };
+  if (!Array.isArray(envelope.executedTools) || !Array.isArray(envelope.results)) return false;
+  const executedTools = envelope.executedTools;
+  const results = envelope.results;
+  return executedTools.some((executedTool, index) => {
+    const result = results[index];
+    return executedTool === tool
+      && Boolean(result && typeof result === "object" && (result as { ok?: unknown }).ok === true);
+  });
 }
 
 export function fingerprintAgentToolRequest(request: Extract<AgentAction, { type: "tool_request" }>) {
