@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { getAgentConfiguration } from "@/lib/assistant/agent";
 import { processNextAutomationJob } from "@/lib/automation";
 
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   if (!isAuthorized(request.headers.get("authorization"))) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
