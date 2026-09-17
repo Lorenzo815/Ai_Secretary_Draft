@@ -174,6 +174,7 @@ export interface AgentRunDocument {
   modelIterations: number;
   toolExecutions: number;
   mutationsExecuted: number;
+  resumedFromRunIds?: ObjectId[];
   finalDecision?: AssistantDecision;
   error?: string;
   startedAt: Date;
@@ -186,6 +187,12 @@ export interface AgentRunStepDocument {
   customerId: ObjectId;
   iteration: number;
   action: AgentAction;
-  toolResult?: unknown;
+  toolResult?: {
+    resultId: string;
+    result: unknown;
+    fingerprint?: string;
+    mutation?: boolean;
+    retryable?: boolean;
+  };
   createdAt: Date;
 }

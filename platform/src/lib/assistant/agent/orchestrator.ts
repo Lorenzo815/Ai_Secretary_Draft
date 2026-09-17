@@ -24,7 +24,13 @@ import { getGroundedToolReply, wasToolSuccessfullyExecuted } from "../tools/exec
 import { generateAgentAction } from "./model";
 import { getAgentConfiguration } from "./repository";
 import { buildAgentRuntimeContext } from "./runtime-context";
-import { finishAgentRun, recordAgentRunStep, startAgentRun } from "./runs";
+import {
+  fingerprintAgentToolRequest,
+  finishAgentRun,
+  loadAgentRunCheckpoint,
+  recordAgentRunStep,
+  startAgentRun,
+} from "./runs";
 import { executeAgentTool } from "./tool-policy";
 import { getAgentFinalMessage } from "./final-response";
 import type { AgentFinalResponse } from "./contracts";
@@ -76,11 +82,19 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
       followUpAttempt = eligibility.attempt;
     }
 
-    run = await startAgentRun({ customerId: job.customerId, jobRevision: job.revision, configuration });
-    const toolHistory: AgentToolHistoryEntry[] = [];
+    const checkpoint = await loadAgentRunCheckpoint({
+      customerId: job.customerId,
+      jobRevision: job.revision,
+      configHash: configuration.contentHash,
+    });
+    modelIterations = checkpoint.modelIterations;
+    toolExecutions = checkpoint.toolExecutions;
+    mutationsExecuted = checkpoint.mutationsExecuted;
+    run = await startAgentRun({ customerId: job.customerId, jobRevision: job.revision, configuration, checkpoint });
+    const toolHistory: AgentToolHistoryEntry[] = [...checkpoint.toolHistory];
     const invalidFingerprints = new Map<string, number>();
 
-    for (let iteration = 1; iteration <= configuration.loopPolicy.maxModelIterations; iteration += 1) {
+    for (let iteration = modelIterations + 1; iteration <= configuration.loopPolicy.maxModelIterations; iteration += 1) {
       if (!(await isAutomationJobCurrent(job._id, job.revision))) {
         await finishAgentRun({
           runId: run._id,
@@ -118,6 +132,22 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
       const action = generated.value;
 
       if (action.type === "tool_request") {
+        const fingerprint = fingerprintAgentToolRequest(action);
+        const checkpointedResult = checkpoint.toolResultsByFingerprint.get(fingerprint);
+        if (checkpointedResult) {
+          await recordAgentRunStep({
+            runId: run._id,
+            customerId: job.customerId,
+            iteration,
+            action,
+            toolResult: {
+              resultId: checkpointedResult.resultId,
+              result: checkpointedResult.result,
+              fingerprint,
+            },
+          });
+          continue;
+        }
         const activeOption = runtime.operations.activeSchedulingOption as { optionId?: string } | null;
         const execution = await executeAgentTool({
           request: action,
@@ -136,13 +166,21 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         if (execution.mutation) mutationsExecuted += 1;
         const resultId = new ObjectId().toHexString();
         const parsedResult = parseToolResult(execution.output);
-        toolHistory.push({ resultId, request: action, result: parsedResult });
+        const historyEntry = { resultId, request: action, result: parsedResult };
+        toolHistory.push(historyEntry);
+        if (!execution.retryable) checkpoint.toolResultsByFingerprint.set(fingerprint, historyEntry);
         await recordAgentRunStep({
           runId: run._id,
           customerId: job.customerId,
           iteration,
           action,
-          toolResult: { resultId, result: parsedResult },
+          toolResult: {
+            resultId,
+            result: parsedResult,
+            fingerprint,
+            mutation: execution.mutation,
+            retryable: execution.retryable,
+          },
         });
 
         const groundedReply = getGroundedToolReply(execution.output);
@@ -176,7 +214,6 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         }
 
         if (execution.retryable) {
-          const fingerprint = JSON.stringify(action.toolCall);
           const failures = (invalidFingerprints.get(fingerprint) ?? 0) + 1;
           invalidFingerprints.set(fingerprint, failures);
           if (failures > configuration.loopPolicy.maxRepeatedInvalidCalls) {
