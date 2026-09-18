@@ -71,3 +71,36 @@ describe("qualification source hash", () => {
     expect(saveCustomerLeadQualification).not.toHaveBeenCalled();
   });
 });
+
+describe("qualification conversation context", () => {
+  it("requests and sends at most the latest 50 messages", async () => {
+    const { ObjectId } = await import("mongodb");
+    const customerId = new ObjectId();
+    const messages = Array.from({ length: 55 }, (_, index) => ({
+      _id: new ObjectId(),
+      direction: index % 2 === 0 ? "inbound" : "outbound",
+      timestamp: new Date(2026, 0, 1, 0, index),
+      body: index === 54 ? "x".repeat(1_600) : `message-${index}`,
+    }));
+    findCustomerById.mockResolvedValue({});
+    getCustomerProfileSnapshot.mockReturnValue({ birthDate: null, profession: null, address: null });
+    getLeadQualificationConfiguration.mockResolvedValue({
+      enabled: true,
+      contentHash: "config-a",
+      prompt: "Analyze",
+      maxCompletionTokens: 4_096,
+    });
+    listWhatsAppMessagesForAssistant.mockResolvedValue(messages);
+    acquireQualificationLock.mockResolvedValue(vi.fn());
+    generateStructuredOutput.mockResolvedValue({ model: "test-model", value: {} });
+
+    await analyzeAndSaveCustomerLeadQualification(customerId);
+
+    expect(listWhatsAppMessagesForAssistant).toHaveBeenCalledWith(customerId, undefined, 50);
+    const request = generateStructuredOutput.mock.calls[0][0];
+    const input = JSON.parse(request.messages[2].content);
+    expect(input.conversation).toHaveLength(50);
+    expect(input.conversation[0].text).toBe("message-5");
+    expect(input.conversation[49].text).toHaveLength(1_500);
+  });
+});

@@ -18,6 +18,7 @@ import { buildQualificationSourceHash } from "./source-hash";
 
 const CLINIC_CITY = "Ponta Grossa/PR";
 const CLINIC_TIMEZONE = "America/Sao_Paulo";
+const QUALIFICATION_HISTORY_LIMIT = 50;
 export async function analyzeAndSaveCustomerLeadQualification(
   customerId: ObjectId,
   options: { force?: boolean } = {},
@@ -31,9 +32,9 @@ export async function analyzeAndSaveCustomerLeadQualification(
   const messages = await listWhatsAppMessagesForAssistant(
     customerId,
     undefined,
-    40,
+    QUALIFICATION_HISTORY_LIMIT,
   );
-  const conversation = messages.slice(-20).map((message) => ({
+  const conversation = messages.slice(-QUALIFICATION_HISTORY_LIMIT).map((message) => ({
     messageId: message._id.toString(),
     direction: message.direction,
     timestamp: message.timestamp.toISOString(),
