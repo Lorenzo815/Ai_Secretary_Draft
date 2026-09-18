@@ -126,30 +126,30 @@ export default function MarketingHome() {
           {active < 5 && <p className={styles.eyebrow}><span className={styles.chapterNumber}>{String(active + 1).padStart(2, "0")}</span>{["OPERAÇÃO CONVERSACIONAL", "TUDO COMEÇA COM UMA MENSAGEM", "AI HARNESS PROPRIETÁRIO", "DA INTENÇÃO AO RESULTADO", "AUTONOMIA COM LIMITES"][active]}</p>}
           {active === 0 && <article>
             <h1 className={styles.heroTitle}>Oria<span>.</span></h1>
-            <h2 className={styles.heroStatement}>Uma conversa.<br />Todo o próximo passo.</h2>
-            <p className={styles.body}>Seu WhatsApp, sua agenda e sua equipe, conectados por uma inteligência que não só responde. Conduz.</p>
-            <button className={styles.primaryButton} type="button" onClick={() => goToChapter(1)}>Conheça a Oria <ArrowRight /></button>
+            <h2 className={styles.heroStatement}>Cada mensagem pode<br />mover o seu negócio.</h2>
+            <p className={styles.body}>A Oria transforma conversas no WhatsApp em próximos passos: entende o cliente, organiza o contexto e conduz cada oportunidade até a ação certa.</p>
+            <button className={styles.primaryButton} type="button" onClick={() => goToChapter(1)}>Viver essa jornada <ArrowRight /></button>
             <div className={styles.trust}>
               <span className={styles.metaBrand}><Image src="/meta.svg" alt="" width={58} height={39} /><span>Meta</span></span>
               <strong>Verified<br />Technology Provider</strong>
             </div>
           </article>}
           {active === 1 && <article>
-            <h2>Ela escreve.<br /><em>A Oria conecta.</em></h2>
-            <p className={styles.body}>O pedido encontra o histórico certo. A equipe não precisa reconstruir a conversa a cada novo contato.</p>
+            <h2>Uma mensagem chega.<br /><em>Uma oportunidade começa.</em></h2>
+            <p className={styles.body}>Enquanto o cliente conta o que precisa, a Oria reúne histórico, preferências e dados do negócio. Ninguém precisa começar do zero.</p>
             <div className={styles.segmented} role="group" aria-label="Cenário da conversa">{scenarios.map((item, index) => <button type="button" key={item.label} aria-pressed={scenarioIndex === index} onClick={() => selectScenario(index)}><item.icon />{item.label}</button>)}</div>
             <blockquote className={styles.message} key={scenarioIndex}><MessageCircleMore /><span>{scenario.message}<small>Marina · cliente fictícia</small></span></blockquote>
             <button className={styles.textButton} type="button" onClick={() => goToChapter(2)}>Acompanhar a decisão <ArrowRight /></button>
           </article>}
           {active === 2 && <article>
-            <h2>Um modelo entende.<br /><em>O harness conduz.</em></h2>
-            <p className={styles.body}>Nossa tecnologia conecta contexto, modelos e ferramentas. O poder está em executar com regras, não em deixar a IA decidir tudo.</p>
+            <h2>A IA entende.<br /><em>A Oria conduz com segurança.</em></h2>
+            <p className={styles.body}>Nosso AI Harness transforma intenção em decisão confiável, conectando contexto, modelos e ferramentas sem entregar o controle do seu negócio à IA.</p>
             <div className={styles.layerOptions} role="group" aria-label="Camadas do AI Harness">{layers.map((item, index) => <button type="button" key={item.label} onClick={() => setLayerIndex(index)} aria-pressed={layerIndex === index}><span>0{index + 1}</span>{item.label}<ChevronRight /></button>)}</div>
             <p className={styles.footnote}>Harness desenvolvido pela Oria. Modelos de linguagem de terceiros, com rotas via Vercel ou Azure.</p>
           </article>}
           {active === 3 && <article>
-            <h2>{handoff ? <>Saber agir.<br /><em>E saber parar.</em></> : <>Não é uma promessa.<br /><em>É o próximo passo.</em></>}</h2>
-            <p className={styles.body}>{handoff ? "Quando a ação precisa de uma pessoa, o atendimento muda de estado. A IA para de conduzir e a equipe recebe o contexto." : "Uma opção de horário não é uma reserva. A Oria espera a escolha e o servidor revalida a agenda antes de confirmar."}</p>
+            <h2>{handoff ? <>Quando precisa de alguém,<br /><em>ela sabe chamar.</em></> : <>A conversa avança.<br /><em>O resultado acontece.</em></>}</h2>
+            <p className={styles.body}>{handoff ? "Quando a decisão precisa de uma pessoa, a Oria pausa e entrega o contexto completo à equipe. O cliente continua amparado." : "Da intenção ao horário confirmado: a Oria conduz o cliente, valida a disponibilidade e transforma a conversa em uma ação real."}</p>
             <div className={styles.segmented} role="group" aria-label="Testar outro resultado">{scenarios.map((item, index) => <button type="button" key={item.label} aria-pressed={scenarioIndex === index} onClick={() => selectScenario(index)}><item.icon />{item.label}</button>)}</div>
             {!handoff ? <div className={styles.booking}>
               <div className={styles.bookingHeading}><span>Sexta-feira</span><small>Horários ilustrativos</small></div>
@@ -158,8 +158,8 @@ export default function MarketingHome() {
             </div> : <div className={styles.handoffNote}><Handshake /><div><strong>{!calendarEnabled ? "Ferramenta de agenda desabilitada" : "Cancelamento exige a equipe"}</strong><p>Nenhum evento é excluído por esta simulação.</p></div></div>}
           </article>}
           {active === 4 && <article>
-            <h2>A inteligência é Oria.<br /><em>O controle é seu.</em></h2>
-            <p className={styles.body}>Defina o que pode acontecer. Acompanhe as exceções. Entenda o consumo por modelo e provedor.</p>
+            <h2>Mais autonomia para a operação.<br /><em>Mais controle para você.</em></h2>
+            <p className={styles.body}>Escolha o que a Oria pode fazer, acompanhe cada exceção e mantenha sua equipe no comando. Automação que cresce com confiança.</p>
             <div className={styles.segmented} role="group" aria-label="Controles da plataforma">
               <button type="button" aria-pressed={controlView === "rules"} onClick={() => setControlView("rules")}><SlidersHorizontal />Regras</button>
               <button type="button" aria-pressed={controlView === "team"} onClick={() => setControlView("team")}><Handshake />Equipe</button>
@@ -173,8 +173,10 @@ export default function MarketingHome() {
           </article>}
           {active === 5 && <article className={styles.finalInvitation}>
             <Image src="/oria-logo.png" alt="Oria" width={512} height={512} unoptimized className={styles.finalLogo} />
-            <h2 className={styles.finalTitle}>Vamos começar a sua<br />conversa com a Oria?</h2>
-            <Link className={styles.primaryButton} href="/login?callbackUrl=%2Fdashboard">Acessar a plataforma <ArrowRight /></Link>
+            <p className={styles.finalEyebrow}>SUA PRÓXIMA CONVERSA COMEÇA AGORA</p>
+            <h2 className={styles.finalTitle}>Pronto para transformar<br />mensagens em movimento?</h2>
+            <p className={styles.finalBody}>Entre na Oria e descubra uma operação que entende, conduz e entrega o próximo passo.</p>
+            <Link className={styles.primaryButton} href="/login?callbackUrl=%2Fdashboard">Entrar na Oria <ArrowRight /></Link>
             <div className={styles.finalTrust}>
               <span className={styles.metaBrand}><Image src="/meta.svg" alt="" width={58} height={39} /><span>Meta</span></span>
               <strong>Verified<br />Technology Provider</strong>
