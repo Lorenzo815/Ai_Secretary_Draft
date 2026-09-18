@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export function createOriaIcon(size: number) {
+export function createOriaIcon(size: number, background = "#0F766E") {
   const glyphSize = Math.round(size * 0.58);
   return new ImageResponse(
     (
@@ -11,7 +11,7 @@ export function createOriaIcon(size: number) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#0F766E",
+          background,
         }}
       >
         <svg width={glyphSize} height={glyphSize} viewBox="0 0 40 40" fill="none">

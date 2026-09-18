@@ -138,7 +138,7 @@ export default function Sidebar() {
     <>
       {/* ── Top bar (always visible when sidebar is closed) ── */}
       <header
-        className={`fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between border-b border-mist bg-[#F5EFE6] px-4 shadow-sm transition-opacity duration-200 ${
+        className={`app-mobile-header fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-mist bg-[#F5EFE6] shadow-sm transition-opacity duration-200 ${
           open && !isMobile ? "pointer-events-none opacity-0" : "opacity-100"
         }`}
       >
@@ -162,11 +162,11 @@ export default function Sidebar() {
       )}
 
       {isMobile ? (
-        <aside className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col bg-[#F5EFE6] shadow-xl transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "-translate-x-full"}`}>
+        <aside className={`app-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col bg-[#F5EFE6] shadow-xl transition-transform duration-300 ease-in-out ${open ? "translate-x-0" : "-translate-x-full"}`}>
           {sidebarInner}
         </aside>
       ) : (
-        <aside className={`relative z-20 flex h-screen shrink-0 flex-col overflow-hidden bg-[#F5EFE6] shadow-[1px_0_0_0_theme(colors.mist)] transition-[width,opacity] duration-300 ease-in-out ${open ? "w-[260px]" : "w-0"}`}>
+        <aside className={`relative z-20 flex h-full shrink-0 flex-col overflow-hidden bg-[#F5EFE6] shadow-[1px_0_0_0_theme(colors.mist)] transition-[width,opacity] duration-300 ease-in-out ${open ? "w-[260px]" : "w-0"}`}>
           <div className="flex h-full w-[260px] flex-col">{sidebarInner}</div>
         </aside>
       )}
