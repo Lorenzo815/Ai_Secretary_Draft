@@ -34,6 +34,7 @@ export const calendarToolDefinitions = {
     promptInstructions: `calendar.find_slots busca um evento (eventType) ou um plano (planKey), nunca ambos.
 - purpose=book busca um novo agendamento; purpose=reschedule busca uma nova opção para o único agendamento atual compatível identificado pelo servidor.
 - A busca é somente leitura. Quando o pedido e as preferências estiverem claros, execute-a imediatamente; não peça autorização para apenas consultar horários. Confirmação explícita é exigida somente antes de calendar.book ou calendar.reschedule.
+- Consulte horários mesmo que cadastro, pagamento ou outros pré-requisitos do plano ainda estejam pendentes. Esses pré-requisitos são obrigatórios para reservar, não para visualizar disponibilidade.
 - A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> disponibilidade semanal. Nunca informe, invente ou tente ampliar a janela de funcionamento.
 - Conflitos são calculados por recurso, não pela clínica inteira. Eventos de profissionais ou recursos diferentes podem ocorrer simultaneamente; confie nos candidatos retornados e não descarte um horário apenas porque há outro tipo de atendimento no mesmo momento.
 - period e preferredTime representam apenas preferências expressas pelo cliente e sempre ficam subordinados à configuração da agenda.

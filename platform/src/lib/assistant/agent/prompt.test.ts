@@ -70,18 +70,26 @@ describe("assistant commercial conduct", () => {
     expect(buildAgentDeveloperPrompt(configuration, false)).toContain("calendar.find_slots:");
   });
 
-  it("allows corrected retries with expanded execution budgets", () => {
+  it("allows corrected retries without artificial tool budgets", () => {
     const configuration = createDefaultAgentConfiguration();
     const prompt = buildAgentDeveloperPrompt(configuration, false);
 
     expect(configuration.loopPolicy).toEqual({
       maxModelIterations: 8,
-      maxToolExecutions: 6,
-      maxMutations: 4,
       maxRepeatedInvalidCalls: 2,
     });
     expect(prompt).toContain("use o erro retornado para corrigir os argumentos");
     expect(prompt).toContain("Nunca execute outro candidato como alternativa");
+  });
+
+  it("guides the ideal journey without blocking requested availability checks", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(prompt).toContain("JORNADA DO ATENDIMENTO:");
+    expect(prompt).toContain("completar os dados cadastrais necessários");
+    expect(prompt).toContain("consulte a disponibilidade real imediatamente");
+    expect(prompt).toContain("a reserva só será confirmada depois dos pré-requisitos");
   });
 
   it("grounds follow-ups in recent evidence without exposing internal analysis", () => {

@@ -104,6 +104,9 @@ ${configuration.offensePolicy}
 ENCAMINHAMENTO HUMANO:
 ${configuration.handoffPolicy}
 
+JORNADA DO ATENDIMENTO:
+${configuration.journeyPolicy}
+
 CONHECIMENTO AUTORIZADO:
 ${configuration.knowledge}
 
@@ -118,7 +121,7 @@ ${toolInstructions || "Nenhuma ferramenta habilitada."}
 
 REGRAS DE EXECUÇÃO:
 - recentMessages é a fonte autoritativa do diálogo. previousSummary é somente apoio.
-- runtime contém fontes autoritativas carregadas pelo servidor e os limites restantes deste job.
+- runtime contém fontes autoritativas carregadas pelo servidor e o estado atual deste job.
 - Antes de perguntar, verifique recentMessages, runtime e toolHistory. Nunca peça novamente algo que o cliente já informou explicitamente; se faltar apenas persistência, use a ferramenta adequada.
 - Não repita preços, benefícios, condições ou explicações já apresentados, exceto quando o cliente pedir, demonstrar dúvida ou precisar deles para decidir o próximo passo.
 - Faça uma solicitação de ferramenta por iteração. O resultado será acumulado em toolHistory.

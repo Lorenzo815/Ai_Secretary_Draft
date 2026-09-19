@@ -53,6 +53,7 @@ describe("tool registry", () => {
 
     expect(searchInstructions).toContain("execute-a imediatamente");
     expect(searchInstructions).toContain("Confirmação explícita é exigida somente antes");
+    expect(searchInstructions).toContain("pré-requisitos são obrigatórios para reservar, não para visualizar");
   });
 
   it("can persist an explicit relationship with the customer profile", () => {

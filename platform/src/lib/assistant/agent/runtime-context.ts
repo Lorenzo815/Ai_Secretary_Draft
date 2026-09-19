@@ -15,8 +15,6 @@ export async function buildAgentRuntimeContext(input: {
   followUpInstructions?: string;
   followUpAttempt?: number;
   iteration: number;
-  toolExecutions: number;
-  mutationsExecuted: number;
 }): Promise<AgentRuntimeContext> {
   const [calendarSettings, payment, activeSchedulingOption] = await Promise.all([
     getCalendarSettings(),
@@ -55,8 +53,6 @@ export async function buildAgentRuntimeContext(input: {
       trigger: input.trigger,
       iteration: input.iteration,
       remainingModelIterations: input.configuration.loopPolicy.maxModelIterations - input.iteration,
-      remainingToolExecutions: input.configuration.loopPolicy.maxToolExecutions - input.toolExecutions,
-      mutationsExecuted: input.mutationsExecuted,
     },
     followUp: input.trigger === "follow_up" ? {
       attempt: input.followUpAttempt ?? 1,

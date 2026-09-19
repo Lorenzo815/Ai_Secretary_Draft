@@ -266,23 +266,6 @@ function buildAudit(data) {
         limit: limits.maxModelIterations,
       });
     }
-    if (limits && run.toolExecutions > limits.maxToolExecutions) {
-      addIssue(issues, "error", "tool_execution_limit_exceeded", "Execução excedeu o limite de tools.", {
-        customerId,
-        runId,
-        actual: run.toolExecutions,
-        limit: limits.maxToolExecutions,
-      });
-    }
-    if (limits && run.mutationsExecuted > limits.maxMutations) {
-      addIssue(issues, "error", "mutation_limit_exceeded", "Execução excedeu o limite de mutações.", {
-        customerId,
-        runId,
-        actual: run.mutationsExecuted,
-        limit: limits.maxMutations,
-      });
-    }
-
     const toolNames = steps.flatMap((step) => step.action?.type === "tool_request" ? [step.action.toolCall?.tool] : []);
     const bookingIndex = toolNames.indexOf("calendar.book_plan_option");
     const updateIndex = toolNames.indexOf("calendar.update_appointment");

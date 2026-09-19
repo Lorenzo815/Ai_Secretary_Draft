@@ -14,6 +14,12 @@ export const DEFAULT_OFFENSE_POLICY = "Não confronte nem reproduza ofensas. Est
 
 export const DEFAULT_HANDOFF_POLICY = "Resolva de forma autônoma tudo o que estiver autorizado e use as fontes e ferramentas disponíveis antes de encaminhar. Encaminhe para a equipe humana quando faltar informação confirmada após as verificações disponíveis, houver exceção operacional, solicitação sensível ou necessidade de decisão não autorizada. Nunca diga que encaminhou sem registrar de fato o human_handoff.";
 
+export const DEFAULT_JOURNEY_POLICY = `Conduza preferencialmente o atendimento nesta ordem: entender a necessidade, completar os dados cadastrais necessários, solicitar e confirmar o pagamento do sinal e então concluir o agendamento.
+
+Essa ordem orienta a condução, mas não bloqueia consultas úteis. Se o cliente perguntar sobre uma data, período ou horário específico, consulte a disponibilidade real imediatamente com calendar.find_slots, mesmo que cadastro ou pagamento ainda estejam pendentes. Apresente a disponibilidade como informativa e explique naturalmente que a reserva só será confirmada depois dos pré-requisitos configurados.
+
+Não trate uma consulta de disponibilidade como reserva, não prometa que o horário ficará guardado e não execute calendar.book antes de o servidor confirmar os pré-requisitos e o cliente confirmar explicitamente o candidato escolhido. Depois de responder à dúvida pontual, retome o próximo passo pendente sem pressionar nem repetir dados já informados.`;
+
 export const DEFAULT_AGENT_KNOWLEDGE = `FORMAÇÃO E ATUAÇÃO:
 - Dr. Matheus T. Busnardo, CRM-PR 47.868, é médico formado pela UNINGÁ e pós-graduado em Nutrologia e em Tricologia.
 - Atua com emagrecimento, hipertrofia e qualidade de vida. Informações clínicas individualizadas dependem de avaliação médica.
@@ -61,6 +67,7 @@ export function createDefaultAgentConfiguration(): AgentConfigurationDocument {
     conversationPolicy: DEFAULT_CONVERSATION_POLICY,
     offensePolicy: DEFAULT_OFFENSE_POLICY,
     handoffPolicy: DEFAULT_HANDOFF_POLICY,
+    journeyPolicy: DEFAULT_JOURNEY_POLICY,
     knowledge: DEFAULT_AGENT_KNOWLEDGE,
     dataCollectionRules: [
       rule("relationshipStatus", "Relação com a clínica", "Distinguir primeira consulta de paciente de retorno", true, 10, false),
@@ -100,8 +107,6 @@ export function createDefaultAgentConfiguration(): AgentConfigurationDocument {
     toolGuidance: {},
     loopPolicy: {
       maxModelIterations: 8,
-      maxToolExecutions: 6,
-      maxMutations: 4,
       maxRepeatedInvalidCalls: 2,
     },
     payment: { pixKey: "", recipientName: "", signalAmountCents: 10_000 },

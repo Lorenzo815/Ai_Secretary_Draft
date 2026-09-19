@@ -80,10 +80,6 @@ async function executeCalendarAction(input: {
     if (validation.length > 0) return validationError("calendar.find_slots", validation);
     const plan = resolveSchedulingPlan(input.action, input.configuration, settings);
     if (!plan) return validationError("calendar.find_slots", [invalid("arguments", "Informe eventType ou planKey habilitado, mas não ambos.")]);
-    if (!plan.key.startsWith("event:")) {
-      const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, input.configuration, "calendar.find_slots");
-      if (prerequisiteError) return prerequisiteError;
-    }
     const targetAppointmentIds = input.action.purpose === "reschedule"
       ? await resolveRescheduleTargets(input.customerId, plan, settings.timezone)
       : [];

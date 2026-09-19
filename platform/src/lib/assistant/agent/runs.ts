@@ -101,6 +101,7 @@ function createConfigurationSnapshot(configuration: AgentConfigurationDocument):
     conversationPolicy: configuration.conversationPolicy,
     offensePolicy: configuration.offensePolicy,
     handoffPolicy: configuration.handoffPolicy,
+    journeyPolicy: configuration.journeyPolicy,
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,
     schedulingPlans: configuration.schedulingPlans,

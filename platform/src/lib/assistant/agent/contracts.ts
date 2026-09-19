@@ -48,8 +48,6 @@ export interface SchedulingPlan {
 
 export interface AgentLoopPolicy {
   maxModelIterations: number;
-  maxToolExecutions: number;
-  maxMutations: number;
   maxRepeatedInvalidCalls: number;
 }
 
@@ -62,6 +60,7 @@ export interface AgentConfigurationDocument {
   conversationPolicy: string;
   offensePolicy: string;
   handoffPolicy: string;
+  journeyPolicy: string;
   knowledge: string;
   dataCollectionRules: DataCollectionRule[];
   schedulingPlans: SchedulingPlan[];
@@ -103,8 +102,6 @@ export interface AgentRuntimeContext {
     trigger: "inbound_message" | "follow_up";
     iteration: number;
     remainingModelIterations: number;
-    remainingToolExecutions: number;
-    mutationsExecuted: number;
   };
   followUp: {
     attempt: number;

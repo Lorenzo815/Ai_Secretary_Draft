@@ -9,7 +9,7 @@ export async function executeToolCalls(input: {
   allowedTools: AssistantToolKey[];
   context: ToolExecutionContext;
 }): Promise<ToolExecution | null> {
-  const calls = input.calls.slice(0, 2);
+  const calls = input.calls;
   const mutationIndexes = calls.flatMap((call, index) => (
     isAssistantToolKey(call.tool) && getToolDefinition(call.tool).mutates ? [index] : []
   ));

@@ -5,7 +5,7 @@ import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument } from "./contracts";
-import { createDefaultAgentConfiguration } from "./defaults";
+import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY } from "./defaults";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
@@ -21,15 +21,21 @@ export async function getAgentConfiguration() {
   if (existing) {
     const enabledTools = migrateLegacyToolKeys(existing.enabledTools);
     const toolGuidance = normalizeToolGuidance(existing.toolGuidance);
+    const journeyPolicy = normalizeJourneyPolicy(existing.journeyPolicy);
+    const loopPolicy = normalizeLoopPolicy(existing.loopPolicy);
     if (
       enabledTools.join("|") === existing.enabledTools.join("|") &&
       existing.toolGuidance !== undefined &&
-      JSON.stringify(toolGuidance) === JSON.stringify(existing.toolGuidance)
+      JSON.stringify(toolGuidance) === JSON.stringify(existing.toolGuidance) &&
+      journeyPolicy === existing.journeyPolicy &&
+      JSON.stringify(loopPolicy) === JSON.stringify(existing.loopPolicy)
     ) return existing;
     const migrated = withContentHash({
       ...existing,
       enabledTools,
       toolGuidance,
+      journeyPolicy,
+      loopPolicy,
       revision: existing.revision + 1,
       contentHash: "",
       updatedAt: new Date(),
@@ -39,7 +45,13 @@ export async function getAgentConfiguration() {
     if (result.matchedCount > 0) return migrated;
     const concurrent = await collection.findOne({ _id: "active" });
     return concurrent
-      ? { ...concurrent, enabledTools: migrateLegacyToolKeys(concurrent.enabledTools), toolGuidance: normalizeToolGuidance(concurrent.toolGuidance) }
+      ? {
+          ...concurrent,
+          enabledTools: migrateLegacyToolKeys(concurrent.enabledTools),
+          toolGuidance: normalizeToolGuidance(concurrent.toolGuidance),
+          journeyPolicy: normalizeJourneyPolicy(concurrent.journeyPolicy),
+          loopPolicy: normalizeLoopPolicy(concurrent.loopPolicy),
+        }
       : migrated;
   }
 
@@ -118,6 +130,7 @@ function withoutMetadata(document: AgentConfigurationDocument) {
     conversationPolicy: document.conversationPolicy,
     offensePolicy: document.offensePolicy,
     handoffPolicy: document.handoffPolicy,
+    journeyPolicy: document.journeyPolicy,
     knowledge: document.knowledge,
     dataCollectionRules: document.dataCollectionRules,
     schedulingPlans: document.schedulingPlans,
@@ -141,6 +154,9 @@ function validateConfiguration(
 ) {
   if (!configuration.identityPrompt.trim() || !configuration.conversationPolicy.trim()) {
     throw new Error("Identidade e política de conversa são obrigatórias.");
+  }
+  if (!configuration.journeyPolicy.trim() || configuration.journeyPolicy.length > 8_000) {
+    throw new Error("A política da jornada deve ter entre 1 e 8.000 caracteres.");
   }
   if (!configuration.enabledTools.every(isAssistantToolKey)) {
     throw new Error("A configuração contém uma ferramenta desconhecida.");
@@ -173,8 +189,6 @@ function validateConfiguration(
   const loop = configuration.loopPolicy;
   if (
     !Number.isInteger(loop.maxModelIterations) || loop.maxModelIterations < 2 || loop.maxModelIterations > 10 ||
-    !Number.isInteger(loop.maxToolExecutions) || loop.maxToolExecutions < 1 || loop.maxToolExecutions > 8 ||
-    !Number.isInteger(loop.maxMutations) || loop.maxMutations < 0 || loop.maxMutations > 4 ||
     !Number.isInteger(loop.maxRepeatedInvalidCalls) || loop.maxRepeatedInvalidCalls < 0 || loop.maxRepeatedInvalidCalls > 3
   ) {
     throw new Error("Limites do loop do agente são inválidos.");
@@ -182,6 +196,17 @@ function validateConfiguration(
   if (!Number.isInteger(configuration.payment.signalAmountCents) || configuration.payment.signalAmountCents < 100 || configuration.payment.signalAmountCents > 1_000_000) {
     throw new Error("O valor do sinal deve estar entre R$ 1,00 e R$ 10.000,00.");
   }
+}
+
+function normalizeJourneyPolicy(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : DEFAULT_JOURNEY_POLICY;
+}
+
+function normalizeLoopPolicy(value: AgentConfigurationDocument["loopPolicy"]) {
+  return {
+    maxModelIterations: value.maxModelIterations,
+    maxRepeatedInvalidCalls: value.maxRepeatedInvalidCalls,
+  };
 }
 
 function migrateLegacyToolKeys(keys: readonly string[]) {

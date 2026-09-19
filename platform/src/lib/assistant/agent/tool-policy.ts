@@ -9,20 +9,12 @@ export async function executeAgentTool(input: {
   request: AgentToolRequest;
   configuration: AgentConfigurationDocument;
   context: Omit<ToolExecutionContext, "configuration">;
-  toolExecutions: number;
-  mutationsExecuted: number;
 }) {
   const key = input.request.toolCall.tool;
   if (!isAssistantToolKey(key) || !input.configuration.enabledTools.includes(key)) {
     return denied("tool_not_enabled", "Esta ferramenta não está habilitada na configuração ativa.");
   }
-  if (input.toolExecutions >= input.configuration.loopPolicy.maxToolExecutions) {
-    return denied("tool_budget_exhausted", "O limite de ferramentas deste atendimento foi atingido.");
-  }
   const mutation = getToolDefinition(key).mutates;
-  if (mutation && input.mutationsExecuted >= input.configuration.loopPolicy.maxMutations) {
-    return denied("mutation_budget_exhausted", "O limite de alterações deste atendimento foi atingido.");
-  }
   const execution = await executeToolCalls({
     calls: [input.request.toolCall],
     allowedTools: input.configuration.enabledTools,

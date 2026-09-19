@@ -116,8 +116,6 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         followUpInstructions,
         followUpAttempt,
         iteration,
-        toolExecutions,
-        mutationsExecuted,
       });
       const generated = await generateAgentAction({
         customerId: job.customerId,
@@ -159,8 +157,6 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
             activeSchedulingOptionId: activeOption?.optionId,
             isMutationAllowed: () => isAutomationJobCurrent(job._id, job.revision),
           },
-          toolExecutions,
-          mutationsExecuted,
         });
         toolExecutions += 1;
         if (execution.mutation) mutationsExecuted += 1;
