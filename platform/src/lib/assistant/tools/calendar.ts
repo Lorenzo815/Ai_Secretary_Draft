@@ -121,7 +121,7 @@ async function executeCalendarAction(input: {
           timezone: result.settings.timezone,
           range: { fromDate: input.action.fromDate, toDate: globalToDate },
           appliedCriteria,
-          configuredWindowsSource: "event_type_resource_weekly_availability",
+          configuredWindowsSource: "weekly_availability_intersected_with_permissions_minus_blockers_and_appointments",
           candidates: result.options.map((option) => serializeCandidate(option, plan)),
         }),
         retryable: false,

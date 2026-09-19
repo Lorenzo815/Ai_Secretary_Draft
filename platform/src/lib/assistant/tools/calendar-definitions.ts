@@ -5,7 +5,7 @@ const nullableString = { type: ["string", "null"] };
 export const calendarToolDefinitions = {
   "calendar.find_slots": defineTool({
     label: "Buscar horários",
-    description: "Encontra opções para um evento ou plano usando as janelas configuradas de cada recurso.",
+    description: "Encontra opções para um evento ou plano usando expediente, permissões, bloqueios e ocupações de cada recurso.",
     mutates: false,
     argumentsSchema: strictArguments(["purpose", "eventType", "planKey", "dateIntent", "fromDate", "horizonDays", "period", "preferredTime", "ranking", "candidateCount", "stepCriteria"], {
       purpose: { type: "string", enum: ["book", "reschedule"] },
@@ -35,7 +35,8 @@ export const calendarToolDefinitions = {
 - purpose=book busca um novo agendamento; purpose=reschedule busca uma nova opção para o único agendamento atual compatível identificado pelo servidor.
 - A busca é somente leitura. Quando o pedido e as preferências estiverem claros, execute-a imediatamente; não peça autorização para apenas consultar horários. Confirmação explícita é exigida somente antes de calendar.book ou calendar.reschedule.
 - Consulte horários mesmo que cadastro, pagamento ou outros pré-requisitos do plano ainda estejam pendentes. Esses pré-requisitos são obrigatórios para reservar, não para visualizar disponibilidade.
-- A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> disponibilidade semanal. Nunca informe, invente ou tente ampliar a janela de funcionamento.
+- A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> expediente semanal intersectado com uma permissão aplicável, menos bloqueios e agendamentos existentes. Uma permissão não amplia o expediente semanal; qualquer bloqueio aplicável prevalece. Nunca informe, invente ou tente ampliar uma janela retornada.
+- Permissões e bloqueios podem valer para todos os profissionais ou somente para recursos selecionados. Confie exclusivamente nos candidatos retornados pelo servidor.
 - Conflitos são calculados por recurso, não pela clínica inteira. Eventos de profissionais ou recursos diferentes podem ocorrer simultaneamente; confie nos candidatos retornados e não descarte um horário apenas porque há outro tipo de atendimento no mesmo momento.
 - period e preferredTime representam apenas preferências expressas pelo cliente e sempre ficam subordinados à configuração da agenda.
 - Use horizonDays=1 para exact_date. Para next_available, escolha livremente um horizonte de 1 a 60 dias proporcional ao pedido; o servidor calcula a data final, portanto não calcule toDate.

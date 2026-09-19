@@ -4,6 +4,7 @@ import { Collection, MongoServerError, ObjectId } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
+import { isSlotAllowedByAccessEvents } from "./access-policy";
 
 export interface WeeklyAvailability {
   weekday: number;
@@ -52,6 +53,17 @@ export interface AppointmentDocument {
   visitGroupId?: ObjectId;
   notes?: string;
   source: "assistant" | "manual";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CalendarAccessEventDocument {
+  _id: ObjectId;
+  type: "permission" | "blocker";
+  title: string;
+  startAt: Date;
+  endAt: Date;
+  resourceIds: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -120,6 +132,11 @@ async function getSettingsCollection(): Promise<Collection<CalendarSettingsDocum
 async function getAppointmentsCollection(): Promise<Collection<AppointmentDocument>> {
   const client = await clientPromise;
   return client.db(DB_NAME).collection<AppointmentDocument>("calendar_appointments");
+}
+
+async function getAccessEventsCollection(): Promise<Collection<CalendarAccessEventDocument>> {
+  const client = await clientPromise;
+  return client.db(DB_NAME).collection<CalendarAccessEventDocument>("calendar_access_events");
 }
 
 export async function getCalendarSettings() {
@@ -199,6 +216,71 @@ export async function listAppointments(from: Date, to: Date) {
     .toArray();
 }
 
+export async function listCalendarAccessEvents(from?: Date, to?: Date) {
+  const filter = from && to
+    ? { startAt: { $lt: to }, endAt: { $gt: from } }
+    : {};
+  return (await getAccessEventsCollection())
+    .find(filter)
+    .sort({ startAt: 1 })
+    .toArray();
+}
+
+export async function createCalendarAccessEvent(input: {
+  type: "permission" | "blocker";
+  title: string;
+  startAt: string;
+  endAt: string;
+  resourceIds: string[];
+}) {
+  const settings = await getCalendarSettings();
+  if (input.type !== "permission" && input.type !== "blocker") {
+    throw new Error("Tipo de regra de agenda inválido.");
+  }
+  const startAt = DateTime.fromISO(input.startAt, { zone: settings.timezone, setZone: true });
+  const endAt = DateTime.fromISO(input.endAt, { zone: settings.timezone, setZone: true });
+  if (!startAt.isValid || !endAt.isValid || endAt <= startAt) {
+    throw new Error("Informe um intervalo válido com término posterior ao início.");
+  }
+  const validResourceIds = new Set(settings.resources.map((resource) => resource.id));
+  const resourceIds = [...new Set(input.resourceIds)];
+  if (resourceIds.some((resourceId) => !validResourceIds.has(resourceId))) {
+    throw new Error("A regra aponta para um profissional inexistente.");
+  }
+  if (input.type === "blocker") {
+    const conflict = await (await getAppointmentsCollection()).findOne({
+      status: "scheduled",
+      ...(resourceIds.length > 0 ? { providerId: { $in: resourceIds } } : {}),
+      startAt: { $lt: endAt.toUTC().toJSDate() },
+      endAt: { $gt: startAt.toUTC().toJSDate() },
+    });
+    if (conflict) {
+      throw new Error("Este bloqueio conflita com um agendamento existente. Reagende ou cancele o evento antes de bloquear.");
+    }
+  }
+  const now = new Date();
+  const event: CalendarAccessEventDocument = {
+    _id: new ObjectId(),
+    type: input.type,
+    title: input.title.trim().slice(0, 120) || (input.type === "permission" ? "Atendimento permitido" : "Agenda bloqueada"),
+    startAt: startAt.toUTC().toJSDate(),
+    endAt: endAt.toUTC().toJSDate(),
+    resourceIds,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await ensureCalendarIndexes();
+  await (await getAccessEventsCollection()).insertOne(event);
+  return event;
+}
+
+export async function deleteCalendarAccessEvent(id: string) {
+  if (!ObjectId.isValid(id)) throw new Error("Regra de agenda inválida.");
+  const result = await (await getAccessEventsCollection()).findOneAndDelete({ _id: new ObjectId(id) });
+  if (!result) throw new Error("Regra de agenda não encontrada.");
+  return result;
+}
+
 export async function hasFutureScheduledAppointment(customerId: ObjectId, now = new Date()) {
   return Boolean(await (await getAppointmentsCollection()).findOne({
     customerId,
@@ -259,7 +341,10 @@ export async function findAvailableSlots(input: {
   }
 
   const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];
-  const appointments = await listAppointments(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate());
+  const [appointments, accessEvents] = await Promise.all([
+    listAppointments(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate()),
+    listCalendarAccessEvents(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate()),
+  ]);
   const excludedAppointmentIds = input.excludeAppointmentIds ?? (input.excludeAppointmentId ? [input.excludeAppointmentId] : []);
   const occupied = appointments
     .filter((appointment) => (
@@ -294,7 +379,13 @@ export async function findAvailableSlots(input: {
             ? cursor.hour >= 12
             : true;
         const timeMatches = !input.startTime || cursor.toFormat("HH:mm") === input.startTime;
-        if (cursor >= earliest && periodMatches && timeMatches && !occupied.some((item) => item.overlaps(slotInterval))) {
+        const accessAllowed = isSlotAllowedByAccessEvents(
+          accessEvents,
+          eventType.resourceId,
+          slotInterval.start!.toJSDate(),
+          slotInterval.end!.toJSDate(),
+        );
+        if (cursor >= earliest && periodMatches && timeMatches && accessAllowed && !occupied.some((item) => item.overlaps(slotInterval))) {
           const previousBoundary = occupied
             .filter((item) => item.end && item.end <= cursor.toUTC())
             .reduce((latest, item) => item.end! > latest ? item.end! : latest, cursor.startOf("day").toUTC());
@@ -349,12 +440,23 @@ export async function bookManualAppointment(input: PersistAppointmentInput) {
   if (!requested.isValid) throw new Error("Data do agendamento inválida.");
   const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];
   if (!eventType) throw new Error("Tipo de evento inválido.");
+  const available = await findAvailableSlots({
+    fromDate: requested.toISODate()!,
+    toDate: requested.toISODate()!,
+    eventType: eventType.key,
+    startTime: requested.toFormat("HH:mm"),
+    limit: 50,
+  });
+  const slot = available.slots.find((item) => (
+    DateTime.fromISO(item.startAt).toUTC().toMillis() === requested.toUTC().toMillis()
+  ));
+  if (!slot) throw new Error("O horário está fora das permissões ou conflita com um bloqueio ou agendamento.");
 
   const appointment = await persistAppointment(
     input,
     settings,
-    requested.toUTC(),
-    requested.plus({ minutes: eventType.durationMinutes }).toUTC(),
+    DateTime.fromISO(slot.startAt).toUTC(),
+    DateTime.fromISO(slot.endAt).toUTC(),
   );
   if (input.customerId) {
     await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.createdAt);
@@ -562,6 +664,7 @@ export async function getCustomerCalendarOverview(customerId: ObjectId) {
 
 export async function ensureCalendarIndexes() {
   const appointments = await getAppointmentsCollection();
+  const accessEvents = await getAccessEventsCollection();
   const indexes = await appointments.indexes().catch((error) => {
     if (error instanceof MongoServerError && error.code === 26) return [];
     throw error;
@@ -585,6 +688,8 @@ export async function ensureCalendarIndexes() {
       { unique: true, partialFilterExpression: { status: "scheduled" } },
     ),
     appointments.createIndex({ customerId: 1, startAt: -1 }),
+    accessEvents.createIndex({ startAt: 1, endAt: 1 }),
+    accessEvents.createIndex({ resourceIds: 1, startAt: 1 }),
   ]);
 }
 

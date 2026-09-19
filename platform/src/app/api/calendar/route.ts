@@ -6,6 +6,7 @@ import {
   bookManualAppointment,
   findAvailableSlots,
   getCalendarSettings,
+  listCalendarAccessEvents,
   listAppointments,
   updateCalendarSettings,
   WeeklyAvailability,
@@ -47,8 +48,11 @@ export async function GET(request: NextRequest) {
       if (!from.isValid || !to.isValid || to.diff(from, "days").days !== 7) {
         return NextResponse.json({ error: "Informe uma semana válida de domingo a sábado." }, { status: 400 });
       }
-      const appointments = await listAppointments(from.toUTC().toJSDate(), to.toUTC().toJSDate());
-      return NextResponse.json({ appointments });
+      const [appointments, accessEvents] = await Promise.all([
+        listAppointments(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
+        listCalendarAccessEvents(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
+      ]);
+      return NextResponse.json({ appointments, accessEvents });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Falha ao carregar a semana." },
@@ -59,13 +63,15 @@ export async function GET(request: NextRequest) {
   const now = DateTime.now().setZone(settings.timezone);
   const from = now.startOf("day").toUTC().toJSDate();
   const to = now.plus({ days: 60 }).endOf("day").toUTC().toJSDate();
-  const [appointments, customers] = await Promise.all([
+  const [appointments, accessEvents, customers] = await Promise.all([
     listAppointments(from, to),
+    listCalendarAccessEvents(),
     listCustomers(),
   ]);
   return NextResponse.json({
     settings,
     appointments,
+    accessEvents,
     customers: customers.map((customer) => ({
       id: customer._id.toString(),
       name: customer.name,

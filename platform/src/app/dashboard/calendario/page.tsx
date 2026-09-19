@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarPlus, Plus, RefreshCw, Settings2, Trash2, X } from "lucide-react";
+import { Ban, CalendarPlus, Plus, RefreshCw, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import WeekCalendar from "./_components/week-calendar";
 
 interface DayAvailability {
@@ -45,6 +45,15 @@ interface Appointment {
   notes?: string;
 }
 
+interface CalendarAccessEvent {
+  _id: string;
+  type: "permission" | "blocker";
+  title: string;
+  startAt: string;
+  endAt: string;
+  resourceIds: string[];
+}
+
 interface CustomerOption { id: string; name: string; phone: string }
 type CalendarEventType = string;
 
@@ -52,6 +61,7 @@ const dayNames = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "
 export default function CalendarPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [accessEvents, setAccessEvents] = useState<CalendarAccessEvent[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customerId, setCustomerId] = useState("");
   const [date, setDate] = useState("");
@@ -63,10 +73,18 @@ export default function CalendarPage() {
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessType, setAccessType] = useState<"permission" | "blocker">("permission");
+  const [accessTitle, setAccessTitle] = useState("");
+  const [accessStartDate, setAccessStartDate] = useState("");
+  const [accessStartTime, setAccessStartTime] = useState("08:00");
+  const [accessEndDate, setAccessEndDate] = useState("");
+  const [accessEndTime, setAccessEndTime] = useState("18:00");
+  const [accessResourceIds, setAccessResourceIds] = useState<string[]>([]);
   const [activeResourceId, setActiveResourceId] = useState("doctor");
   const backgroundRefreshInFlight = useRef(false);
   const interactionBlocked = useRef(false);
-  interactionBlocked.current = busy || settingsOpen || eventOpen;
+  interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen;
 
   async function refreshCalendar(successMessage?: string) {
     setBusy(true);
@@ -74,6 +92,7 @@ export default function CalendarPage() {
       const data = await requestCalendarData();
       setSettings(data.settings);
       setAppointments(data.appointments ?? []);
+      setAccessEvents(data.accessEvents ?? []);
       setCustomers(data.customers ?? []);
       setCustomerId((current) => current || data.customers?.[0]?.id || "");
       setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
@@ -93,6 +112,7 @@ export default function CalendarPage() {
         if (!active) return;
         setSettings(data.settings);
         setAppointments(data.appointments ?? []);
+        setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
         setCustomerId(data.customers?.[0]?.id ?? "");
         setEventType(data.settings.eventTypes[0]?.key ?? "");
@@ -120,6 +140,7 @@ export default function CalendarPage() {
         if (!active || document.visibilityState !== "visible" || interactionBlocked.current) return;
         setSettings(data.settings);
         setAppointments(data.appointments ?? []);
+        setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
         setCustomerId((current) => current || data.customers?.[0]?.id || "");
         setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
@@ -198,6 +219,71 @@ export default function CalendarPage() {
       setFeedback(data.error ?? "Não foi possível cancelar.");
     }
     setBusy(false);
+  }
+
+  function openAccessEvent(type: "permission" | "blocker") {
+      const today = new Date().toISOString().slice(0, 10);
+      setAccessType(type);
+      setAccessTitle("");
+      setAccessStartDate(today);
+      setAccessEndDate(today);
+      setAccessStartTime(type === "permission" ? "08:00" : "12:00");
+      setAccessEndTime(type === "permission" ? "18:00" : "13:00");
+      setAccessResourceIds([]);
+      setFeedback("");
+      setAccessOpen(true);
+    }
+
+    function toggleAccessResource(resourceId: string) {
+      setAccessResourceIds((current) => (
+        current.includes(resourceId)
+          ? current.filter((id) => id !== resourceId)
+          : [...current, resourceId]
+      ));
+    }
+
+    async function createAccessEvent() {
+      if (!accessStartDate || !accessEndDate || !accessStartTime || !accessEndTime) return;
+      setBusy(true);
+      setFeedback("");
+      try {
+        const response = await fetch("/api/calendar/access-events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: accessType,
+            title: accessTitle,
+            startAt: `${accessStartDate}T${accessStartTime}`,
+            endAt: `${accessEndDate}T${accessEndTime}`,
+            resourceIds: accessResourceIds,
+          }),
+        });
+        const data = await response.json() as { accessEvent?: CalendarAccessEvent; error?: string };
+        if (!response.ok || !data.accessEvent) {
+          throw new Error(data.error ?? "Não foi possível criar a regra.");
+        }
+        setAccessOpen(false);
+        await refreshCalendar(accessType === "permission" ? "Permissão adicionada." : "Bloqueio adicionado.");
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "Não foi possível criar a regra.");
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function removeAccessEvent(id: string) {
+      setBusy(true);
+      setFeedback("");
+      try {
+        const response = await fetch(`/api/calendar/access-events/${id}`, { method: "DELETE" });
+        const data = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(data.error ?? "Não foi possível remover a regra.");
+        await refreshCalendar("Regra removida.");
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : "Não foi possível remover a regra.");
+      } finally {
+        setBusy(false);
+      }
   }
 
   function updateDay(weekday: number, patch: Partial<DayAvailability>) {
@@ -302,13 +388,74 @@ export default function CalendarPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => refreshCalendar()} disabled={busy} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-mist bg-white px-3 text-sm font-semibold text-slate-ink hover:border-deep-teal/40 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} />Atualizar</button>
+            <button type="button" onClick={() => openAccessEvent("permission")} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal px-3 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5"><ShieldCheck className="h-4 w-4" />Permitir horários</button>
+            <button type="button" onClick={() => openAccessEvent("blocker")} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-burnt-coral/40 px-3 text-sm font-semibold text-burnt-coral hover:bg-burnt-coral/5"><Ban className="h-4 w-4" />Bloquear período</button>
             <button type="button" onClick={() => openCreateEvent()} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal px-3 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5"><CalendarPlus className="h-4 w-4" />Novo evento</button>
             <button type="button" onClick={() => setSettingsOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-deep-teal px-3 text-sm font-semibold text-white hover:bg-forest-teal"><Settings2 className="h-4 w-4" />Configurar agenda</button>
           </div>
         </div>
       </header>
 
+      <section aria-labelledby="access-events-title">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase text-deep-teal">Permissões e bloqueios</p>
+            <h2 id="access-events-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">Janelas efetivas de atendimento</h2>
+            <p className="mt-1 text-xs leading-5 text-stone">Um horário só pode ser reservado quando estiver no expediente semanal e dentro de uma permissão aplicável. Qualquer bloqueio prevalece.</p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {accessEvents.map((accessEvent) => (
+            <article key={accessEvent._id} className={`border-l-4 bg-white p-4 shadow-sm ${accessEvent.type === "permission" ? "border-emerald-500" : "border-burnt-coral"}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className={`text-[10px] font-bold uppercase ${accessEvent.type === "permission" ? "text-emerald-700" : "text-burnt-coral"}`}>{accessEvent.type === "permission" ? "Permissão" : "Bloqueio"}</p>
+                  <h3 className="mt-1 text-sm font-semibold text-slate-ink">{accessEvent.title}</h3>
+                </div>
+                <button type="button" onClick={() => void removeAccessEvent(accessEvent._id)} disabled={busy} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-40" aria-label={`Remover ${accessEvent.title}`}><Trash2 className="h-4 w-4" /></button>
+              </div>
+              <p className="mt-2 text-xs text-stone">{formatDateTime(accessEvent.startAt, settings.timezone)} até {formatDateTime(accessEvent.endAt, settings.timezone)}</p>
+              <p className="mt-1 text-xs text-stone">{accessEvent.resourceIds.length === 0 ? "Todos os profissionais" : accessEvent.resourceIds.map((id) => settings.resources.find((resource) => resource.id === id)?.name ?? id).join(", ")}</p>
+            </article>
+          ))}
+          {accessEvents.length === 0 && <div className="rounded-lg border border-dashed border-mist bg-soft-ivory p-5 text-sm text-stone md:col-span-2 xl:col-span-3">Nenhuma permissão cadastrada. Até que uma permissão seja criada, nenhum horário será considerado disponível.</div>}
+        </div>
+      </section>
+
       <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} />
+
+      {accessOpen && createPortal(<div className="fixed inset-0 z-50 flex justify-end bg-slate-ink/45" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccessOpen(false); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="access-event-title" className="h-full w-full max-w-lg overflow-y-auto bg-white p-5 shadow-xl sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className={`text-xs font-semibold uppercase ${accessType === "permission" ? "text-emerald-700" : "text-burnt-coral"}`}>{accessType === "permission" ? "Permissão" : "Bloqueio"}</p>
+              <h2 id="access-event-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">{accessType === "permission" ? "Permitir agendamentos" : "Bloquear agenda"}</h2>
+              <p className="mt-1 text-xs leading-5 text-stone">O intervalo pode durar minutos ou vários dias. Sem profissionais selecionados, a regra vale para todos.</p>
+            </div>
+            <button type="button" onClick={() => setAccessOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar regra"><X className="h-4 w-4" /></button>
+          </div>
+          <label className="mt-6 block text-xs font-semibold text-slate-ink">Título
+            <input value={accessTitle} maxLength={120} onChange={(event) => setAccessTitle(event.target.value)} placeholder={accessType === "permission" ? "Ex.: Atendimento de outubro" : "Ex.: Congresso"} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
+          </label>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <label className="text-xs font-semibold text-slate-ink">Data inicial<input type="date" value={accessStartDate} onChange={(event) => setAccessStartDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist px-3 py-2.5 text-sm font-normal" /></label>
+            <label className="text-xs font-semibold text-slate-ink">Hora inicial<input type="time" value={accessStartTime} onChange={(event) => setAccessStartTime(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist px-3 py-2.5 text-sm font-normal" /></label>
+            <label className="text-xs font-semibold text-slate-ink">Data final<input type="date" value={accessEndDate} onChange={(event) => setAccessEndDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist px-3 py-2.5 text-sm font-normal" /></label>
+            <label className="text-xs font-semibold text-slate-ink">Hora final<input type="time" value={accessEndTime} onChange={(event) => setAccessEndTime(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist px-3 py-2.5 text-sm font-normal" /></label>
+          </div>
+          <fieldset className="mt-5">
+            <legend className="text-xs font-semibold text-slate-ink">Profissionais</legend>
+            <p className="mt-1 text-xs text-stone">Nenhuma seleção significa todos os profissionais.</p>
+            <div className="mt-3 space-y-2">
+              {settings.resources.map((resource) => <label key={resource.id} className="flex items-center gap-3 rounded-md border border-mist px-3 py-3 text-sm text-slate-ink"><input type="checkbox" checked={accessResourceIds.includes(resource.id)} onChange={() => toggleAccessResource(resource.id)} className="h-4 w-4 accent-deep-teal" />{resource.name}</label>)}
+            </div>
+          </fieldset>
+          <div className="mt-7 flex justify-end gap-2">
+            <button type="button" onClick={() => setAccessOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>
+            <button type="button" onClick={() => void createAccessEvent()} disabled={busy || !accessStartDate || !accessEndDate || !accessStartTime || !accessEndTime} className={`rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${accessType === "permission" ? "bg-deep-teal hover:bg-forest-teal" : "bg-burnt-coral"}`}>{busy ? "Salvando..." : accessType === "permission" ? "Criar permissão" : "Criar bloqueio"}</button>
+          </div>
+        </section>
+      </div>, document.body)}
 
       {eventOpen && createPortal(<div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-ink/45 p-4 py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setEventOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="event-title" className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl sm:p-7">
@@ -490,6 +637,7 @@ async function requestCalendarData() {
   const data = await response.json() as {
     settings?: Settings;
     appointments?: Appointment[];
+    accessEvents?: CalendarAccessEvent[];
     customers?: CustomerOption[];
     error?: string;
   };
@@ -499,6 +647,7 @@ async function requestCalendarData() {
   return {
     settings: data.settings,
     appointments: data.appointments,
+    accessEvents: data.accessEvents,
     customers: data.customers,
   };
 }

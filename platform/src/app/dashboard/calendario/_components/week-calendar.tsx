@@ -18,6 +18,15 @@ interface EventTypeDefinition {
   color: string;
 }
 
+interface CalendarAccessEvent {
+  _id: string;
+  type: "permission" | "blocker";
+  title: string;
+  startAt: string;
+  endAt: string;
+  resourceIds: string[];
+}
+
 const dayFormatter = new Intl.DateTimeFormat("pt-BR", { weekday: "short" });
 
 export default function WeekCalendar({
@@ -33,7 +42,10 @@ export default function WeekCalendar({
 }) {
   const [weekStart, setWeekStart] = useState(() => getCurrentWeekStart(timezone));
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [accessEvents, setAccessEvents] = useState<CalendarAccessEvent[]>([]);
   const [showAppointments, setShowAppointments] = useState(true);
+  const [showPermissions, setShowPermissions] = useState(true);
+  const [showBlockers, setShowBlockers] = useState(true);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState("");
   const [error, setError] = useState("");
@@ -47,12 +59,14 @@ export default function WeekCalendar({
       .then(async (response) => {
         const data = await response.json() as {
           appointments?: Appointment[];
+          accessEvents?: CalendarAccessEvent[];
           error?: string;
         };
         if (!response.ok) throw new Error(data.error ?? "Não foi possível carregar a semana.");
         if (!active) return;
         setError("");
         setAppointments(data.appointments ?? []);
+        setAccessEvents(data.accessEvents ?? []);
       })
       .catch((loadError) => {
         if (active) setError(loadError instanceof Error ? loadError.message : "Falha ao carregar a semana.");
@@ -95,6 +109,8 @@ export default function WeekCalendar({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Toggle label="Eventos" checked={showAppointments} onChange={setShowAppointments} color="teal" />
+          <Toggle label="Permissões" checked={showPermissions} onChange={setShowPermissions} color="green" />
+          <Toggle label="Bloqueios" checked={showBlockers} onChange={setShowBlockers} color="coral" />
           <div className="ml-1 flex overflow-hidden rounded-md border border-mist bg-white">
             <button type="button" onClick={() => navigateTo(addDays(weekStart, -7))} className="flex h-9 w-9 items-center justify-center border-r border-mist text-slate-ink hover:bg-soft-ivory" aria-label="Semana anterior"><ChevronLeft className="h-4 w-4" /></button>
             <button type="button" onClick={() => navigateTo(getCurrentWeekStart(timezone))} className="px-3 text-xs font-semibold text-slate-ink hover:bg-soft-ivory">Hoje</button>
@@ -109,6 +125,10 @@ export default function WeekCalendar({
           {days.map((day) => {
             const dateKey = toDateKey(day);
             const dayAppointments = appointments.filter((item) => getDateKey(item.startAt, timezone) === dateKey);
+            const dayAccessEvents = accessEvents.filter((item) => (
+              accessEventTouchesDate(item, dateKey, timezone)
+              && (item.type === "permission" ? showPermissions : showBlockers)
+            ));
             const appointmentGroups = groupOverlappingAppointments(dayAppointments);
             const isToday = dateKey === toDateKey(getToday(timezone));
             return (
@@ -119,6 +139,13 @@ export default function WeekCalendar({
                 </div>
                 <div className="space-y-2 p-2">
                   {loading && <p className="py-8 text-center text-xs text-stone">Carregando…</p>}
+                  {!loading && dayAccessEvents.map((accessEvent) => (
+                    <article key={accessEvent._id} className={`border-l-2 px-2 py-2 ${accessEvent.type === "permission" ? "border-emerald-500 bg-emerald-50" : "border-burnt-coral bg-burnt-coral/5"}`}>
+                      <p className={`text-[10px] font-bold uppercase ${accessEvent.type === "permission" ? "text-emerald-700" : "text-burnt-coral"}`}>{accessEvent.type === "permission" ? "Permitido" : "Bloqueado"}</p>
+                      <p className="mt-0.5 break-words text-xs font-semibold text-slate-ink">{accessEvent.title}</p>
+                      <p className="mt-0.5 text-[10px] text-stone">{formatTime(accessEvent.startAt, timezone)}–{formatTime(accessEvent.endAt, timezone)} · {accessEvent.resourceIds.length === 0 ? "Todos" : `${accessEvent.resourceIds.length} recurso(s)`}</p>
+                    </article>
+                  ))}
                   {!loading && showAppointments && appointmentGroups.map((lanes) => (
                     <div key={lanes[0][0]._id} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}>
                       {lanes.map((lane) => (
@@ -161,10 +188,10 @@ export default function WeekCalendar({
   );
 }
 
-function Toggle({ label, checked, onChange, color }: { label: string; checked: boolean; onChange: (checked: boolean) => void; color: "teal" }) {
+function Toggle({ label, checked, onChange, color }: { label: string; checked: boolean; onChange: (checked: boolean) => void; color: "teal" | "green" | "coral" }) {
   return (
     <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-slate-ink">
-      <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? color === "teal" ? "bg-deep-teal" : "bg-burnt-coral" : "bg-mist"}`}>
+      <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${checked ? color === "teal" ? "bg-deep-teal" : color === "green" ? "bg-emerald-500" : "bg-burnt-coral" : "bg-mist"}`}>
         <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${checked ? "translate-x-4" : "translate-x-0"}`} />
       </button>
       {label}
@@ -209,6 +236,13 @@ function formatWeekRange(start: Date, end: Date) {
 
 function formatTime(value: string, timezone: string) {
   return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: timezone }).format(new Date(value));
+}
+
+function accessEventTouchesDate(event: CalendarAccessEvent, dateKey: string, timezone: string) {
+  const startDate = getDateKey(event.startAt, timezone);
+  const end = new Date(new Date(event.endAt).getTime() - 1);
+  const endDate = getDateKey(end.toISOString(), timezone);
+  return startDate <= dateKey && endDate >= dateKey;
 }
 
 function formatAppointmentStatus(status: Appointment["status"]) {
