@@ -254,17 +254,25 @@ export async function recoverEmbeddedSignupConnection(connectionIdInput: string)
     },
     { sort: { receivedAt: -1 } },
   );
-  if (!event) return null;
+  if (event) {
+    const result = await finalizeEmbeddedSignupConnection({
+      connectionId,
+      wabaId: event.wabaId,
+    });
+    await (await getWebhookEventsCollection()).updateOne(
+      { _id: event._id },
+      { $set: { processedAt: new Date() } },
+    );
+    return result;
+  }
 
-  const result = await finalizeEmbeddedSignupConnection({
+  const tokenAssets = await resolveEmbeddedSignupAssetsFromToken(connection);
+  if (!tokenAssets) return null;
+  return finalizeEmbeddedSignupConnection({
     connectionId,
-    wabaId: event.wabaId,
+    wabaId: tokenAssets.wabaId,
+    phoneNumberId: tokenAssets.phoneNumberId,
   });
-  await (await getWebhookEventsCollection()).updateOne(
-    { _id: event._id },
-    { $set: { processedAt: new Date() } },
-  );
-  return result;
 }
 
 export async function activateEmbeddedSignupConnection(connectionId: string) {
@@ -340,6 +348,80 @@ async function resolveCoexistencePhoneNumber(input: {
     throw new Error("A Meta não confirmou um telefone elegível para coexistência neste WABA.");
   }
   return validateMetaId(phone.id, "Phone Number ID");
+}
+
+async function resolveEmbeddedSignupAssetsFromToken(connection: EmbeddedSignupConnection) {
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret) throw new Error("WHATSAPP_APP_SECRET não está configurado.");
+  const accessToken = decryptToken(connection.accessToken);
+  const query = new URLSearchParams({
+    input_token: accessToken,
+    access_token: `${connection.appId}|${appSecret}`,
+  });
+  const response = await fetch(
+    `https://graph.facebook.com/${connection.graphVersion}/debug_token?${query}`,
+    { cache: "no-store", signal: AbortSignal.timeout(15_000) },
+  );
+  const result = await response.json() as {
+    data?: {
+      app_id?: string;
+      is_valid?: boolean;
+      granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+    };
+    error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string };
+  };
+  if (!response.ok || !result.data) {
+    throw new Error(formatMetaError(result.error, "Não foi possível consultar os ativos autorizados pela Meta."));
+  }
+  if (!result.data.is_valid || result.data.app_id !== connection.appId) {
+    throw new Error("A Meta retornou um token inválido ou pertencente a outro aplicativo.");
+  }
+
+  const wabaIds = [...new Set(
+    result.data.granular_scopes
+      ?.filter(({ scope }) => (
+        scope === "whatsapp_business_management"
+        || scope === "whatsapp_business_messaging"
+      ))
+      .flatMap(({ target_ids }) => target_ids ?? [])
+      .filter((id) => /^\d{5,30}$/.test(id))
+      ?? [],
+  )];
+  if (wabaIds.length === 0) return null;
+
+  const eligibleAssets: Array<{ wabaId: string; phoneNumberId: string }> = [];
+  for (const wabaId of wabaIds) {
+    const query = new URLSearchParams({ fields: "id,is_on_biz_app,platform_type" });
+    const phoneResponse = await fetch(
+      `https://graph.facebook.com/${connection.graphVersion}/${wabaId}/phone_numbers?${query}`,
+      {
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    const phoneResult = await phoneResponse.json() as {
+      data?: Array<{ id?: string; is_on_biz_app?: boolean; platform_type?: string }>;
+      error?: { message?: string; code?: number; error_subcode?: number; fbtrace_id?: string };
+    };
+    if (!phoneResponse.ok || !phoneResult.data) {
+      throw new Error(formatMetaError(phoneResult.error, "Não foi possível consultar os telefones autorizados."));
+    }
+    for (const phone of phoneResult.data) {
+      if (phone.id && phone.is_on_biz_app === true && phone.platform_type === "CLOUD_API") {
+        eligibleAssets.push({
+          wabaId,
+          phoneNumberId: validateMetaId(phone.id, "Phone Number ID"),
+        });
+      }
+    }
+  }
+
+  if (eligibleAssets.length === 0) return null;
+  if (eligibleAssets.length > 1) {
+    throw new Error("A Meta retornou mais de um telefone de coexistência. Conclua o fluxo selecionando apenas um número.");
+  }
+  return eligibleAssets[0];
 }
 
 function getTokenEncryptionKey() {

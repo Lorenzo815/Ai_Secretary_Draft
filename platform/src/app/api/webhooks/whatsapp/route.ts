@@ -24,6 +24,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
+  if (!process.env.WHATSAPP_APP_SECRET) {
+    console.error("WhatsApp webhook rejected: WHATSAPP_APP_SECRET is not configured.");
+    return NextResponse.json({ error: "Webhook não configurado." }, { status: 503 });
+  }
   if (!isValidWebhookSignature(rawBody, request.headers.get("x-hub-signature-256"))) {
     return NextResponse.json({ error: "Assinatura inválida." }, { status: 401 });
   }

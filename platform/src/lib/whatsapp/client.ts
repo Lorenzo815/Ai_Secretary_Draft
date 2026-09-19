@@ -163,7 +163,7 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
 
 export function isValidWebhookSignature(rawBody: string, signature: string | null) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
-  if (!appSecret) return true;
+  if (!appSecret) return false;
   if (!signature?.startsWith("sha256=")) return false;
 
   const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody).digest("hex")}`;

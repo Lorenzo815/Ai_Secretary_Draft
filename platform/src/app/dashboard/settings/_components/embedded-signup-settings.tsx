@@ -269,7 +269,7 @@ export default function EmbeddedSignupSettings({
         recoveryAbortRef.current?.abort();
         const controller = new AbortController();
         recoveryAbortRef.current = controller;
-        void recoverFromWebhook(result.connectionId, controller.signal);
+        void recoverSignup(result.connectionId, controller.signal);
       }
     } catch (error) {
       setOAuthStatus("error");
@@ -278,7 +278,7 @@ export default function EmbeddedSignupSettings({
     }
   }
 
-  async function recoverFromWebhook(connectionId: string, signal: AbortSignal) {
+  async function recoverSignup(connectionId: string, signal: AbortSignal) {
     for (let attempt = 0; attempt < 20 && !signal.aborted; attempt += 1) {
       try {
         const response = await fetch("/api/whatsapp/embedded-signup/recover", {
@@ -320,7 +320,7 @@ export default function EmbeddedSignupSettings({
           phoneNumberId: result.phoneNumberId,
         });
         setCompletionStatus("connected");
-        setMessage("Confirmação recuperada pelo webhook da Meta. Coexistência conectada e aguardando ativação.");
+        setMessage("Ativos autorizados recuperados pela Meta. Coexistência conectada e aguardando ativação.");
         return;
       } catch (error) {
         if (signal.aborted) return;
@@ -332,7 +332,7 @@ export default function EmbeddedSignupSettings({
 
     if (!signal.aborted) {
       setCompletionStatus("error");
-      setMessage("O Login Meta foi concluído, mas a confirmação de coexistência não chegou. Verifique a assinatura do webhook account_update no painel da Meta.");
+      setMessage("O Login Meta foi concluído, mas a Meta ainda não retornou um telefone elegível para coexistência.");
     }
   }
 

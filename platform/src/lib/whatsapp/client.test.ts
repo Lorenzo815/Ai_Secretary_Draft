@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getOperationalEmbeddedSignupConfig = vi.hoisted(() => vi.fn());
 vi.mock("./embedded-signup", () => ({ getOperationalEmbeddedSignupConfig }));
 
-import { sendWhatsAppTemplate } from "./client";
+import { isValidWebhookSignature, sendWhatsAppTemplate } from "./client";
 
 describe("WhatsApp template delivery client", () => {
   beforeEach(() => {
@@ -14,6 +15,36 @@ describe("WhatsApp template delivery client", () => {
       phoneNumberId: "9988776655",
       businessAccountId: "1122334455",
       graphVersion: "v25.0",
+    });
+  });
+
+  describe("WhatsApp webhook signature validation", () => {
+    const originalAppSecret = process.env.WHATSAPP_APP_SECRET;
+
+    afterEach(() => {
+      if (originalAppSecret === undefined) {
+        delete process.env.WHATSAPP_APP_SECRET;
+      } else {
+        process.env.WHATSAPP_APP_SECRET = originalAppSecret;
+      }
+    });
+
+    it("fails closed when the app secret is not configured", () => {
+      delete process.env.WHATSAPP_APP_SECRET;
+
+      expect(isValidWebhookSignature("{}", null)).toBe(false);
+      expect(isValidWebhookSignature("{}", "sha256=forged")).toBe(false);
+    });
+
+    it("accepts only the matching HMAC signature", () => {
+      process.env.WHATSAPP_APP_SECRET = "test-app-secret";
+      const rawBody = JSON.stringify({ object: "whatsapp_business_account" });
+      const signature = `sha256=${createHmac("sha256", "test-app-secret").update(rawBody).digest("hex")}`;
+
+      expect(isValidWebhookSignature(rawBody, signature)).toBe(true);
+      expect(isValidWebhookSignature(`${rawBody} `, signature)).toBe(false);
+      expect(isValidWebhookSignature(rawBody, "sha256=forged")).toBe(false);
+      expect(isValidWebhookSignature(rawBody, null)).toBe(false);
     });
   });
 

@@ -216,6 +216,75 @@ describe("Embedded Signup configuration", () => {
     );
   });
 
+  it("recovers mobile signup from token assets when the session event and webhook are unavailable", async () => {
+    findOne.mockResolvedValueOnce({
+      _id: "active",
+      appId: "1234567890",
+      configurationId: "9876543210",
+      graphVersion: "v25.0",
+      updatedAt: new Date(),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "app-access-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "business-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            app_id: "1234567890",
+            is_valid: true,
+            granular_scopes: [{
+              scope: "whatsapp_business_management",
+              target_ids: ["1122334455"],
+            }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: "9988776655", is_on_biz_app: true, platform_type: "CLOUD_API" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: "9988776655", is_on_biz_app: true, platform_type: "CLOUD_API" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const exchanged = await exchangeEmbeddedSignupCode("temporary-meta-code-long-enough");
+    const connection = insertOne.mock.calls[0][0];
+    findOne
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(connection);
+
+    await expect(recoverEmbeddedSignupConnection(exchanged.connectionId)).resolves.toEqual({
+      connectionId: exchanged.connectionId,
+      wabaId: "1122334455",
+      phoneNumberId: "9988776655",
+    });
+    expect(fetchMock.mock.calls[2][0]).toContain("/debug_token?");
+    const debugUrl = new URL(fetchMock.mock.calls[2][0]);
+    expect(debugUrl.searchParams.get("input_token")).toBe("business-token");
+    expect(debugUrl.searchParams.get("access_token")).toBe("1234567890|test-app-secret");
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: exchanged.connectionId },
+      { $set: expect.objectContaining({ status: "connected", wabaId: "1122334455" }) },
+    );
+  });
+
   it("captures coexistence webhook data with a deterministic id", async () => {
     updateOne.mockResolvedValue({ acknowledged: true, upsertedCount: 1 });
     const input = {
