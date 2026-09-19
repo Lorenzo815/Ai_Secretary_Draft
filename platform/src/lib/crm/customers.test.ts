@@ -11,7 +11,7 @@ vi.mock("../mongodb", () => ({
   default: Promise.resolve({ db: () => ({ collection }) }),
 }));
 
-import { updateCustomerProfile } from "./customers";
+import { revealCustomerCpf, updateCustomerProfile } from "./customers";
 
 describe("updateCustomerProfile address updates", () => {
   beforeEach(() => {
@@ -142,6 +142,40 @@ describe("updateCustomerProfile address updates", () => {
     expect(protectedCpf).toHaveProperty("iv");
     expect(protectedCpf).toHaveProperty("authTag");
     expect(protectedCpf).toHaveProperty("hash");
+  });
+
+  it("decrypts a stored CPF only when explicitly requested", async () => {
+    const previousPiiKey = process.env.PII_ENCRYPTION_KEY;
+    process.env.PII_ENCRYPTION_KEY = "dedicated-pii-secret";
+    const customerId = new ObjectId();
+    const customer = {
+      _id: customerId,
+      phones: ["5511999999999"],
+      profile: { updatedAt: new Date() },
+    };
+    let protectedCpf: unknown;
+    findOne
+      .mockResolvedValueOnce(customer)
+      .mockImplementationOnce(async () => ({
+        ...customer,
+        profile: { ...customer.profile, cpf: protectedCpf },
+      }));
+    findOneAndUpdate.mockImplementationOnce(async (_filter, update) => {
+      protectedCpf = (update as { $set: Record<string, unknown> }).$set["profile.cpf"];
+      return { ...customer, profile: { ...customer.profile, cpf: protectedCpf } };
+    });
+
+    try {
+      await updateCustomerProfile(customerId, { cpf: "529.982.247-25" });
+      await expect(revealCustomerCpf(customerId)).resolves.toBe("52998224725");
+    } finally {
+      restoreEnvironment("PII_ENCRYPTION_KEY", previousPiiKey);
+    }
+
+    expect(findOne).toHaveBeenLastCalledWith(
+      { _id: customerId },
+      { projection: { "profile.cpf": 1 } },
+    );
   });
 });
 

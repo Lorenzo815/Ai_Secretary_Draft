@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createCipheriv, createHash, createHmac, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
 import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { LEAD_QUALIFICATION_VERSION, type LeadInsightTag } from "../qualification/contracts";
@@ -213,6 +213,15 @@ export async function findCustomerById(id: string) {
   return customers.findOne({ _id: new ObjectId(id) });
 }
 
+export async function revealCustomerCpf(id: ObjectId) {
+  const customer = await (await getCustomersCollection()).findOne(
+    { _id: id },
+    { projection: { "profile.cpf": 1 } },
+  );
+  if (!customer?.profile?.cpf) return null;
+  return unprotectCpf(customer.profile.cpf);
+}
+
 export async function updateCustomerServiceStatus(id: ObjectId, status: CustomerServiceStatus) {
   const customer = await (await getCustomersCollection()).findOneAndUpdate(
     { _id: id },
@@ -423,11 +432,7 @@ async function resolvePostalCode(value: string): Promise<CustomerAddress> {
 }
 
 function protectCpf(cpf: string) {
-  const secret = process.env.PII_ENCRYPTION_KEY
-    ?? process.env.NEXTAUTH_SECRET
-    ?? process.env.AUTH_SECRET;
-  if (!secret) throw new Error("PII_ENCRYPTION_KEY, NEXTAUTH_SECRET ou AUTH_SECRET deve estar configurada.");
-  const key = createHash("sha256").update(secret).digest();
+  const key = getPiiEncryptionKey();
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(cpf, "utf8"), cipher.final()]);
@@ -438,6 +443,27 @@ function protectCpf(cpf: string) {
     hash: createHmac("sha256", key).update(cpf).digest("hex"),
     last4: cpf.slice(-4),
   };
+}
+
+function unprotectCpf(cpf: NonNullable<CustomerProfile["cpf"]>) {
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    getPiiEncryptionKey(),
+    Buffer.from(cpf.iv, "base64"),
+  );
+  decipher.setAuthTag(Buffer.from(cpf.authTag, "base64"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(cpf.encrypted, "base64")),
+    decipher.final(),
+  ]).toString("utf8");
+}
+
+function getPiiEncryptionKey() {
+  const secret = process.env.PII_ENCRYPTION_KEY
+    ?? process.env.NEXTAUTH_SECRET
+    ?? process.env.AUTH_SECRET;
+  if (!secret) throw new Error("PII_ENCRYPTION_KEY, NEXTAUTH_SECRET ou AUTH_SECRET deve estar configurada.");
+  return createHash("sha256").update(secret).digest();
 }
 
 export async function listCustomerOperations() {

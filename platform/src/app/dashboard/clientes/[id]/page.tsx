@@ -12,6 +12,7 @@ import CustomerAgentPanel from "./_components/customer-agent-panel";
 import LeadQualificationPanel from "./_components/lead-qualification-panel";
 import PaymentReviewPanel from "./_components/payment-review-panel";
 import WhatsAppConversation from "./_components/whatsapp-conversation";
+import CpfDetail from "./_components/cpf-detail";
 import BrowserDateTime from "@/components/browser-date-time";
 import type { ReactNode } from "react";
 
@@ -70,7 +71,7 @@ export default async function CustomerPage({
               <div className="mt-5 grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
                 <Detail label="Nome completo" value={profile.fullName ?? "Pendente"} />
                 <Detail label="Nascimento" value={profile.birthDate ?? "Pendente"} />
-                <Detail label="CPF" value={profile.cpf ?? "Pendente"} />
+                <CpfDetail customerId={customer._id.toString()} maskedCpf={profile.cpf} />
                 <Detail label="Profissão" value={profile.profession ?? "Pendente"} />
                 <Detail label="Telefones" value={profile.phones.map((phone) => `+${phone}`).join(", ")} />
               </div>
@@ -201,4 +202,3 @@ function Detail({ label, value }: { label: string; value: ReactNode }) {
     </div>
   );
 }
-
