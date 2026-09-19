@@ -463,7 +463,7 @@ export default function CalendarPage() {
         </div>
       </section>
 
-      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} />
+      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} />
 
       {accessOpen && createPortal(<div className="fixed inset-0 z-50 flex justify-end bg-slate-ink/45" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccessOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="access-event-title" className="h-full w-full max-w-lg overflow-y-auto bg-white p-5 shadow-xl sm:p-7">

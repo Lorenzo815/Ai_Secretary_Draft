@@ -3,7 +3,7 @@ import MarketingHome from "./_components/marketing-home";
 
 export const metadata: Metadata = {
   title: "Oria | Transforme conversas em próximos passos",
-  description: "A Oria conecta WhatsApp, agenda, CRM e equipe para transformar cada conversa em uma ação segura para o seu negócio.",
+  description: "A Oria entende mensagens no WhatsApp, organiza o atendimento e transforma pedidos em agendamentos, pagamentos e próximos passos.",
 };
 
 export default function Home() {

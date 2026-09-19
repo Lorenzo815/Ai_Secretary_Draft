@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Oria — Operação conversacional com IA",
     short_name: "Oria",
-    description: "CRM, agenda e atendimento conversacional com IA.",
+    description: "Atendimento no WhatsApp que entende pedidos, organiza clientes e realiza próximos passos.",
     start_url: "/dashboard",
     scope: "/",
     display: "standalone",
