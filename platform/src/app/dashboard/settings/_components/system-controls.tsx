@@ -221,33 +221,6 @@ export default function SystemControls({
 
   return (
     <div className="grid gap-5 lg:grid-cols-2" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
-      <section aria-labelledby="assistant-processing-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><Bot className="h-5 w-5" /></span>
-            <div>
-              <h3 id="assistant-processing-title" className="font-heading text-base font-semibold text-slate-ink">Respostas automáticas</h3>
-              <p className="mt-1 max-w-md text-sm leading-6 text-stone">Pause o processamento sem interromper o recebimento de novas mensagens.</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={processingEnabled}
-            aria-label="Processamento de respostas automáticas"
-            disabled={saving}
-            onClick={toggleProcessing}
-            className="flex min-h-10 items-center gap-2.5 self-start rounded-md border border-mist bg-white px-3 transition-colors hover:border-stone disabled:cursor-wait disabled:opacity-60 sm:self-auto"
-          >
-            <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${processingEnabled ? "bg-deep-teal" : "bg-mist"}`}>
-              <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${processingEnabled ? "translate-x-4" : "translate-x-0"}`} />
-            </span>
-            <span className="w-16 text-left text-sm font-semibold text-slate-ink">{saving ? "Salvando..." : processingEnabled ? "Ativo" : "Pausado"}</span>
-          </button>
-        </div>
-        <div className={`mt-5 rounded-md px-3 py-2.5 text-xs font-medium ${processingEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{processingEnabled ? "A Oria está processando a fila normalmente." : "As mensagens continuam salvas, mas aguardam processamento."}</div>
-      </section>
-
       <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
         <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Pipeline de confirmação do Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Escolha quem confirma a transação e quando a IA pode continuar o atendimento.</p></div></div>
         <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
@@ -284,6 +257,33 @@ export default function SystemControls({
             {savingPayment ? "Salvando..." : "Salvar dados Pix"}
           </button>
         </form>
+      </section>
+
+      <section aria-labelledby="assistant-processing-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><Bot className="h-5 w-5" /></span>
+            <div>
+              <h3 id="assistant-processing-title" className="font-heading text-base font-semibold text-slate-ink">Respostas automáticas</h3>
+              <p className="mt-1 max-w-md text-sm leading-6 text-stone">Pause o processamento sem interromper o recebimento de novas mensagens.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={processingEnabled}
+            aria-label="Processamento de respostas automáticas"
+            disabled={saving}
+            onClick={toggleProcessing}
+            className="flex min-h-10 items-center gap-2.5 self-start rounded-md border border-mist bg-white px-3 transition-colors hover:border-stone disabled:cursor-wait disabled:opacity-60 sm:self-auto"
+          >
+            <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${processingEnabled ? "bg-deep-teal" : "bg-mist"}`}>
+              <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${processingEnabled ? "translate-x-4" : "translate-x-0"}`} />
+            </span>
+            <span className="w-16 text-left text-sm font-semibold text-slate-ink">{saving ? "Salvando..." : processingEnabled ? "Ativo" : "Pausado"}</span>
+          </button>
+        </div>
+        <div className={`mt-5 rounded-md px-3 py-2.5 text-xs font-medium ${processingEnabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{processingEnabled ? "A Oria está processando a fila normalmente." : "As mensagens continuam salvas, mas aguardam processamento."}</div>
       </section>
 
       <section aria-labelledby="database-title" className="rounded-lg border border-red-200 bg-white p-5 shadow-sm lg:col-span-2 sm:p-6">
