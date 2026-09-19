@@ -174,6 +174,12 @@ describe("Embedded Signup configuration", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
+        json: async () => ({
+          data: [{ id: "9988776655", is_on_biz_app: true, platform_type: "CLOUD_API" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: async () => ({ success: true }),
       });
     vi.stubGlobal("fetch", fetchMock);
@@ -195,7 +201,7 @@ describe("Embedded Signup configuration", () => {
       .mockResolvedValueOnce(event)
       .mockResolvedValueOnce(connection);
 
-    await expect(recoverEmbeddedSignupConnection(exchanged.connectionId)).resolves.toEqual({
+    await expect(recoverEmbeddedSignupConnection({ connectionId: exchanged.connectionId })).resolves.toEqual({
       connectionId: exchanged.connectionId,
       wabaId: "1122334455",
       phoneNumberId: "9988776655",
@@ -270,7 +276,7 @@ describe("Embedded Signup configuration", () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(connection);
 
-    await expect(recoverEmbeddedSignupConnection(exchanged.connectionId)).resolves.toEqual({
+    await expect(recoverEmbeddedSignupConnection({ connectionId: exchanged.connectionId })).resolves.toEqual({
       connectionId: exchanged.connectionId,
       wabaId: "1122334455",
       phoneNumberId: "9988776655",
@@ -283,6 +289,106 @@ describe("Embedded Signup configuration", () => {
       { _id: exchanged.connectionId },
       { $set: expect.objectContaining({ status: "connected", wabaId: "1122334455" }) },
     );
+  });
+
+  it("returns distinct authorized phone candidates and finalizes the selected number", async () => {
+    findOne.mockResolvedValueOnce({
+      _id: "active",
+      appId: "1234567890",
+      configurationId: "9876543210",
+      graphVersion: "v25.0",
+      updatedAt: new Date(),
+    });
+    const phones = [
+      {
+        id: "9988776655",
+        display_phone_number: "+55 11 98888-7777",
+        verified_name: "Clínica Centro",
+        is_on_biz_app: true,
+        platform_type: "CLOUD_API",
+      },
+      {
+        id: "8877665544",
+        display_phone_number: "+55 42 99999-1111",
+        verified_name: "Clínica Ponta Grossa",
+        is_on_biz_app: true,
+        platform_type: "CLOUD_API",
+      },
+    ];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "app-access-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "business-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            app_id: "1234567890",
+            is_valid: true,
+            granular_scopes: [
+              { scope: "whatsapp_business_management", target_ids: ["1122334455"] },
+              { scope: "whatsapp_business_messaging", target_ids: ["1122334455"] },
+            ],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: phones }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            app_id: "1234567890",
+            is_valid: true,
+            granular_scopes: [{
+              scope: "whatsapp_business_management",
+              target_ids: ["1122334455"],
+            }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: phones }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: phones }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ success: true }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const exchanged = await exchangeEmbeddedSignupCode("temporary-meta-code-long-enough");
+    const connection = insertOne.mock.calls[0][0];
+    findOne
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(connection);
+
+    await expect(recoverEmbeddedSignupConnection({ connectionId: exchanged.connectionId })).resolves.toEqual({
+      selectionRequired: true,
+      candidates: [
+        {
+          wabaId: "1122334455",
+          phoneNumberId: "9988776655",
+          displayPhoneNumber: "+55 11 98888-7777",
+          verifiedName: "Clínica Centro",
+        },
+        {
+          wabaId: "1122334455",
+          phoneNumberId: "8877665544",
+          displayPhoneNumber: "+55 42 99999-1111",
+          verifiedName: "Clínica Ponta Grossa",
+        },
+      ],
+    });
+    await expect(recoverEmbeddedSignupConnection({
+      connectionId: exchanged.connectionId,
+      phoneNumberId: "8877665544",
+    })).resolves.toEqual({
+      connectionId: exchanged.connectionId,
+      wabaId: "1122334455",
+      phoneNumberId: "8877665544",
+    });
   });
 
   it("captures coexistence webhook data with a deterministic id", async () => {

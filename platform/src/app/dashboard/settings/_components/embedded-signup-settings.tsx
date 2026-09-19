@@ -47,6 +47,12 @@ interface ConnectionSummary {
   wabaId: string;
   phoneNumberId: string;
 }
+interface PhoneCandidate {
+  wabaId: string;
+  phoneNumberId: string;
+  displayPhoneNumber?: string;
+  verifiedName?: string;
+}
 
 declare global {
   interface Window {
@@ -78,6 +84,7 @@ export default function EmbeddedSignupSettings({
   const [completionStatus, setCompletionStatus] = useState<CompletionStatus>(initialConnection?.status ?? "idle");
   const [connection, setConnection] = useState<ConnectionSummary | null>(initialConnection);
   const [sessionEvent, setSessionEvent] = useState<EmbeddedSignupEvent | null>(null);
+  const [phoneCandidates, setPhoneCandidates] = useState<PhoneCandidate[]>([]);
   const connectionIdRef = useRef<string | null>(initialConnection?.connectionId ?? null);
   const sessionEventRef = useRef<EmbeddedSignupEvent | null>(null);
   const finalizingRef = useRef(false);
@@ -278,18 +285,20 @@ export default function EmbeddedSignupSettings({
     }
   }
 
-  async function recoverSignup(connectionId: string, signal: AbortSignal) {
+  async function recoverSignup(connectionId: string, signal: AbortSignal, phoneNumberId?: string) {
     for (let attempt = 0; attempt < 20 && !signal.aborted; attempt += 1) {
       try {
         const response = await fetch("/api/whatsapp/embedded-signup/recover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ connectionId }),
+          body: JSON.stringify({ connectionId, phoneNumberId }),
           signal,
         });
         const result = await response.json() as {
           success?: boolean;
           pending?: boolean;
+          selectionRequired?: boolean;
+          candidates?: PhoneCandidate[];
           connectionId?: string;
           wabaId?: string;
           phoneNumberId?: string;
@@ -298,6 +307,12 @@ export default function EmbeddedSignupSettings({
         if (response.status === 202 && result.pending) {
           await new Promise((resolve) => setTimeout(resolve, 1_500));
           continue;
+        }
+        if (response.ok && result.selectionRequired && result.candidates?.length) {
+          setPhoneCandidates(result.candidates);
+          setCompletionStatus("awaiting-session");
+          setMessage("A Meta autorizou mais de um número. Escolha abaixo qual deve ser conectado.");
+          return;
         }
         if (!response.ok || !result.success || !result.connectionId || !result.wabaId || !result.phoneNumberId) {
           throw new Error(result.error ?? "Não foi possível recuperar a confirmação da Meta.");
@@ -313,6 +328,7 @@ export default function EmbeddedSignupSettings({
         };
         sessionEventRef.current = recoveredEvent;
         setSessionEvent(recoveredEvent);
+        setPhoneCandidates([]);
         setConnection({
           connectionId: result.connectionId,
           status: "connected",
@@ -328,12 +344,25 @@ export default function EmbeddedSignupSettings({
         setMessage(error instanceof Error ? error.message : "Não foi possível recuperar a confirmação da Meta.");
         return;
       }
+
     }
 
     if (!signal.aborted) {
       setCompletionStatus("error");
       setMessage("O Login Meta foi concluído, mas a Meta ainda não retornou um telefone elegível para coexistência.");
     }
+  }
+
+  function selectPhoneCandidate(phoneNumberId: string) {
+    const connectionId = connectionIdRef.current;
+    if (!connectionId) return;
+    recoveryAbortRef.current?.abort();
+    const controller = new AbortController();
+    recoveryAbortRef.current = controller;
+    setPhoneCandidates([]);
+    setCompletionStatus("finalizing");
+    setMessage("Conectando o número selecionado...");
+    void recoverSignup(connectionId, controller.signal, phoneNumberId);
   }
 
   async function saveConfiguration(event: FormEvent<HTMLFormElement>) {
@@ -384,6 +413,7 @@ export default function EmbeddedSignupSettings({
     setOAuthStatus("waiting");
     setCompletionStatus("idle");
     setSessionEvent(null);
+    setPhoneCandidates([]);
     connectionIdRef.current = null;
     sessionEventRef.current = null;
     finalizingRef.current = false;
@@ -477,6 +507,25 @@ export default function EmbeddedSignupSettings({
       )}
       {sessionEvent?.event === "CANCEL" && (
         <p role="status" className="mt-3 text-sm font-medium text-burnt-coral">{sessionEvent.data?.error_code ? `A Meta informou o erro ${sessionEvent.data.error_code}.` : `Fluxo fechado na etapa ${sessionEvent.data?.current_step ?? "não informada"}.`}</p>
+      )}
+      {phoneCandidates.length > 0 && (
+        <div className="mt-4 rounded-md border border-mist bg-soft-ivory p-4">
+          <p className="text-sm font-semibold text-slate-ink">Escolha o número do WhatsApp Business</p>
+          <p className="mt-1 text-xs leading-5 text-stone">A Meta autorizou estes números para coexistência. Selecione qual deles esta conexão deve usar.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {phoneCandidates.map((candidate) => (
+              <button
+                key={`${candidate.wabaId}:${candidate.phoneNumberId}`}
+                type="button"
+                onClick={() => selectPhoneCandidate(candidate.phoneNumberId)}
+                className="rounded-md border border-mist bg-white px-3 py-3 text-left hover:border-deep-teal"
+              >
+                <span className="block text-sm font-semibold text-slate-ink">{candidate.displayPhoneNumber ?? candidate.phoneNumberId}</span>
+                {candidate.verifiedName && <span className="mt-1 block text-xs text-stone">{candidate.verifiedName}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
       {sessionEvent?.data && (sessionEvent.data.waba_id || sessionEvent.data.phone_number_id) && (
         <dl className="mt-4 grid gap-3 border-l-2 border-deep-teal pl-4 text-xs sm:grid-cols-2">

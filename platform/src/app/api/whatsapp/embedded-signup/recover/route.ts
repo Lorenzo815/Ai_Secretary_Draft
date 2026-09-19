@@ -13,9 +13,18 @@ export async function POST(request: Request) {
     if (typeof input.connectionId !== "string") {
       return NextResponse.json({ error: "Conexão temporária inválida." }, { status: 400 });
     }
-    const result = await recoverEmbeddedSignupConnection(input.connectionId);
+    if (input.phoneNumberId !== undefined && typeof input.phoneNumberId !== "string") {
+      return NextResponse.json({ error: "Telefone selecionado inválido." }, { status: 400 });
+    }
+    const result = await recoverEmbeddedSignupConnection({
+      connectionId: input.connectionId,
+      phoneNumberId: input.phoneNumberId,
+    });
     if (!result) {
       return NextResponse.json({ pending: true }, { status: 202 });
+    }
+    if ("selectionRequired" in result) {
+      return NextResponse.json(result);
     }
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
