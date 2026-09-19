@@ -184,6 +184,20 @@ export async function updateCalendarSettings(input: {
 }) {
   validateSettings(input);
   const current = await getCalendarSettings();
+  const nextResourceIds = new Set(input.resources.map((resource) => resource.id));
+  const removedResourceIds = current.resources
+    .map((resource) => resource.id)
+    .filter((resourceId) => !nextResourceIds.has(resourceId));
+  if (removedResourceIds.length > 0) {
+    const futureAppointment = await (await getAppointmentsCollection()).findOne({
+      providerId: { $in: removedResourceIds },
+      status: "scheduled",
+      endAt: { $gt: new Date() },
+    });
+    if (futureAppointment) {
+      throw new Error("Não é possível remover um profissional com atendimentos futuros.");
+    }
+  }
   const next: CalendarSettingsDocument = {
     ...current,
     providerName: input.providerName.trim().slice(0, 100),
@@ -655,11 +669,17 @@ export async function deleteAppointment(id: string) {
 }
 
 export async function getCustomerCalendarOverview(customerId: ObjectId) {
-  const appointment = await (await getAppointmentsCollection()).findOne(
-    { customerId, status: "scheduled", startAt: { $gte: new Date() } },
-    { sort: { startAt: 1 } },
-  );
-  return { appointment };
+  const [appointment, settings] = await Promise.all([
+    (await getAppointmentsCollection()).findOne(
+      { customerId, status: "scheduled", startAt: { $gte: new Date() } },
+      { sort: { startAt: 1 } },
+    ),
+    getCalendarSettings(),
+  ]);
+  const professionalName = appointment
+    ? settings.resources.find((resource) => resource.id === appointment.providerId)?.name ?? null
+    : null;
+  return { appointment, professionalName };
 }
 
 export async function ensureCalendarIndexes() {

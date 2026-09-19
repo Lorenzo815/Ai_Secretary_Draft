@@ -101,7 +101,7 @@ export default async function CustomerPage({
               {calendarOverview.appointment ? (
                 <div className="mt-5 space-y-5">
                   <Detail label="Data e hora" value={<BrowserDateTime value={calendarOverview.appointment.startAt.toISOString()} />} />
-                  <Detail label="Profissional" value={calendarOverview.appointment.providerId === "default-doctor" ? "Profissional responsável" : calendarOverview.appointment.providerId} />
+                  <Detail label="Profissional" value={calendarOverview.professionalName ?? "Profissional removido"} />
                 </div>
               ) : (
                 <p className="mt-3 text-sm leading-6 text-stone">Nenhum atendimento futuro agendado.</p>

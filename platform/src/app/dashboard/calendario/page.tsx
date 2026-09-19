@@ -37,6 +37,7 @@ interface Settings {
 
 interface Appointment {
   _id: string;
+  providerId: string;
   customerName: string;
   startAt: string;
   endAt: string;
@@ -350,6 +351,35 @@ export default function CalendarPage() {
     } : current);
   }
 
+  function addResource() {
+    if (!settings || settings.resources.length >= 20) return;
+    const id = `professional_${Date.now().toString(36)}`;
+    const weeklyAvailability = settings.weeklyAvailability.map((day) => ({
+      ...day,
+      intervals: day.intervals.map((interval) => ({ ...interval })),
+    }));
+    setSettings({
+      ...settings,
+      resources: [
+        ...settings.resources,
+        { id, name: "Novo profissional", weeklyAvailability },
+      ],
+    });
+    setActiveResourceId(id);
+  }
+
+  function removeResource(resourceId: string) {
+    if (!settings || defaultResourceIds.has(resourceId)) return;
+    if (settings.eventTypes.some((eventType) => eventType.resourceId === resourceId)) {
+      setFeedback("Antes de remover o profissional, atribua seus tipos de evento a outra pessoa.");
+      return;
+    }
+    const resources = settings.resources.filter((resource) => resource.id !== resourceId);
+    setSettings({ ...settings, resources });
+    setAccessResourceIds((current) => current.filter((id) => id !== resourceId));
+    setActiveResourceId(resources[0]?.id ?? "");
+  }
+
   function updateEventType(key: string, patch: Partial<EventTypeDefinition>) {
     setSettings((current) => current ? {
       ...current,
@@ -361,7 +391,15 @@ export default function CalendarPage() {
     const key = `event_${Date.now()}`;
     setSettings((current) => current ? {
       ...current,
-      eventTypes: [...current.eventTypes, { key, name: "Novo tipo", color: "#0F766E", durationMinutes: current.slotDurationMinutes, resourceId: "doctor" }],
+      eventTypes: [...current.eventTypes, {
+        key,
+        name: "Novo tipo",
+        color: "#0F766E",
+        durationMinutes: current.slotDurationMinutes,
+        resourceId: current.resources.some((resource) => resource.id === activeResourceId)
+          ? activeResourceId
+          : current.resources[0].id,
+      }],
     } : current);
   }
 
@@ -376,6 +414,9 @@ export default function CalendarPage() {
   if (!settings) {
     return <p className="py-20 text-center text-sm text-stone">{feedback || "Carregando agenda..."}</p>;
   }
+  const activeResource = settings.resources.find((resource) => resource.id === activeResourceId);
+  const activeResourceIsRequired = defaultResourceIds.has(activeResourceId);
+  const activeResourceIsInUse = settings.eventTypes.some((eventType) => eventType.resourceId === activeResourceId);
 
   return (
     <div className="animate-fade-in-up space-y-8">
@@ -552,7 +593,7 @@ export default function CalendarPage() {
                     {[15, 20, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
                   </select>
                 </label>
-                <label className="text-xs font-semibold text-slate-ink">Recurso
+                <label className="text-xs font-semibold text-slate-ink">Profissional
                   <select value={eventType.resourceId} onChange={(event) => updateEventType(eventType.key, { resourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-mist bg-white px-3 py-2 text-sm font-normal">
                     {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
                   </select>
@@ -562,8 +603,16 @@ export default function CalendarPage() {
             ))}
           </div>
         </section>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-xs font-semibold text-slate-ink">Agenda do recurso
+        <section aria-labelledby="professionals-title">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 id="professionals-title" className="text-sm font-semibold text-slate-ink">Profissionais</h3>
+              <p className="mt-1 text-xs text-stone">Adicione profissionais e configure um expediente independente para cada um.</p>
+            </div>
+            <button type="button" onClick={addResource} disabled={settings.resources.length >= 20} className="rounded-lg border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">Adicionar profissional</button>
+          </div>
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-xs font-semibold text-slate-ink">Agenda do profissional
             <select value={activeResourceId} onChange={(event) => setActiveResourceId(event.target.value)} className="mt-1.5 block min-h-10 rounded-md border border-mist bg-white px-3 text-sm font-normal">
               {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
             </select>
@@ -571,7 +620,20 @@ export default function CalendarPage() {
           <label className="min-w-64 flex-1 text-xs font-semibold text-slate-ink">Nome exibido
             <input value={settings.resources.find((resource) => resource.id === activeResourceId)?.name ?? ""} onChange={(event) => updateResourceName(event.target.value)} className="mt-1.5 block min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
           </label>
-        </div>
+          <button
+            type="button"
+            onClick={() => removeResource(activeResourceId)}
+            disabled={activeResourceIsRequired || activeResourceIsInUse}
+            title={activeResourceIsRequired
+              ? "Os profissionais padrão não podem ser removidos."
+              : activeResourceIsInUse
+                ? "Atribua os tipos de evento a outro profissional antes de remover."
+                : `Remover ${activeResource?.name ?? "profissional"}`}
+            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-burnt-coral/40 px-3 text-xs font-semibold text-burnt-coral hover:bg-burnt-coral/5 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" />Remover
+          </button>
+          </div>
         <div className="overflow-x-auto rounded-lg border border-mist bg-white">
           <table className="w-full min-w-[780px] text-left">
             <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone">
@@ -601,6 +663,7 @@ export default function CalendarPage() {
             </tbody>
           </table>
         </div>
+        </section>
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-mist bg-white px-5 py-4 sm:px-7">
           <button type="button" onClick={() => setSettingsOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Fechar</button>
@@ -614,9 +677,9 @@ export default function CalendarPage() {
         <div className="mt-4 overflow-x-auto rounded-lg border border-mist bg-white">
           {appointments.length === 0 ? <p className="px-5 py-12 text-center text-sm text-stone">Nenhum atendimento nos próximos 60 dias.</p> : (
             <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Observação</th><th className="px-4 py-3 text-right">Ação</th></tr></thead>
+              <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Profissional</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Observação</th><th className="px-4 py-3 text-right">Ação</th></tr></thead>
               <tbody className="divide-y divide-mist">{appointments.map((appointment) => (
-                <tr key={appointment._id}><td className="px-4 py-3 font-semibold text-slate-ink">{formatDateTime(appointment.startAt, settings.timezone)}</td><td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td><td className="px-4 py-3 text-stone">{getEventTypeName(settings, appointment.eventType)}</td><td className="px-4 py-3 text-stone">{appointment.status === "scheduled" ? "Agendado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td><td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td><td className="px-4 py-3 text-right">{appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline">Cancelar</button>}</td></tr>
+                <tr key={appointment._id}><td className="px-4 py-3 font-semibold text-slate-ink">{formatDateTime(appointment.startAt, settings.timezone)}</td><td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td><td className="px-4 py-3 text-stone">{getEventTypeName(settings, appointment.eventType)}</td><td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td><td className="px-4 py-3 text-stone">{appointment.status === "scheduled" ? "Agendado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td><td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td><td className="px-4 py-3 text-right">{appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline">Cancelar</button>}</td></tr>
               ))}</tbody>
             </table>
           )}
@@ -655,3 +718,9 @@ async function requestCalendarData() {
 function getEventTypeName(settings: Settings, key?: string) {
   return settings.eventTypes.find((eventType) => eventType.key === key)?.name ?? "Tipo removido";
 }
+
+function getResourceName(settings: Settings, id: string) {
+  return settings.resources.find((resource) => resource.id === id)?.name ?? "Profissional removido";
+}
+
+const defaultResourceIds = new Set(["doctor", "technician"]);
