@@ -40,6 +40,7 @@ interface EmbeddedSignupEvent {
 
 type OAuthStatus = "idle" | "waiting" | "exchanging" | "exchanged" | "not-received" | "error";
 type CompletionStatus = "idle" | "awaiting-session" | "finalizing" | "connected" | "activating" | "operational" | "error";
+type ReadinessStatus = "idle" | "checking" | "ready" | "error";
 interface ConnectionSummary {
   connectionId: string;
   status: "connected" | "operational";
@@ -66,6 +67,10 @@ export default function EmbeddedSignupSettings({
   const [savedConfiguration, setSavedConfiguration] = useState(initialConfiguration);
   const [saving, setSaving] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
+  const [readinessStatus, setReadinessStatus] = useState<ReadinessStatus>(
+    initialConfiguration.appId && initialConfiguration.configurationId ? "checking" : "idle",
+  );
+  const [readinessError, setReadinessError] = useState<string | null>(null);
   const [pageUsesHttps, setPageUsesHttps] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -76,6 +81,7 @@ export default function EmbeddedSignupSettings({
   const connectionIdRef = useRef<string | null>(initialConnection?.connectionId ?? null);
   const sessionEventRef = useRef<EmbeddedSignupEvent | null>(null);
   const finalizingRef = useRef(false);
+  const recoveryAbortRef = useRef<AbortController | null>(null);
   const configured = Boolean(savedConfiguration.appId && savedConfiguration.configurationId);
   const dirty = appId !== savedConfiguration.appId || configurationId !== savedConfiguration.configurationId;
   const coexistenceConfirmed = sessionEvent?.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
@@ -104,6 +110,38 @@ export default function EmbeddedSignupSettings({
   }, [savedConfiguration.appId, savedConfiguration.graphVersion]);
 
   useEffect(() => {
+    if (!configured) {
+      setReadinessStatus("idle");
+      setReadinessError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setReadinessStatus("checking");
+    setReadinessError(null);
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/whatsapp/embedded-signup/readiness", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const result = await response.json() as { ready?: boolean; error?: string };
+        if (!response.ok || !result.ready) {
+          throw new Error(result.error ?? "A configuração da Meta não está pronta.");
+        }
+        setReadinessStatus("ready");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setReadinessStatus("error");
+        setReadinessError(error instanceof Error ? error.message : "Não foi possível validar a configuração da Meta.");
+      }
+    })();
+
+    return () => controller.abort();
+  }, [configured, savedConfiguration.appId, savedConfiguration.configurationId]);
+
+  useEffect(() => {
     function captureSessionEvent(event: MessageEvent) {
       let hostname: string;
       try {
@@ -120,6 +158,9 @@ export default function EmbeddedSignupSettings({
         if (data.type !== "WA_EMBEDDED_SIGNUP") return;
         setSessionEvent(data);
         sessionEventRef.current = data;
+        if (data.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") {
+          recoveryAbortRef.current?.abort();
+        }
         void finalizeIfReady(connectionIdRef.current, data);
       } catch {
         return;
@@ -127,7 +168,10 @@ export default function EmbeddedSignupSettings({
     }
 
     window.addEventListener("message", captureSessionEvent);
-    return () => window.removeEventListener("message", captureSessionEvent);
+    return () => {
+      window.removeEventListener("message", captureSessionEvent);
+      recoveryAbortRef.current?.abort();
+    };
   }, []);
 
   async function finalizeIfReady(connectionId: string | null, event: EmbeddedSignupEvent | null) {
@@ -218,11 +262,77 @@ export default function EmbeddedSignupSettings({
       connectionIdRef.current = result.connectionId;
       setOAuthStatus("exchanged");
       setCompletionStatus("awaiting-session");
-      await finalizeIfReady(result.connectionId, sessionEventRef.current);
+      const currentSessionEvent = sessionEventRef.current;
+      if (currentSessionEvent?.event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING") {
+        await finalizeIfReady(result.connectionId, currentSessionEvent);
+      } else {
+        recoveryAbortRef.current?.abort();
+        const controller = new AbortController();
+        recoveryAbortRef.current = controller;
+        void recoverFromWebhook(result.connectionId, controller.signal);
+      }
     } catch (error) {
       setOAuthStatus("error");
       setCompletionStatus("error");
       setMessage(error instanceof Error ? error.message : "Não foi possível trocar o código temporário.");
+    }
+  }
+
+  async function recoverFromWebhook(connectionId: string, signal: AbortSignal) {
+    for (let attempt = 0; attempt < 20 && !signal.aborted; attempt += 1) {
+      try {
+        const response = await fetch("/api/whatsapp/embedded-signup/recover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId }),
+          signal,
+        });
+        const result = await response.json() as {
+          success?: boolean;
+          pending?: boolean;
+          connectionId?: string;
+          wabaId?: string;
+          phoneNumberId?: string;
+          error?: string;
+        };
+        if (response.status === 202 && result.pending) {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          continue;
+        }
+        if (!response.ok || !result.success || !result.connectionId || !result.wabaId || !result.phoneNumberId) {
+          throw new Error(result.error ?? "Não foi possível recuperar a confirmação da Meta.");
+        }
+
+        const recoveredEvent: EmbeddedSignupEvent = {
+          type: "WA_EMBEDDED_SIGNUP",
+          event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING",
+          data: {
+            waba_id: result.wabaId,
+            phone_number_id: result.phoneNumberId,
+          },
+        };
+        sessionEventRef.current = recoveredEvent;
+        setSessionEvent(recoveredEvent);
+        setConnection({
+          connectionId: result.connectionId,
+          status: "connected",
+          wabaId: result.wabaId,
+          phoneNumberId: result.phoneNumberId,
+        });
+        setCompletionStatus("connected");
+        setMessage("Confirmação recuperada pelo webhook da Meta. Coexistência conectada e aguardando ativação.");
+        return;
+      } catch (error) {
+        if (signal.aborted) return;
+        setCompletionStatus("error");
+        setMessage(error instanceof Error ? error.message : "Não foi possível recuperar a confirmação da Meta.");
+        return;
+      }
+    }
+
+    if (!signal.aborted) {
+      setCompletionStatus("error");
+      setMessage("O Login Meta foi concluído, mas a confirmação de coexistência não chegou. Verifique a assinatura do webhook account_update no painel da Meta.");
     }
   }
 
@@ -260,51 +370,49 @@ export default function EmbeddedSignupSettings({
     }
   }
 
-  async function launchSignup() {
+  function launchSignup() {
     if (window.location.protocol !== "https:") {
       setMessage("O Login da Meta exige HTTPS. Abra esta página no ambiente publicado para executar o teste.");
       return;
     }
-    if (!window.FB || !sdkReady || !configured) {
+    if (!window.FB || !sdkReady || !configured || readinessStatus !== "ready") {
       setMessage("O SDK da Meta ainda não está pronto.");
       return;
     }
     setLaunching(true);
     setMessage(null);
-    try {
-      const response = await fetch("/api/whatsapp/embedded-signup/readiness", { cache: "no-store" });
-      const result = await response.json() as { ready?: boolean; error?: string };
-      if (!response.ok || !result.ready) {
-        throw new Error(result.error ?? "A configuração da Meta não está pronta.");
-      }
-    } catch (error) {
-      setLaunching(false);
-      setMessage(error instanceof Error ? error.message : "Não foi possível validar a configuração da Meta.");
-      return;
-    }
     setOAuthStatus("waiting");
     setCompletionStatus("idle");
     setSessionEvent(null);
     connectionIdRef.current = null;
     sessionEventRef.current = null;
     finalizingRef.current = false;
-    window.FB.login((response) => {
+    recoveryAbortRef.current?.abort();
+    try {
+      window.FB.login((response) => {
+        setLaunching(false);
+        if (response.authResponse?.code) {
+          void exchangeCode(response.authResponse.code);
+        } else {
+          setOAuthStatus("not-received");
+          setMessage("A Meta não retornou a autorização. Tente novamente e permita a abertura da nova janela.");
+        }
+      }, {
+        config_id: savedConfiguration.configurationId,
+        response_type: "code",
+        override_default_response_type: true,
+        extras: {
+          setup: {},
+          featureType: "whatsapp_business_app_onboarding",
+          sessionInfoVersion: "3",
+        },
+      });
+    } catch (error) {
       setLaunching(false);
-      if (response.authResponse?.code) {
-        void exchangeCode(response.authResponse.code);
-      } else {
-        setOAuthStatus("not-received");
-      }
-    }, {
-      config_id: savedConfiguration.configurationId,
-      response_type: "code",
-      override_default_response_type: true,
-      extras: {
-        setup: {},
-        featureType: "whatsapp_business_app_onboarding",
-        sessionInfoVersion: "3",
-      },
-    });
+      setOAuthStatus("error");
+      setCompletionStatus("error");
+      setMessage(error instanceof Error ? error.message : "Não foi possível abrir o Login da Meta.");
+    }
   }
 
   return (
@@ -314,6 +422,7 @@ export default function EmbeddedSignupSettings({
           id="facebook-jssdk"
           src="https://connect.facebook.net/pt_BR/sdk.js"
           strategy="afterInteractive"
+          crossOrigin="anonymous"
           onLoad={() => window.fbAsyncInit?.()}
           onError={() => setMessage("Não foi possível carregar o SDK da Meta.")}
         />
@@ -341,12 +450,13 @@ export default function EmbeddedSignupSettings({
       </form>
 
       <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-mist pt-5">
-        <button type="button" onClick={() => void launchSignup()} disabled={!configured || !sdkReady || !pageUsesHttps || launching || dirty} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal bg-white px-4 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:cursor-not-allowed disabled:opacity-45">
+        <button type="button" onClick={launchSignup} disabled={!configured || !sdkReady || readinessStatus !== "ready" || !pageUsesHttps || launching || dirty} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal bg-white px-4 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:cursor-not-allowed disabled:opacity-45">
           {launching ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           {launching ? "Aguardando Meta..." : "Conectar com a Meta"}
         </button>
-        <span className="text-xs text-stone">SDK {sdkReady ? "carregado" : configured ? "carregando" : "aguardando configuração"} · {pageUsesHttps ? "HTTPS ativo" : "HTTPS obrigatório"} · Graph API {savedConfiguration.graphVersion}</span>
+        <span className="text-xs text-stone">SDK {sdkReady ? "carregado" : configured ? "carregando" : "aguardando configuração"} · Meta {readinessStatus === "ready" ? "validada" : readinessStatus === "error" ? "inválida" : readinessStatus === "checking" ? "validando" : "aguardando configuração"} · {pageUsesHttps ? "HTTPS ativo" : "HTTPS obrigatório"} · Graph API {savedConfiguration.graphVersion}</span>
       </div>
+      {readinessError && <p role="alert" className="mt-2 text-xs leading-5 text-burnt-coral">{readinessError}</p>}
       <p className="mt-2 max-w-3xl text-xs leading-5 text-stone">A credencial é trocada no servidor e armazenada criptografada. Histórico e contatos antigos não são importados.</p>
 
       {oauthStatus !== "idle" && (

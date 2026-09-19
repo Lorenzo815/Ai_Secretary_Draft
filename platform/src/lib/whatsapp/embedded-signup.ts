@@ -224,6 +224,49 @@ export async function finalizeEmbeddedSignupConnection(input: {
   return { connectionId, wabaId, phoneNumberId };
 }
 
+export async function recoverEmbeddedSignupConnection(connectionIdInput: string) {
+  const connectionId = connectionIdInput.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(connectionId)) {
+    throw new Error("Conexão temporária inválida.");
+  }
+
+  const connection = await (await getConnectionsCollection()).findOne({ _id: connectionId });
+  if (!connection) throw new Error("Conexão temporária não encontrada.");
+  if (
+    (connection.status === "connected" || connection.status === "operational")
+    && connection.wabaId
+    && connection.phoneNumberId
+  ) {
+    return {
+      connectionId,
+      wabaId: connection.wabaId,
+      phoneNumberId: connection.phoneNumberId,
+    };
+  }
+
+  const event = await (await getWebhookEventsCollection()).findOne(
+    {
+      field: "account_update",
+      "value.event": "PARTNER_APP_INSTALLED",
+      "value.waba_info.partner_app_id": connection.appId,
+      receivedAt: { $gte: new Date(connection.createdAt.getTime() - 10 * 60_000) },
+      processedAt: null,
+    },
+    { sort: { receivedAt: -1 } },
+  );
+  if (!event) return null;
+
+  const result = await finalizeEmbeddedSignupConnection({
+    connectionId,
+    wabaId: event.wabaId,
+  });
+  await (await getWebhookEventsCollection()).updateOne(
+    { _id: event._id },
+    { $set: { processedAt: new Date() } },
+  );
+  return result;
+}
+
 export async function activateEmbeddedSignupConnection(connectionId: string) {
   const connections = await getConnectionsCollection();
   const connection = await connections.findOne({ _id: connectionId });

@@ -20,6 +20,7 @@ import {
   exchangeEmbeddedSignupCode,
   finalizeEmbeddedSignupConnection,
   getEmbeddedSignupConfiguration,
+  recoverEmbeddedSignupConnection,
   updateEmbeddedSignupConfiguration,
 } from "./embedded-signup";
 
@@ -145,6 +146,73 @@ describe("Embedded Signup configuration", () => {
     expect(updateOne).toHaveBeenCalledWith(
       { _id: "11111111-1111-4111-8111-111111111111" },
       { $set: expect.objectContaining({ status: "operational" }) },
+    );
+  });
+
+  it("recovers mobile signup from the matching account update webhook", async () => {
+    findOne.mockResolvedValueOnce({
+      _id: "active",
+      appId: "1234567890",
+      configurationId: "9876543210",
+      graphVersion: "v25.0",
+      updatedAt: new Date(),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "app-access-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ access_token: "business-token" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: "9988776655", is_on_biz_app: true, platform_type: "CLOUD_API" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const exchanged = await exchangeEmbeddedSignupCode("temporary-meta-code-long-enough");
+    const connection = insertOne.mock.calls[0][0];
+    const event = {
+      _id: "event-1",
+      wabaId: "1122334455",
+      field: "account_update",
+      value: {
+        event: "PARTNER_APP_INSTALLED",
+        waba_info: { partner_app_id: "1234567890" },
+      },
+      receivedAt: new Date(),
+      processedAt: null,
+    };
+    findOne
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(event)
+      .mockResolvedValueOnce(connection);
+
+    await expect(recoverEmbeddedSignupConnection(exchanged.connectionId)).resolves.toEqual({
+      connectionId: exchanged.connectionId,
+      wabaId: "1122334455",
+      phoneNumberId: "9988776655",
+    });
+    expect(findOne).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        field: "account_update",
+        "value.event": "PARTNER_APP_INSTALLED",
+        "value.waba_info.partner_app_id": "1234567890",
+        processedAt: null,
+      }),
+      { sort: { receivedAt: -1 } },
+    );
+    expect(updateOne).toHaveBeenLastCalledWith(
+      { _id: "event-1" },
+      { $set: { processedAt: expect.any(Date) } },
     );
   });
 
