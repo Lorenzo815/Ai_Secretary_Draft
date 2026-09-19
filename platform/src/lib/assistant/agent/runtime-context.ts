@@ -41,11 +41,19 @@ export async function buildAgentRuntimeContext(input: {
       activeSchedulingOption,
     },
     clinic: {
-      eventTypes: calendarSettings.eventTypes.map((eventType) => ({
-        key: eventType.key,
-        name: eventType.name,
-        durationMinutes: eventType.durationMinutes,
-        resourceId: eventType.resourceId,
+      eventTypes: calendarSettings.eventTypes.map((eventType) => {
+        const resource = calendarSettings.resources.find((item) => item.id === eventType.resourceId);
+        return {
+          key: eventType.key,
+          name: eventType.name,
+          durationMinutes: eventType.durationMinutes,
+          resourceId: eventType.resourceId,
+          resourceName: resource?.name ?? "Recurso não identificado",
+        };
+      }),
+      resources: calendarSettings.resources.map((resource) => ({
+        id: resource.id,
+        name: resource.name,
       })),
       schedulingPlans: input.configuration.schedulingPlans.filter((plan) => plan.enabled),
     },

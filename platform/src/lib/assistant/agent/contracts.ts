@@ -95,6 +95,11 @@ export interface AgentRuntimeContext {
       name: string;
       durationMinutes: number;
       resourceId: string;
+      resourceName: string;
+    }>;
+    resources: Array<{
+      id: string;
+      name: string;
     }>;
     schedulingPlans: SchedulingPlan[];
   };

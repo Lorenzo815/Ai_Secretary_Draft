@@ -133,6 +133,7 @@ describe("assistant commercial conduct", () => {
         },
       }],
     });
+
     const userMessage = messages[2];
     expect(userMessage.role).toBe("user");
     expect(userMessage.content).toEqual(expect.arrayContaining([
@@ -144,5 +145,14 @@ describe("assistant commercial conduct", () => {
     expect(text).toContain("wamid.original");
     expect(text).toContain("Envie uma foto.");
     expect(text).not.toContain("data:image/jpeg");
+  });
+
+  it("instructs the model to answer event catalog questions from live runtime data", () => {
+    const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
+
+    expect(prompt).toContain("runtime.clinic.eventTypes é o catálogo atual e autoritativo");
+    expect(prompt).toContain("responda diretamente com esse catálogo sem chamar calendar.find_slots");
+    expect(prompt).toContain("Uma pergunta sobre quais tipos existem não é uma consulta de horários");
+    expect(prompt).toContain("não autoriza ignorar uma nova pergunta");
   });
 });
