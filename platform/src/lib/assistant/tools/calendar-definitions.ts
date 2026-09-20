@@ -48,12 +48,14 @@ export const calendarToolDefinitions = {
 - Um único ranking não representa extremos opostos em etapas diferentes. Quando o cliente pedir, por exemplo, a primeira avaliação e a última consulta, descubra os extremos necessários com buscas separadas por eventType; depois fixe em stepCriteria o extremo já descoberto e faça a busca final do plano com o ranking da etapa restante. Para primeira avaliação + última consulta, fixe o startTime da consulta e use ranking=earliest na busca final.
 - Cada nova busca do mesmo plano substitui as propostas anteriores. Depois de descobrir horários separadamente, sempre faça a busca final do plano e apresente somente os candidateId retornados por ela.
 - O resultado retorna de um a cinco candidateId emitidos pelo servidor, com ISO 8601, data local, hora local, dia da semana e timezone. Não remonte horários manualmente.
-- Mesmo que o resultado contenha mais candidatos, apresente somente uma ou duas opções por mensagem, sempre em bullets numerados e com todas as etapas de cada opção. Isso reduz a carga de decisão do cliente.
+- Responda à pergunta concreta do cliente usando os resultados como dados, sem repetir uma fórmula fixa. Se ele perguntou apenas se há atendimento em uma data ou período, responda isso antes de propor qualquer próximo passo.
+- Apresente somente as opções necessárias para a decisão atual, mantendo a ordem e os candidateId retornados. Use bullets numerados quando apresentar mais de uma opção e inclua todas as etapas de cada opção.
+- Um resultado sem candidatos responde somente aos critérios aplicados. Não amplie data, período, horário ou tipo de evento na mesma execução. Informe apenas que não encontrou horários com os filtros pedidos e pergunte qual restrição o cliente aceita flexibilizar.
 - Em uma confirmação posterior, “Opção 1” e “Opção 2” referem-se à posição em runtime.operations.activeSchedulingOption.presentedCandidates.
 - isChronologicallyEarliest e isChronologicallyLatest comparam somente o lote limitado de candidatos da busca atual. Nunca use essas marcas para afirmar que encontrou o primeiro ou o último horário de toda a agenda; para extremos globais, execute a busca com ranking=earliest ou ranking=latest adequado.
 - Se o cliente disser apenas “a última”, use o contexto: após uma lista numerada, significa a última opção mostrada; em um pedido sobre disponibilidade, significa o horário cronologicamente mais tarde. Pergunte somente se houver ambiguidade real. Nunca tente candidatos em sequência.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("find_slots", context, args),
-    getGroundedReply: lazyGroundedReply,
+    getGroundedReply: getCalendarResultOverride,
   }),
   "calendar.book": defineTool({
     label: "Reservar horário",
@@ -68,7 +70,7 @@ export const calendarToolDefinitions = {
 - Nunca use esta ferramenta para reagendar e nunca monte horários, customerId ou IDs manualmente.
 - Uma proposta expirada, substituída ou já consumida deve ser pesquisada novamente.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book", context, args),
-    getGroundedReply: lazyGroundedReply,
+    getGroundedReply: getCalendarResultOverride,
   }),
   "calendar.reschedule": defineTool({
     label: "Reagendar horário",
@@ -84,7 +86,7 @@ export const calendarToolDefinitions = {
 - Nunca chame calendar.book antes ou depois para concluir um reagendamento; isso criaria duplicatas.
 - Esta ferramenta não cancela nem exclui eventos. Pedido apenas para cancelar deve usar human_handoff sem ferramenta de agenda.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("reschedule", context, args),
-    getGroundedReply: lazyGroundedReply,
+    getGroundedReply: getCalendarResultOverride,
   }),
 } satisfies Record<string, ToolDefinition>;
 
@@ -96,21 +98,14 @@ function strictArguments(required: string[], properties: Record<string, unknown>
   return { type: "object", additionalProperties: false, required, properties };
 }
 
-function lazyGroundedReply(output: string) {
-  const parsed = JSON.parse(output) as { ok?: boolean; tool?: string; type?: string; optionId?: string; preference?: string; planName?: string; candidates?: Array<{ steps?: Array<{ label?: string; startAt?: string; weekdayLabel?: string; localDate?: string; localTime?: string }> }>; steps?: Array<{ label?: string; startAt?: string }>; slots?: Array<{ label?: string }>; appointments?: Array<{ startAt?: string; eventTypeName?: string }>; startAt?: string; timezone?: string };
-  if (parsed.ok && parsed.tool === "calendar.find_slots") {
-    const candidates = parsed.candidates?.slice(0, 2).flatMap((candidate) => {
-      const steps = candidate.steps?.flatMap((step) => step.startAt
-        ? [`${step.label ?? "Evento"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
-        : []) ?? [];
-      return steps.length > 0 ? [joinRequiredSteps(steps)] : [];
-    }) ?? [];
-    return candidates.length > 1
-      ? `Encontrei estas opções:\n${candidates.map((candidate, index) => `- Opção ${index + 1}: ${candidate}`).join("\n")}\nQual delas você prefere?`
-      : candidates.length === 1
-        ? `Encontrei esta opção:\n- Opção 1: ${candidates[0]}\nEsse horário funciona para você?`
-      : "Não encontrei horários disponíveis com essas preferências. Você gostaria de ampliar o período ou escolher outro período do dia?";
-  }
+function getCalendarResultOverride(output: string) {
+  const parsed = JSON.parse(output) as {
+    ok?: boolean;
+    tool?: string;
+    type?: string;
+    steps?: Array<{ label?: string; startAt?: string }>;
+    timezone?: string;
+  };
   if (parsed.ok && (parsed.tool === "calendar.book" || parsed.tool === "calendar.reschedule")) {
     const labels = parsed.steps?.flatMap((step) => step.startAt
       ? [`${step.label ?? "Evento"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
@@ -121,43 +116,10 @@ function lazyGroundedReply(output: string) {
         : `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;
     }
   }
-  if (parsed.ok && parsed.tool === "calendar.find_plan_option") {
-    const labels = parsed.steps?.flatMap((step) => step.startAt
-      ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
-      : []) ?? [];
-    return parsed.optionId && labels.length > 0
-      ? `Minha sugestão para ${parsed.planName ?? "o atendimento"} é ${joinRequiredSteps(labels)}. Posso reservar esses horários?`
-      : "Não encontrei uma combinação disponível com essas preferências. Você gostaria de ampliar o período ou flexibilizar os horários?";
-  }
-  if (parsed.ok && parsed.tool === "calendar.book_plan_option") {
-    const labels = parsed.steps?.flatMap((step) => step.startAt
-      ? [`${step.label ?? "Etapa"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
-      : []) ?? [];
-    if (labels.length > 0) return `Seu agendamento foi confirmado: ${joinRequiredSteps(labels)}.`;
-  }
-  if (parsed.ok && parsed.tool === "calendar.check_availability") {
-    const labels = parsed.slots?.flatMap((slot) => slot.label ? [slot.label] : []) ?? [];
-    return labels.length > 0
-      ? `Encontrei estes horários disponíveis: ${joinLabels(labels)}. Qual deles você prefere?`
-      : "Não encontrei horários disponíveis nesse período. Você prefere ampliar o intervalo ou escolher outro período do dia?";
-  }
-  if (parsed.ok && parsed.tool === "calendar.list_appointments") {
-    const labels = parsed.appointments?.flatMap((appointment) => appointment.startAt
-      ? [`${appointment.eventTypeName ?? "Evento"} em ${formatDateTime(appointment.startAt, parsed.timezone)}`]
-      : []) ?? [];
-    return labels.length > 0 ? `Encontrei: ${joinLabels(labels)}.` : "Não encontrei eventos seus com esses filtros.";
-  }
-  if (parsed.ok && parsed.tool === "calendar.book_appointment" && parsed.startAt) {
-    return `Seu agendamento foi confirmado para ${formatDateTime(parsed.startAt, parsed.timezone)}.`;
-  }
-  if (parsed.ok && parsed.tool === "calendar.update_appointment") {
-    const labels = parsed.appointments?.flatMap((appointment) => appointment.startAt
-      ? [`${appointment.eventTypeName ?? "Evento"} em ${formatDateTime(appointment.startAt, parsed.timezone)}`]
-      : []) ?? [];
-    if (labels.length > 0) return `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;
-  }
   if (parsed.type === "operational_error") {
-    return "Não consegui acessar a agenda agora. Vou precisar que a equipe continue esta solicitação.";
+    return parsed.tool === "calendar.find_slots"
+      ? "Não consegui consultar a agenda agora. Você pode tentar novamente em alguns minutos."
+      : "Não consegui confirmar o resultado na agenda agora. Para evitar duplicidade, não repetirei a operação automaticamente.";
   }
   return null;
 }
@@ -172,11 +134,6 @@ function formatDateTime(value: string, timezone?: string) {
     minute: "2-digit",
     timeZone: timezone,
   }).format(new Date(value));
-}
-
-function joinLabels(labels: string[]) {
-  if (labels.length === 1) return labels[0];
-  return `${labels.slice(0, -1).join(", ")} ou ${labels.at(-1)}`;
 }
 
 function joinRequiredSteps(labels: string[]) {

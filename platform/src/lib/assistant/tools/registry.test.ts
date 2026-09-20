@@ -120,7 +120,7 @@ describe("tool registry", () => {
     expect(final.properties.action.properties.type.enum).toEqual(["final"]);
   });
 
-  it("renders ranked candidates with arbitrary configured plan steps", () => {
+  it("does not replace the model response with a slot-search template", () => {
     const reply = getGroundedToolReply(JSON.stringify({
       executedTools: ["calendar.find_slots"],
       results: [{
@@ -134,29 +134,37 @@ describe("tool registry", () => {
       }],
     }));
 
-    expect(reply).toContain("Avaliação");
-    expect(reply).toContain(" e Consulta");
-    expect(reply).toContain("sexta-feira");
+    expect(reply).toBeNull();
   });
 
-  it("shows at most two schedule options as bullets", () => {
-    const candidate = (hour: string) => ({ steps: [
-      { label: "Consulta", startAt: `2026-09-04T${hour}:00:00-03:00` },
-    ] });
+  it.each([
+    "calendar.find_plan_option",
+    "calendar.book_plan_option",
+    "calendar.check_availability",
+    "calendar.list_appointments",
+    "calendar.book_appointment",
+    "calendar.update_appointment",
+  ])("does not render a legacy grounded reply for %s", (tool) => {
+    const reply = getGroundedToolReply(JSON.stringify({
+      executedTools: [tool],
+      results: [{ ok: true, tool, startAt: "2026-09-04T09:00:00-03:00" }],
+    }));
+
+    expect(reply).toBeNull();
+  });
+
+  it("reports calendar failures without promising an unregistered handoff", () => {
     const reply = getGroundedToolReply(JSON.stringify({
       executedTools: ["calendar.find_slots"],
       results: [{
-        ok: true,
+        ok: false,
         tool: "calendar.find_slots",
-        timezone: "America/Sao_Paulo",
-        candidates: [candidate("09"), candidate("10"), candidate("11")],
+        type: "operational_error",
       }],
     }));
 
-    expect(reply).toContain("- Opção 1:");
-    expect(reply).toContain("- Opção 2:");
-    expect(reply).not.toContain("Opção 3");
-    expect(reply).not.toContain("11:00");
+    expect(reply).toContain("Não consegui consultar a agenda");
+    expect(reply).not.toContain("equipe");
   });
 
   it("counts only a successful tool result as executed", () => {
@@ -184,5 +192,22 @@ describe("tool registry", () => {
 
     expect(reply).toContain("Bioimpedância");
     expect(reply).toContain(" e Consulta Dr.");
+  });
+
+  it("keeps successful booking confirmations grounded in server data", () => {
+    const reply = getGroundedToolReply(JSON.stringify({
+      executedTools: ["calendar.book"],
+      results: [{
+        ok: true,
+        tool: "calendar.book",
+        timezone: "America/Sao_Paulo",
+        steps: [
+          { label: "Consulta", startAt: "2026-09-08T09:30:00-03:00" },
+        ],
+      }],
+    }));
+
+    expect(reply).toContain("Seu agendamento foi confirmado");
+    expect(reply).toContain("Consulta");
   });
 });

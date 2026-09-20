@@ -58,6 +58,7 @@ export interface AgentConfigurationDocument {
   enabled: boolean;
   identityPrompt: string;
   conversationPolicy: string;
+  responseStyle: string;
   offensePolicy: string;
   handoffPolicy: string;
   journeyPolicy: string;

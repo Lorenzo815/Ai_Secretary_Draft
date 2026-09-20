@@ -5,7 +5,7 @@ import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument } from "./contracts";
-import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY } from "./defaults";
+import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RESPONSE_STYLE } from "./defaults";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
@@ -22,12 +22,14 @@ export async function getAgentConfiguration() {
     const enabledTools = migrateLegacyToolKeys(existing.enabledTools);
     const toolGuidance = normalizeToolGuidance(existing.toolGuidance);
     const journeyPolicy = normalizeJourneyPolicy(existing.journeyPolicy);
+    const responseStyle = normalizeResponseStyle(existing.responseStyle);
     const loopPolicy = normalizeLoopPolicy(existing.loopPolicy);
     if (
       enabledTools.join("|") === existing.enabledTools.join("|") &&
       existing.toolGuidance !== undefined &&
       JSON.stringify(toolGuidance) === JSON.stringify(existing.toolGuidance) &&
       journeyPolicy === existing.journeyPolicy &&
+      responseStyle === existing.responseStyle &&
       JSON.stringify(loopPolicy) === JSON.stringify(existing.loopPolicy)
     ) return existing;
     const migrated = withContentHash({
@@ -35,6 +37,7 @@ export async function getAgentConfiguration() {
       enabledTools,
       toolGuidance,
       journeyPolicy,
+      responseStyle,
       loopPolicy,
       revision: existing.revision + 1,
       contentHash: "",
@@ -50,6 +53,7 @@ export async function getAgentConfiguration() {
           enabledTools: migrateLegacyToolKeys(concurrent.enabledTools),
           toolGuidance: normalizeToolGuidance(concurrent.toolGuidance),
           journeyPolicy: normalizeJourneyPolicy(concurrent.journeyPolicy),
+          responseStyle: normalizeResponseStyle(concurrent.responseStyle),
           loopPolicy: normalizeLoopPolicy(concurrent.loopPolicy),
         }
       : migrated;
@@ -128,6 +132,7 @@ function withoutMetadata(document: AgentConfigurationDocument) {
     enabled: document.enabled,
     identityPrompt: document.identityPrompt,
     conversationPolicy: document.conversationPolicy,
+    responseStyle: document.responseStyle,
     offensePolicy: document.offensePolicy,
     handoffPolicy: document.handoffPolicy,
     journeyPolicy: document.journeyPolicy,
@@ -152,8 +157,11 @@ function withContentHash(document: AgentConfigurationDocument) {
 function validateConfiguration(
   configuration: Omit<AgentConfigurationDocument, "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy">,
 ) {
-  if (!configuration.identityPrompt.trim() || !configuration.conversationPolicy.trim()) {
-    throw new Error("Identidade e política de conversa são obrigatórias.");
+  if (!configuration.identityPrompt.trim() || !configuration.conversationPolicy.trim() || !configuration.responseStyle.trim()) {
+    throw new Error("Identidade, política de conversa e estilo de resposta são obrigatórios.");
+  }
+  if (configuration.responseStyle.length > 8_000) {
+    throw new Error("O estilo de resposta deve ter entre 1 e 8.000 caracteres.");
   }
   if (!configuration.journeyPolicy.trim() || configuration.journeyPolicy.length > 8_000) {
     throw new Error("A política da jornada deve ter entre 1 e 8.000 caracteres.");
@@ -200,6 +208,10 @@ function validateConfiguration(
 
 function normalizeJourneyPolicy(value: unknown) {
   return typeof value === "string" && value.trim() ? value : DEFAULT_JOURNEY_POLICY;
+}
+
+function normalizeResponseStyle(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : DEFAULT_RESPONSE_STYLE;
 }
 
 function normalizeLoopPolicy(value: AgentConfigurationDocument["loopPolicy"]) {

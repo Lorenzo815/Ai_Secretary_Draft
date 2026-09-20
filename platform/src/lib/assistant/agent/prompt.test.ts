@@ -92,6 +92,23 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("a reserva só será confirmada depois dos pré-requisitos");
   });
 
+  it("compiles response style separately from conversation policy", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(prompt).toContain("ESTILO DE RESPOSTA:");
+    expect(prompt).toContain(configuration.responseStyle);
+    expect(configuration.responseStyle).toContain("uma a três frases curtas");
+  });
+
+  it("preserves explicit availability constraints after an empty search", () => {
+    const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
+
+    expect(prompt).toContain("zero candidatos não é falha técnica");
+    expect(prompt).toContain("Não faça outra busca ampliando");
+    expect(prompt).toContain("Nunca ofereça uma data anterior");
+  });
+
   it("grounds follow-ups in recent evidence without exposing internal analysis", () => {
     const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
 

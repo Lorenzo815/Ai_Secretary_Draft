@@ -156,6 +156,7 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument) {
     enabled: configuration.enabled,
     identityPrompt: configuration.identityPrompt,
     conversationPolicy: configuration.conversationPolicy,
+    responseStyle: configuration.responseStyle,
     offensePolicy: configuration.offensePolicy,
     handoffPolicy: configuration.handoffPolicy,
     journeyPolicy: configuration.journeyPolicy,

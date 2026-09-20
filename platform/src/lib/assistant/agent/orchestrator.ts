@@ -3,7 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { findCustomerById, updateCustomerServiceStatus } from "../../crm";
 import { sendTextMessage } from "../../whatsapp/client";
-import { saveWhatsAppMessage } from "../../whatsapp/messages";
+import { isLatestInboundWhatsAppMessage, saveWhatsAppMessage } from "../../whatsapp/messages";
 import type { AutomationJobDocument } from "../../automation/contracts";
 import {
   claimAutomationJob,
@@ -35,6 +35,7 @@ import { executeAgentTool } from "./tool-policy";
 import { getAgentFinalMessage } from "./final-response";
 import type { AgentFinalResponse } from "./contracts";
 import type { AgentToolHistoryEntry } from "./prompt";
+import { isEmptyAvailabilityResult } from "./availability-result";
 
 export async function processNextAssistantJob() {
   const runtimeConfig = getAssistantConfig();
@@ -93,6 +94,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
     run = await startAgentRun({ customerId: job.customerId, jobRevision: job.revision, configuration, checkpoint });
     const toolHistory: AgentToolHistoryEntry[] = [...checkpoint.toolHistory];
     const invalidFingerprints = new Map<string, number>();
+    let requireFinalResponse = isEmptyAvailabilityResult(toolHistory.at(-1)?.result);
 
     for (let iteration = modelIterations + 1; iteration <= configuration.loopPolicy.maxModelIterations; iteration += 1) {
       if (!(await isAutomationJobCurrent(job._id, job.revision))) {
@@ -124,7 +126,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         previousSummary: context.summary,
         messages: context.messages,
         toolHistory,
-        finalIteration: iteration === configuration.loopPolicy.maxModelIterations,
+        finalIteration: requireFinalResponse || iteration === configuration.loopPolicy.maxModelIterations,
       });
       modelIterations += 1;
       const action = generated.value;
@@ -164,6 +166,9 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         const parsedResult = parseToolResult(execution.output);
         const historyEntry = { resultId, request: action, result: parsedResult };
         toolHistory.push(historyEntry);
+        if (action.toolCall.tool === "calendar.find_slots" && isEmptyAvailabilityResult(parsedResult)) {
+          requireFinalResponse = true;
+        }
         if (wasToolSuccessfullyExecuted(execution.output, action.toolCall.tool)) {
           checkpoint.toolResultsByFingerprint.set(fingerprint, historyEntry);
         }
@@ -315,6 +320,17 @@ async function finalize(input: {
       });
       return { processed: true as const, skipped: "customer_replied" };
     }
+  }
+  if (!(await isLatestInboundWhatsAppMessage(input.job.customerId, input.latestInbound._id))) {
+    await finishAgentRun({
+      runId: input.run._id,
+      status: "superseded",
+      modelIterations: input.modelIterations,
+      toolExecutions: input.toolExecutions,
+      mutationsExecuted: input.mutationsExecuted,
+    });
+    await completeAutomationJob(input.job._id, input.job.revision);
+    return { processed: true as const, skipped: "newer_message_arrived" };
   }
   const body = getAgentFinalMessage(input.response, input.groundedReply);
   if (input.response.decision === "human_handoff" || input.response.decision === "emergency") {

@@ -35,11 +35,11 @@ export function selectSchedulingPlanCandidates(input: {
 }) {
   const candidates: PlanCandidateStep[][] = [];
   buildCandidates(input.plan, input.slotsByStep, 0, [], candidates, 10_000);
-  return candidates
+  const ranked = candidates
     .filter((candidate) => satisfiesConstraints(input.plan, candidate))
     .filter((candidate) => !input.offeredSignatures.has(candidateSignature(candidate)))
-    .sort((first, second) => compareCandidates(first, second, input.preference, input.preferredTime))
-    .slice(0, Math.min(Math.max(input.limit, 1), 5));
+    .sort((first, second) => compareCandidates(first, second, input.preference, input.preferredTime));
+  return selectDiverseCandidates(ranked, Math.min(Math.max(input.limit, 1), 5));
 }
 
 export function candidateSignature(candidate: PlanCandidateStep[]) {
@@ -149,4 +149,36 @@ function spanMinutes(candidate: PlanCandidateStep[]) {
   const starts = candidate.map((step) => DateTime.fromISO(step.slot.startAt).toMillis());
   const ends = candidate.map((step) => DateTime.fromISO(step.slot.endAt).toMillis());
   return (Math.max(...ends) - Math.min(...starts)) / 60_000;
+}
+
+function selectDiverseCandidates(candidates: PlanCandidateStep[][], limit: number) {
+  if (candidates.length <= 1 || limit === 1) return candidates.slice(0, limit);
+  const selected: PlanCandidateStep[][] = [];
+  for (const candidate of candidates) {
+    if (selected.length === 0 || selected.every((existing) => areMeaningfullyDistinct(existing, candidate))) {
+      selected.push(candidate);
+      if (selected.length === limit) return selected;
+    }
+  }
+  for (const candidate of candidates) {
+    if (!selected.includes(candidate)) selected.push(candidate);
+    if (selected.length === limit) break;
+  }
+  return selected;
+}
+
+function areMeaningfullyDistinct(first: PlanCandidateStep[], second: PlanCandidateStep[]) {
+  const secondByStep = new Map(second.map((step) => [step.stepKey, step]));
+  const comparable = first.flatMap((step) => {
+    const other = secondByStep.get(step.stepKey);
+    return other ? [{ first: step, second: other }] : [];
+  });
+  if (comparable.length === 0) return true;
+  const requiredSeparation = Math.max(...comparable.map(({ first: step }) => (
+    DateTime.fromISO(step.slot.endAt).diff(DateTime.fromISO(step.slot.startAt), "minutes").minutes
+  )));
+  const actualSeparation = Math.max(...comparable.map(({ first: firstStep, second: secondStep }) => (
+    Math.abs(DateTime.fromISO(secondStep.slot.startAt).diff(DateTime.fromISO(firstStep.slot.startAt), "minutes").minutes)
+  )));
+  return actualSeparation >= requiredSeparation;
 }

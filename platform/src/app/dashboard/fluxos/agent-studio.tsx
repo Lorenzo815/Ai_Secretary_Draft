@@ -1,9 +1,9 @@
 "use client";
 
-import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
+import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-type Tab = "conversation" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
+type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
 type Condition = { field: string; operator: Operator; value?: string | number | boolean };
 type ConditionGroup = { all?: Condition[]; any?: Condition[] };
@@ -25,6 +25,7 @@ interface AgentConfiguration {
   enabled: boolean;
   identityPrompt: string;
   conversationPolicy: string;
+  responseStyle: string;
   offensePolicy: string;
   handoffPolicy: string;
   journeyPolicy: string;
@@ -115,6 +116,7 @@ async function requestStudioPayload() {
 
 const tabs: Array<{ id: Tab; label: string; group: "Agente" | "Operação" | "Tarefas" | "Técnico"; icon: LucideIcon; description: string; configKey: string }> = [
   { id: "conversation", label: "Conversa", group: "Agente", icon: MessageCircle, description: "Defina como o agente se apresenta, conversa, reage e encaminha atendimentos.", configKey: "agent_config.*Prompt / *Policy" },
+  { id: "style", label: "Estilo de resposta", group: "Agente", icon: PenLine, description: "Defina comprimento, tom, estrutura e estilo geral das mensagens.", configKey: "agent_config.responseStyle" },
   { id: "journey", label: "Jornada", group: "Agente", icon: ListOrdered, description: "Oriente a sequência ideal sem bloquear consultas úteis solicitadas pelo cliente.", configKey: "agent_config.journeyPolicy" },
   { id: "knowledge", label: "Conhecimento", group: "Agente", icon: BookOpen, description: "Mantenha os fatos que o agente pode usar como fonte nas respostas.", configKey: "agent_config.knowledge" },
   { id: "data", label: "Dados", group: "Agente", icon: Database, description: "Escolha quais dados cadastrais o agente coleta e em qual ordem.", configKey: "agent_config.dataCollectionRules" },
@@ -324,6 +326,7 @@ export function AgentStudio() {
 
     <main className="min-h-[520px] py-5">
       {tab === "conversation" && <ConversationEditor value={agent} change={setAgent} />}
+      {tab === "style" && <ResponseStyleEditor value={agent} change={setAgent} />}
       {tab === "journey" && <JourneyEditor value={agent} change={setAgent} />}
       {tab === "knowledge" && <Field label="Conhecimento autorizado" fieldKey="knowledge"><textarea rows={22} value={agent.knowledge} onChange={(event) => setAgent({ ...agent, knowledge: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></Field>}
       {tab === "data" && <DataEditor rules={agent.dataCollectionRules} change={(dataCollectionRules) => setAgent({ ...agent, dataCollectionRules })} />}
@@ -351,6 +354,17 @@ function ConversationEditor({ value, change }: { value: AgentConfiguration; chan
     <Field label="Política de conversa" fieldKey="conversationPolicy"><textarea rows={8} value={value.conversationPolicy} onChange={(event) => change({ ...value, conversationPolicy: event.target.value })} className={textareaClass} /></Field>
     <Field label="Conduta diante de ofensas" fieldKey="offensePolicy"><textarea rows={6} value={value.offensePolicy} onChange={(event) => change({ ...value, offensePolicy: event.target.value })} className={textareaClass} /></Field>
     <Field label="Encaminhamento humano" fieldKey="handoffPolicy"><textarea rows={6} value={value.handoffPolicy} onChange={(event) => change({ ...value, handoffPolicy: event.target.value })} className={textareaClass} /></Field>
+  </div>;
+}
+
+function ResponseStyleEditor({ value, change }: { value: AgentConfiguration; change: (value: AgentConfiguration) => void }) {
+  return <div className="space-y-4">
+    <div className="rounded-lg border border-mist bg-soft-ivory p-4 text-sm leading-6 text-stone">
+      Estas instruções controlam somente a forma das respostas. Regras de negócio, segurança, ferramentas e fatos autorizados continuam definidos nas outras seções.
+    </div>
+    <Field label="Comprimento e estilo geral" fieldKey="responseStyle">
+      <textarea rows={16} value={value.responseStyle} onChange={(event) => change({ ...value, responseStyle: event.target.value })} className={textareaClass} />
+    </Field>
   </div>;
 }
 
@@ -580,4 +594,4 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
 function formatHour(hour: number) { return `${String(hour).padStart(2, "0")}:00`; }
-function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }
+function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }

@@ -98,6 +98,9 @@ ${configuration.identityPrompt}
 CONDUTA DE CONVERSA:
 ${configuration.conversationPolicy}
 
+ESTILO DE RESPOSTA:
+${configuration.responseStyle}
+
 OFENSAS:
 ${configuration.offensePolicy}
 
@@ -130,6 +133,8 @@ REGRAS DE EXECUÇÃO:
 - Faça uma solicitação de ferramenta por iteração. O resultado será acumulado em toolHistory.
 - Não repita uma ferramenta bem-sucedida com os mesmos argumentos.
 - Quando uma ferramenta falhar, use o erro retornado para corrigir os argumentos ou escolher uma alternativa válida e tente novamente se ainda houver orçamento. Não repita a mesma chamada inválida sem alteração.
+- Uma busca de agenda bem-sucedida com zero candidatos não é falha técnica. Não faça outra busca ampliando ou alterando os critérios na mesma execução; explique o resultado e pergunte ao cliente qual restrição ele aceita flexibilizar.
+- Preserve literalmente as restrições explícitas mais recentes de data, distância temporal, dia da semana, período e horário. Nunca ofereça uma data anterior, outro período ou outro dia sem autorização do cliente.
 - calendar.book e calendar.reschedule encerram a ação após o primeiro resultado ok=true. Nunca execute outro candidato como alternativa no mesmo job.
 - Nunca use IDs fictícios ou placeholders. calendar.book e calendar.reschedule aceitam somente candidateId emitido por calendar.find_slots e confirmado explicitamente pelo cliente.
 - Respeite os pré-requisitos e as restrições dos planos. Uma regra descrita no prompt nunca autoriza ignorar validação do servidor.

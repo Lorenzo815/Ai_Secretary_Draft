@@ -132,6 +132,14 @@ export async function findLatestInboundWhatsAppMessage(customerId: ObjectId, pho
   );
 }
 
+export async function isLatestInboundWhatsAppMessage(customerId: ObjectId, messageId: ObjectId) {
+  const latest = await (await getMessagesCollection()).findOne(
+    { customerId, direction: "inbound" },
+    { projection: { _id: 1 }, sort: { timestamp: -1, _id: -1 } },
+  );
+  return latest?._id.equals(messageId) ?? false;
+}
+
 export async function ensureWhatsAppMessageIndexes() {
   const messages = await getMessagesCollection();
   await Promise.all([

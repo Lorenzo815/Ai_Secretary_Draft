@@ -163,4 +163,47 @@ describe("scheduling plan selection", () => {
 
     expect(candidates[0][0].slot.startAt).toContain("11:00");
   });
+
+  it("presents alternatives separated by the event duration when possible", () => {
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, steps: [basePlan.steps[0]] },
+      slotsByStep: new Map([["assessment", [
+        slot("2026-09-04T09:00:00-03:00", "2026-09-04T10:00:00-03:00"),
+        slot("2026-09-04T09:15:00-03:00", "2026-09-04T10:15:00-03:00"),
+        slot("2026-09-04T09:30:00-03:00", "2026-09-04T10:30:00-03:00"),
+        slot("2026-09-04T10:00:00-03:00", "2026-09-04T11:00:00-03:00"),
+      ]]]),
+      preference: "earliest",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates.map((candidate) => candidate[0].slot.startAt)).toEqual([
+      "2026-09-04T09:00:00-03:00",
+      "2026-09-04T10:00:00-03:00",
+    ]);
+  });
+
+  it("avoids plan alternatives that only shift one step by a few minutes", () => {
+    const candidates = selectSchedulingPlanCandidates({
+      plan: { ...basePlan, constraints: [{ type: "ordered", before: "assessment", after: "consultation" }] },
+      slotsByStep: new Map([
+        ["assessment", [
+          slot("2026-09-04T09:00:00-03:00", "2026-09-04T09:15:00-03:00"),
+          slot("2026-09-04T10:30:00-03:00", "2026-09-04T10:45:00-03:00"),
+        ]],
+        ["consultation", [
+          slot("2026-09-04T09:15:00-03:00", "2026-09-04T10:45:00-03:00"),
+          slot("2026-09-04T09:30:00-03:00", "2026-09-04T11:00:00-03:00"),
+          slot("2026-09-04T10:45:00-03:00", "2026-09-04T12:15:00-03:00"),
+        ]],
+      ]),
+      preference: "compact",
+      offeredSignatures: new Set(),
+      limit: 2,
+    });
+
+    expect(candidates[0][0].slot.startAt).toContain("09:00");
+    expect(candidates[1][0].slot.startAt).toContain("10:30");
+  });
 });
