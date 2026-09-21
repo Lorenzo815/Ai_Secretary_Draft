@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Collection, MongoServerError, ObjectId } from "mongodb";
+import { Collection, MongoServerError, ObjectId, type UpdateFilter } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
@@ -450,71 +450,88 @@ export async function bookAppointment(input: BookAppointmentInput) {
 
 export async function bookManualAppointment(input: PersistAppointmentInput) {
   const settings = await getCalendarSettings();
-  const requested = DateTime.fromISO(input.startAt, { zone: settings.timezone, setZone: true });
-  if (!requested.isValid) throw new Error("Data do agendamento inválida.");
-  if (requested <= DateTime.now().setZone(settings.timezone)) {
-    throw new Error("O evento manual deve começar em uma data e hora futuras.");
-  }
-  const eventType = settings.eventTypes.find((item) => item.key === input.eventType);
-  if (!eventType) throw new Error("Tipo de evento inválido.");
-  const resource = settings.resources.find((item) => item.id === eventType.resourceId);
-  if (!resource) throw new Error("O tipo de evento aponta para um profissional inexistente.");
-  const endAt = requested.plus({ minutes: eventType.durationMinutes });
-  const availability = resource.weeklyAvailability.find((item) => item.weekday === requested.weekday);
-  const containingInterval = availability?.enabled
-    ? availability.intervals.find((interval) => (
-        requested >= atLocalTime(requested, interval.startTime)
-        && endAt <= atLocalTime(requested, interval.endTime)
-      ))
-    : undefined;
-  if (!containingInterval) {
-    const configured = availability?.enabled && availability.intervals.length > 0
-      ? availability.intervals.map((interval) => `${interval.startTime}–${interval.endTime}`).join(" ou ")
-      : "sem expediente";
-    throw new Error(`${eventType.name} precisa ficar integralmente no expediente de ${resource.name} (${configured} neste dia).`);
-  }
-
-  const requestedStartUtc = requested.toUTC();
-  const requestedEndUtc = endAt.toUTC();
-  const [accessEvents, conflictingAppointment] = await Promise.all([
-    listCalendarAccessEvents(requestedStartUtc.toJSDate(), requestedEndUtc.toJSDate()),
-    (await getAppointmentsCollection()).findOne({
-      providerId: resource.id,
-      status: "scheduled",
-      startAt: { $lt: requestedEndUtc.toJSDate() },
-      endAt: { $gt: requestedStartUtc.toJSDate() },
-    }),
-  ]);
-  const accessDecision = getSlotAccessDecision(
-    accessEvents,
-    resource.id,
-    requestedStartUtc.toJSDate(),
-    requestedEndUtc.toJSDate(),
-  );
-  if (accessDecision.blocker) {
-    throw new Error(
-      `Conflita com o bloqueio “${accessDecision.blocker.title}” de ${formatLocalTime(accessDecision.blocker.startAt, settings.timezone)} a ${formatLocalTime(accessDecision.blocker.endAt, settings.timezone)} para ${resource.name}.`,
-    );
-  }
-  if (!accessDecision.permitted) {
-    throw new Error(`Não há uma permissão que cubra todo o período de ${requested.toFormat("HH:mm")} a ${endAt.toFormat("HH:mm")} para ${resource.name}.`);
-  }
-  if (conflictingAppointment) {
-    throw new Error(
-      `Conflita com outro evento de ${resource.name} de ${formatLocalTime(conflictingAppointment.startAt, settings.timezone)} a ${formatLocalTime(conflictingAppointment.endAt, settings.timezone)}.`,
-    );
-  }
+  const slot = await validateManualAppointmentSlot({
+    settings,
+    startAt: input.startAt,
+    eventTypeKey: input.eventType,
+  });
 
   const appointment = await persistAppointment(
     input,
     settings,
-    requestedStartUtc,
-    requestedEndUtc,
+    slot.startAt,
+    slot.endAt,
   );
   if (input.customerId) {
     await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.createdAt);
   }
   return appointment;
+}
+
+export async function updateManualAppointment(input: {
+  appointmentId: string;
+  customerId?: ObjectId;
+  customerName: string;
+  contactPhone: string;
+  startAt: string;
+  eventType: string;
+  notes?: string;
+}) {
+  if (!ObjectId.isValid(input.appointmentId)) throw new Error("Evento inválido.");
+  const appointments = await getAppointmentsCollection();
+  const appointmentId = new ObjectId(input.appointmentId);
+  const current = await appointments.findOne({
+    _id: appointmentId,
+    source: "manual",
+    status: "scheduled",
+  });
+  if (!current) throw new Error("Evento manual não encontrado ou já encerrado.");
+
+  const settings = await getCalendarSettings();
+  const slot = await validateManualAppointmentSlot({
+    settings,
+    startAt: input.startAt,
+    eventTypeKey: input.eventType,
+    excludeAppointmentId: appointmentId,
+  });
+  const now = new Date();
+  const notes = input.notes?.trim().slice(0, 1_000);
+  const setFields = {
+    providerId: slot.eventType.resourceId,
+    ...(input.customerId ? { customerId: input.customerId } : {}),
+    customerName: input.customerName,
+    contactPhone: input.contactPhone,
+    startAt: slot.startAt.toJSDate(),
+    endAt: slot.endAt.toJSDate(),
+    timezone: settings.timezone,
+    eventType: slot.eventType.key,
+    ...(notes ? { notes } : {}),
+    updatedAt: now,
+  };
+  const update: UpdateFilter<AppointmentDocument> = { $set: setFields };
+  if (!input.customerId || !notes) {
+    update.$unset = {
+      ...(!input.customerId ? { customerId: "" as const } : {}),
+      ...(!notes ? { notes: "" as const } : {}),
+    };
+  }
+  try {
+    const appointment = await appointments.findOneAndUpdate(
+      { _id: appointmentId, source: "manual", status: "scheduled", updatedAt: current.updatedAt },
+      update,
+      { returnDocument: "after" },
+    );
+    if (!appointment) throw new Error("O evento foi alterado por outra operação. Atualize a agenda e tente novamente.");
+    if (input.customerId && !current.customerId?.equals(input.customerId)) {
+      await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.updatedAt);
+    }
+    return appointment;
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error("Já existe um evento para este profissional no horário escolhido.");
+    }
+    throw error;
+  }
 }
 
 export async function updateCustomerAppointment(input: {
@@ -848,6 +865,70 @@ function atLocalTime(day: DateTime, time: string) {
 
 function formatLocalTime(value: Date, timezone: string) {
   return DateTime.fromJSDate(value).setZone(timezone).toFormat("HH:mm");
+}
+
+async function validateManualAppointmentSlot(input: {
+  settings: CalendarSettingsDocument;
+  startAt: string;
+  eventTypeKey?: string;
+  excludeAppointmentId?: ObjectId;
+}) {
+  const requested = DateTime.fromISO(input.startAt, { zone: input.settings.timezone, setZone: true });
+  if (!requested.isValid) throw new Error("Data do agendamento inválida.");
+  if (requested <= DateTime.now().setZone(input.settings.timezone)) {
+    throw new Error("O evento manual deve começar em uma data e hora futuras.");
+  }
+  const eventType = input.settings.eventTypes.find((item) => item.key === input.eventTypeKey);
+  if (!eventType) throw new Error("Tipo de evento inválido.");
+  const resource = input.settings.resources.find((item) => item.id === eventType.resourceId);
+  if (!resource) throw new Error("O tipo de evento aponta para um profissional inexistente.");
+  const endAt = requested.plus({ minutes: eventType.durationMinutes });
+  const availability = resource.weeklyAvailability.find((item) => item.weekday === requested.weekday);
+  const containingInterval = availability?.enabled
+    ? availability.intervals.find((interval) => (
+        requested >= atLocalTime(requested, interval.startTime)
+        && endAt <= atLocalTime(requested, interval.endTime)
+      ))
+    : undefined;
+  if (!containingInterval) {
+    const configured = availability?.enabled && availability.intervals.length > 0
+      ? availability.intervals.map((interval) => `${interval.startTime}–${interval.endTime}`).join(" ou ")
+      : "sem expediente";
+    throw new Error(`${eventType.name} precisa ficar integralmente no expediente de ${resource.name} (${configured} neste dia).`);
+  }
+
+  const requestedStartUtc = requested.toUTC();
+  const requestedEndUtc = endAt.toUTC();
+  const [accessEvents, conflictingAppointment] = await Promise.all([
+    listCalendarAccessEvents(requestedStartUtc.toJSDate(), requestedEndUtc.toJSDate()),
+    (await getAppointmentsCollection()).findOne({
+      ...(input.excludeAppointmentId ? { _id: { $ne: input.excludeAppointmentId } } : {}),
+      providerId: resource.id,
+      status: "scheduled",
+      startAt: { $lt: requestedEndUtc.toJSDate() },
+      endAt: { $gt: requestedStartUtc.toJSDate() },
+    }),
+  ]);
+  const accessDecision = getSlotAccessDecision(
+    accessEvents,
+    resource.id,
+    requestedStartUtc.toJSDate(),
+    requestedEndUtc.toJSDate(),
+  );
+  if (accessDecision.blocker) {
+    throw new Error(
+      `Conflita com o bloqueio “${accessDecision.blocker.title}” de ${formatLocalTime(accessDecision.blocker.startAt, input.settings.timezone)} a ${formatLocalTime(accessDecision.blocker.endAt, input.settings.timezone)} para ${resource.name}.`,
+    );
+  }
+  if (!accessDecision.permitted) {
+    throw new Error(`Não há uma permissão que cubra todo o período de ${requested.toFormat("HH:mm")} a ${endAt.toFormat("HH:mm")} para ${resource.name}.`);
+  }
+  if (conflictingAppointment) {
+    throw new Error(
+      `Conflita com outro evento de ${resource.name} de ${formatLocalTime(conflictingAppointment.startAt, input.settings.timezone)} a ${formatLocalTime(conflictingAppointment.endAt, input.settings.timezone)}.`,
+    );
+  }
+  return { startAt: requestedStartUtc, endAt: requestedEndUtc, eventType };
 }
 
 function normalizeEventTypes(value: unknown, fallbackDuration = 30): CalendarEventTypeDefinition[] {

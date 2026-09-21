@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, Clock3, Plus, Trash2, TriangleAlert, UserRound } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Clock3, Pencil, Plus, Trash2, TriangleAlert, UserRound } from "lucide-react";
 
 interface Appointment {
   _id: string;
   providerId: string;
+  customerId?: string;
   customerName: string;
   startAt: string;
   endAt: string;
   status: "scheduled" | "cancelled" | "completed";
   eventType?: string;
+  notes?: string;
+  source: "assistant" | "manual";
 }
 
 interface EventTypeDefinition {
@@ -42,12 +45,14 @@ export default function WeekCalendar({
   resources,
   refreshKey,
   onCreateEvent,
+  onEditEvent,
 }: {
   timezone: string;
   eventTypes: EventTypeDefinition[];
   resources: ResourceDefinition[];
   refreshKey: number;
   onCreateEvent: (date: string) => void;
+  onEditEvent: (appointment: Appointment) => void;
 }) {
   const [weekStart, setWeekStart] = useState(() => getCurrentWeekStart(timezone));
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -254,10 +259,20 @@ export default function WeekCalendar({
                     const definition = eventTypes.find((eventType) => eventType.key === appointment.eventType) ?? eventTypes[0];
                     const color = definition?.color ?? "#0F766E";
                     const hasConflict = conflictIds.has(appointment._id);
+                    const isEditable = appointment.source === "manual" && appointment.status === "scheduled";
                     return (
                       <article
                         key={appointment._id}
-                        className={`group min-w-0 rounded-md border border-mist border-l-[3px] bg-white px-2.5 py-2 shadow-sm ${appointment.status === "cancelled" ? "opacity-60" : ""}`}
+                        role={isEditable ? "button" : undefined}
+                        tabIndex={isEditable ? 0 : undefined}
+                        aria-label={isEditable ? `Editar evento de ${appointment.customerName || "sem cliente"}` : undefined}
+                        onClick={isEditable ? () => onEditEvent(appointment) : undefined}
+                        onKeyDown={isEditable ? (event) => {
+                          if (event.currentTarget !== event.target || (event.key !== "Enter" && event.key !== " ")) return;
+                          event.preventDefault();
+                          onEditEvent(appointment);
+                        } : undefined}
+                        className={`group min-w-0 rounded-md border border-mist border-l-[3px] bg-white px-2.5 py-2 shadow-sm ${appointment.status === "cancelled" ? "opacity-60" : ""} ${isEditable ? "cursor-pointer transition-colors hover:bg-deep-teal/[0.03] focus:outline-none focus:ring-2 focus:ring-deep-teal/30" : ""}`}
                         style={{ borderLeftColor: color }}
                       >
                         <div className="flex items-start justify-between gap-2">
@@ -268,9 +283,16 @@ export default function WeekCalendar({
                             </p>
                             <p className="mt-1 truncate text-xs font-semibold text-slate-ink" title={appointment.customerName || "Sem cliente"}>{appointment.customerName || "Sem cliente"}</p>
                           </div>
-                          <button type="button" onClick={() => deleteEvent(appointment)} disabled={deletingId === appointment._id} className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-stone hover:bg-burnt-coral/10 hover:text-burnt-coral disabled:opacity-40" aria-label={`Excluir evento de ${appointment.customerName || "sem cliente"}`} title="Excluir evento">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex shrink-0 items-center">
+                            {isEditable && (
+                              <button type="button" onClick={(event) => { event.stopPropagation(); onEditEvent(appointment); }} className="flex h-7 w-7 items-center justify-center rounded text-stone hover:bg-deep-teal/10 hover:text-deep-teal" aria-label={`Editar evento de ${appointment.customerName || "sem cliente"}`} title="Editar evento">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            <button type="button" onClick={(event) => { event.stopPropagation(); void deleteEvent(appointment); }} disabled={deletingId === appointment._id} className="flex h-7 w-7 items-center justify-center rounded text-stone hover:bg-burnt-coral/10 hover:text-burnt-coral disabled:opacity-40" aria-label={`Excluir evento de ${appointment.customerName || "sem cliente"}`} title="Excluir evento">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
                         <p className="mt-1 truncate text-[10px] text-stone">{definition?.name ?? "Tipo removido"} · {getResourceName(appointment.providerId, resources)}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1">

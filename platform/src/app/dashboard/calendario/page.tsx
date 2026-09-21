@@ -38,12 +38,14 @@ interface Settings {
 interface Appointment {
   _id: string;
   providerId: string;
+  customerId?: string;
   customerName: string;
   startAt: string;
   endAt: string;
   status: "scheduled" | "cancelled" | "completed";
   eventType?: CalendarEventType;
   notes?: string;
+  source: "assistant" | "manual";
 }
 
 interface CalendarAccessEvent {
@@ -69,6 +71,7 @@ export default function CalendarPage() {
   const [time, setTime] = useState("");
   const [eventType, setEventType] = useState<CalendarEventType>("consultation");
   const [notes, setNotes] = useState("");
+  const [editingAppointmentId, setEditingAppointmentId] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
@@ -95,7 +98,6 @@ export default function CalendarPage() {
       setAppointments(data.appointments ?? []);
       setAccessEvents(data.accessEvents ?? []);
       setCustomers(data.customers ?? []);
-      setCustomerId((current) => current || data.customers?.[0]?.id || "");
       setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
       setFeedback(successMessage ?? "Agenda atualizada.");
       setCalendarRefreshKey((current) => current + 1);
@@ -115,7 +117,6 @@ export default function CalendarPage() {
         setAppointments(data.appointments ?? []);
         setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
-        setCustomerId(data.customers?.[0]?.id ?? "");
         setEventType(data.settings.eventTypes[0]?.key ?? "");
       })
       .catch((loadError) => {
@@ -143,7 +144,6 @@ export default function CalendarPage() {
         setAppointments(data.appointments ?? []);
         setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
-        setCustomerId((current) => current || data.customers?.[0]?.id || "");
         setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
         setCalendarRefreshKey((current) => current + 1);
       } catch {
@@ -184,18 +184,33 @@ export default function CalendarPage() {
 
   function openCreateEvent(targetDate?: string) {
     const nextDate = targetDate ?? date;
+    setEditingAppointmentId("");
+    setCustomerId("");
     setDate(nextDate);
     setTime("");
+    setNotes("");
     setFeedback("");
     setEventOpen(true);
   }
 
-  async function createAppointment() {
+  function openEditEvent(appointment: Appointment) {
+    if (appointment.source !== "manual" || appointment.status !== "scheduled") return;
+    setEditingAppointmentId(appointment._id);
+    setCustomerId(appointment.customerId ?? "");
+    setEventType(appointment.eventType ?? settings?.eventTypes[0]?.key ?? "");
+    setDate(formatDateInput(appointment.startAt, settings?.timezone ?? "America/Sao_Paulo"));
+    setTime(formatTimeInput(appointment.startAt, settings?.timezone ?? "America/Sao_Paulo"));
+    setNotes(appointment.notes ?? "");
+    setFeedback("");
+    setEventOpen(true);
+  }
+
+  async function saveAppointment() {
     if (!eventType || !date || !time) return;
     setBusy(true);
     setFeedback("");
-    const response = await fetch("/api/calendar", {
-      method: "POST",
+    const response = await fetch(editingAppointmentId ? `/api/calendar/appointments/${editingAppointmentId}` : "/api/calendar", {
+      method: editingAppointmentId ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ customerId, startAt: `${date}T${time}`, eventType, notes }),
     });
@@ -203,8 +218,12 @@ export default function CalendarPage() {
     if (response.ok && data.appointment) {
       setTime("");
       setNotes("");
+      setCustomerId("");
+      setEditingAppointmentId("");
       setEventOpen(false);
-      await refreshCalendar(`${settings ? getEventTypeName(settings, eventType) : "Evento"} criado com sucesso.`);
+      await refreshCalendar(editingAppointmentId
+        ? `${settings ? getEventTypeName(settings, eventType) : "Evento"} atualizado com sucesso.`
+        : `${settings ? getEventTypeName(settings, eventType) : "Evento"} criado com sucesso.`);
     } else {
       setFeedback(data.error ?? "Não foi possível agendar.");
     }
@@ -466,7 +485,7 @@ export default function CalendarPage() {
         </div>
       </section>
 
-      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} />
+      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} onEditEvent={openEditEvent} />
 
       {accessOpen && createPortal(<div className="fixed inset-0 z-50 flex justify-end bg-slate-ink/45" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccessOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="access-event-title" className="h-full w-full max-w-lg overflow-y-auto bg-white p-5 shadow-xl sm:p-7">
@@ -505,10 +524,10 @@ export default function CalendarPage() {
         <section role="dialog" aria-modal="true" aria-labelledby="event-title" className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-xl sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">Novo evento</h2>
-              <p className="mt-1 text-xs leading-5 text-stone">A criação manual ignora a antecedência mínima e a grade de horários, mas respeita o expediente, as permissões, os bloqueios e outros eventos do profissional.</p>
+              <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">{editingAppointmentId ? "Editar evento" : "Novo evento"}</h2>
+              <p className="mt-1 text-xs leading-5 text-stone">Eventos manuais ignoram a antecedência mínima e a grade de horários, mas respeitam o expediente, as permissões, os bloqueios e outros eventos do profissional.</p>
             </div>
-            <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar novo evento"><X className="h-4 w-4" /></button>
+            <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar evento"><X className="h-4 w-4" /></button>
           </div>
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -540,7 +559,7 @@ export default function CalendarPage() {
 
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" onClick={() => setEventOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>
-            <button type="button" onClick={createAppointment} disabled={busy || !eventType || !date || !time} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">Criar evento</button>
+            <button type="button" onClick={saveAppointment} disabled={busy || !eventType || !date || !time} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">{busy ? "Salvando..." : editingAppointmentId ? "Salvar alterações" : "Criar evento"}</button>
           </div>
         </section>
       </div>, document.body)}
@@ -699,6 +718,26 @@ export default function CalendarPage() {
 
 function formatDateTime(value: string, timezone: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: timezone }).format(new Date(value));
+}
+
+function formatDateInput(value: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: timezone,
+  }).formatToParts(new Date(value));
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function formatTimeInput(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: timezone,
+  }).format(new Date(value));
 }
 
 async function requestCalendarData() {
