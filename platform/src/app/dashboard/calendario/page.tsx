@@ -193,6 +193,7 @@ export default function CalendarPage() {
   async function createAppointment() {
     if (!eventType || !date || !time) return;
     setBusy(true);
+    setFeedback("");
     const response = await fetch("/api/calendar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -417,6 +418,8 @@ export default function CalendarPage() {
   const activeResource = settings.resources.find((resource) => resource.id === activeResourceId);
   const activeResourceIsRequired = defaultResourceIds.has(activeResourceId);
   const activeResourceIsInUse = settings.eventTypes.some((eventType) => eventType.resourceId === activeResourceId);
+  const selectedEventType = settings.eventTypes.find((item) => item.key === eventType);
+  const selectedEventResource = settings.resources.find((resource) => resource.id === selectedEventType?.resourceId);
 
   return (
     <div className="animate-fade-in-up space-y-8">
@@ -503,7 +506,7 @@ export default function CalendarPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">Novo evento</h2>
-              <p className="mt-1 text-xs text-stone">Escolha qualquer data e hora para incluir o evento manualmente.</p>
+              <p className="mt-1 text-xs leading-5 text-stone">A criação manual ignora a antecedência mínima e a grade de horários, mas respeita o expediente, as permissões, os bloqueios e outros eventos do profissional.</p>
             </div>
             <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar novo evento"><X className="h-4 w-4" /></button>
           </div>
@@ -513,6 +516,7 @@ export default function CalendarPage() {
               <select value={eventType} onChange={(event) => setEventType(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
                 {settings.eventTypes.map((item) => <option key={item.key} value={item.key}>{item.name} · {item.durationMinutes} min</option>)}
               </select>
+              {selectedEventResource && <span className="mt-1.5 block font-normal text-stone">{selectedEventResource.name}</span>}
             </label>
             <label className="text-xs font-semibold text-slate-ink">Cliente
               <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
@@ -531,6 +535,8 @@ export default function CalendarPage() {
           <label className="mt-5 block text-xs font-semibold text-slate-ink">Observação
             <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Observação administrativa opcional" className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
           </label>
+
+          {feedback && <p className="mt-4 rounded-md border border-burnt-coral/30 bg-burnt-coral/5 px-3 py-2.5 text-sm leading-5 text-burnt-coral" role="alert">{feedback}</p>}
 
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" onClick={() => setEventOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>

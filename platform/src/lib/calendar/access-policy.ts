@@ -5,8 +5,8 @@ export interface CalendarAccessWindow {
   resourceIds: string[];
 }
 
-export function isSlotAllowedByAccessEvents(
-  events: CalendarAccessWindow[],
+export function getSlotAccessDecision<T extends CalendarAccessWindow>(
+  events: T[],
   resourceId: string,
   slotStart: Date,
   slotEnd: Date,
@@ -24,5 +24,22 @@ export function isSlotAllowedByAccessEvents(
     && event.startAt < slotEnd
     && event.endAt > slotStart
   ));
-  return permitted && !blocked;
+  return {
+    permitted,
+    blocker: applicable.find((event) => (
+      event.type === "blocker"
+      && event.startAt < slotEnd
+      && event.endAt > slotStart
+    )) ?? null,
+  };
+}
+
+export function isSlotAllowedByAccessEvents(
+  events: CalendarAccessWindow[],
+  resourceId: string,
+  slotStart: Date,
+  slotEnd: Date,
+) {
+  const decision = getSlotAccessDecision(events, resourceId, slotStart, slotEnd);
+  return decision.permitted && !decision.blocker;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSlotAllowedByAccessEvents, type CalendarAccessWindow } from "./access-policy";
+import { getSlotAccessDecision, isSlotAllowedByAccessEvents, type CalendarAccessWindow } from "./access-policy";
 
 const date = (value: string) => new Date(value);
 const slotStart = date("2026-09-18T13:00:00.000Z");
@@ -54,5 +54,20 @@ describe("calendar access policy", () => {
       event({ type: "permission" }),
       event({ type: "blocker", endAt: slotStart }),
     ], "doctor", slotStart, slotEnd)).toBe(true);
+  });
+
+  it("returns the conflicting blocker for precise manual-booking feedback", () => {
+    const blocker = event({
+      type: "blocker",
+      resourceIds: ["doctor"],
+      startAt: date("2026-09-18T13:30:00.000Z"),
+    });
+    const decision = getSlotAccessDecision([
+      event({ type: "permission" }),
+      blocker,
+    ], "doctor", slotStart, slotEnd);
+
+    expect(decision.permitted).toBe(true);
+    expect(decision.blocker).toBe(blocker);
   });
 });
