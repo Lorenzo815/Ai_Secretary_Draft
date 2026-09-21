@@ -19,11 +19,6 @@ export function getSlotAccessDecision<T extends CalendarAccessWindow>(
     && event.startAt <= slotStart
     && event.endAt >= slotEnd
   ));
-  const blocked = applicable.some((event) => (
-    event.type === "blocker"
-    && event.startAt < slotEnd
-    && event.endAt > slotStart
-  ));
   return {
     permitted,
     blocker: applicable.find((event) => (
