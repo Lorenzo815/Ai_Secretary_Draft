@@ -33,7 +33,7 @@ export async function completePaymentTransition(
     ? `${paymentConfirmation} ${confirmedAppointments.length === 1
       ? "A reserva temporária foi confirmada e o horário escolhido está agendado."
       : "A reserva temporária foi confirmada e os horários escolhidos estão agendados."}`
-    : `${paymentConfirmation} Como não havia mais uma reserva temporária ativa, nenhum horário foi confirmado automaticamente. Vamos escolher uma nova opção para concluir seu agendamento.`;
+    : `${paymentConfirmation} Como não havia mais uma reserva temporária ativa, nenhum horário foi confirmado automaticamente. Vamos escolher uma nova opção para concluir seu agendamento. Para quando você prefere?`;
   try {
     const sent = await sendTextMessage({ to: contactPhone, body });
     await saveWhatsAppMessage({
