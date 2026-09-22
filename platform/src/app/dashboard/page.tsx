@@ -146,8 +146,8 @@ export default async function DashboardPage({
               <Metric label="Aguardando equipe" value={waitingHuman} detail={waitingHuman > 0 ? "requer ação humana" : "fila em dia"} attention={waitingHuman > 0} />
               <Metric label="Tempo até resposta" value={formatDuration(overview.commercialMetrics.medianResponseMinutes)} detail="mediana no WhatsApp" />
             </section>
-            <section className="grid gap-px border-y border-mist bg-mist xl:grid-cols-[0.8fr_1.15fr_0.85fr]">
-        <div className="bg-white px-5 py-5">
+            <section className="grid min-w-0 gap-px border-y border-mist bg-mist xl:grid-cols-[0.8fr_1.15fr_0.85fr]">
+        <div className="min-w-0 bg-white px-4 py-5 sm:px-5">
           <PanelHeader icon={MessageCircleMore} eyebrow="Últimas 24 horas" title="Fluxo de mensagens" action={{ href: "/dashboard/clientes", label: "Ver conversas" }} />
           <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist">
             <MacroMetric label="Conversas" value={overview.messageSummary.activeConversations} />
@@ -158,20 +158,20 @@ export default async function DashboardPage({
           <p className="mt-4 text-xs leading-5 text-stone"><strong className="text-slate-ink">{overview.messageSummary.deliveredOrRead}</strong> mensagem(ns) enviada(s) já foram entregues ou lidas.</p>
         </div>
 
-          <div className="bg-white px-5 py-5">
+          <div className="min-w-0 bg-white px-4 py-5 sm:px-5">
           <PanelHeader icon={ListChecks} eyebrow="Prioridades" title="Fila de atenção humana" meta={`${actionItems.length} item(ns)`} />
           <div className="mt-5 divide-y divide-mist border-y border-mist">
             {actionItems.length === 0 && <div className="py-9 text-center"><p className="text-sm font-semibold text-slate-ink">Nenhuma pendência humana imediata</p><p className="mt-1 text-xs text-stone">Pagamentos, encaminhamentos e mensagens sem resposta estão em dia.</p></div>}
             {actionItems.map((item) => (
-              <Link key={item.key} href={item.href} className="group flex items-center justify-between gap-4 py-3.5">
-                <div className="min-w-0"><div className="flex items-center gap-2"><span className={`h-2 w-2 shrink-0 rounded-full ${item.tone === "coral" ? "bg-burnt-coral" : "bg-amber-500"}`} /><p className="truncate text-sm font-semibold text-slate-ink">{item.label}</p></div><p className="mt-1 truncate pl-4 text-xs text-stone">{item.customerName} · {item.detail}</p></div>
-                <span className="shrink-0 text-xs font-semibold text-deep-teal group-hover:text-forest-teal">Abrir</span>
+              <Link key={item.key} href={item.href} className="group flex min-w-0 items-start justify-between gap-3 py-3.5">
+                <div className="min-w-0 flex-1"><div className="flex min-w-0 items-start gap-2"><span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${item.tone === "coral" ? "bg-burnt-coral" : "bg-amber-500"}`} /><p className="min-w-0 break-words text-sm font-semibold text-slate-ink">{item.label}</p></div><p className="mt-1 min-w-0 break-words pl-4 text-xs leading-5 text-stone">{item.customerName} · {item.detail}</p></div>
+                <span className="shrink-0 pt-0.5 text-xs font-semibold text-deep-teal group-hover:text-forest-teal">Abrir</span>
               </Link>
             ))}
           </div>
         </div>
 
-        <div className="bg-white px-5 py-5">
+        <div className="min-w-0 bg-white px-4 py-5 sm:px-5">
           <PanelHeader icon={CalendarDays} eyebrow="Agenda" title="Próximos eventos" action={{ href: "/dashboard/calendario", label: "Abrir calendário" }} />
           <div className="mt-5 divide-y divide-mist border-y border-mist">
             {overview.upcomingAppointments.length === 0 && <p className="py-8 text-center text-sm text-stone">Nenhum evento futuro.</p>}
@@ -185,7 +185,7 @@ export default async function DashboardPage({
           <SectionHeader icon={Sparkles} eyebrow="Inteligência da operação" title="Sinais para decidir e investigar" description="Resumo dos clientes analisados e do trabalho executado pela IA." titleId="intelligence-title" />
 
           <div className="mt-6 grid gap-px border-y border-mist bg-mist xl:grid-cols-2">
-            <article className="bg-white px-5 py-5">
+            <article className="min-w-0 bg-white px-4 py-5 sm:px-5">
               <PanelHeader icon={BrainCircuit} eyebrow="Qualificação comercial" title="Leitura da base" action={{ href: "/dashboard/clientes", label: "Ver clientes" }} />
               <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist sm:grid-cols-4">
                 <MacroMetric label="Qualificados" value={overview.commercialMetrics.qualifiedLeads} />
@@ -203,7 +203,7 @@ export default async function DashboardPage({
               </div>
             </article>
 
-            <article className="bg-white px-5 py-5">
+            <article className="min-w-0 bg-white px-4 py-5 sm:px-5">
               <PanelHeader icon={Cpu} eyebrow="IA e automação" title="Atividade do período" action={{ href: "/dashboard/operacoes", label: "Abrir operações" }} tone="coral" />
               <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist sm:grid-cols-4">
                 <MacroMetric label="Chamadas de IA" value={overview.aiSummary.totalCalls} />
@@ -223,8 +223,8 @@ export default async function DashboardPage({
           <SectionHeader icon={ChartNoAxesCombined} eyebrow="Desempenho comercial" title="Da entrada ao agendamento" description="Conversão, qualidade dos leads e origem dos resultados no período selecionado." titleId="results-title" meta={`${overview.periodDays} dias · ${overview.commercialMetrics.newPatients} novo(s) paciente(s)`} />
 
           <div className="space-y-7">
-            <div className="grid gap-px border-y border-mist bg-mist xl:grid-cols-[1.35fr_0.65fr]">
-            <section aria-labelledby="commercial-journey-title" className="bg-white px-5 py-5">
+            <div className="grid min-w-0 gap-px border-y border-mist bg-mist xl:grid-cols-[1.35fr_0.65fr]">
+            <section aria-labelledby="commercial-journey-title" className="min-w-0 bg-white px-4 py-5 sm:px-5">
               <PanelHeader icon={Route} eyebrow="Resultados comerciais" title="Avanço da jornada" titleId="commercial-journey-title" meta={`Coorte de ${overview.commercialMetrics.newPatients} novo(s) paciente(s)`} />
               <div className="mt-5 grid grid-cols-2 gap-px border-y border-mist bg-mist lg:grid-cols-4">
                 <JourneyMetric label="Novos pacientes" value={overview.commercialMetrics.newPatients} detail="entrada da coorte" />
@@ -233,7 +233,7 @@ export default async function DashboardPage({
                 <JourneyMetric label="Consulta agendada" value={formatRate(overview.commercialMetrics.schedulingRate, overview.commercialMetrics.newPatients)} detail={`${overview.commercialMetrics.scheduledPatients} de ${overview.commercialMetrics.newPatients}`} />
               </div>
             </section>
-              <section className="bg-white px-5 py-5" aria-labelledby="conversion-origin-title">
+              <section className="min-w-0 bg-white px-4 py-5 sm:px-5" aria-labelledby="conversion-origin-title">
                 <PanelHeader icon={CircleDollarSign} eyebrow="Agendamentos e receita" title="Origem das conversões" titleId="conversion-origin-title" tone="coral" />
                 <div className="mt-7">
                   <div className="flex items-center justify-between text-xs"><span className="font-semibold text-slate-ink">Origem dos agendamentos</span><span className="text-stone">{overview.appointmentSources.assistant + overview.appointmentSources.manual} no período</span></div>

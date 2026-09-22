@@ -16,6 +16,7 @@ const basePlan: SchedulingPlan = {
   constraints: [],
   prerequisites: {},
   proposalExpiryMinutes: 30,
+  holdDurationMinutes: 30,
 };
 
 function select(plan: SchedulingPlan, assessment: PlanSlot[], consultation: PlanSlot[], preference: "compact" | "flexible") {

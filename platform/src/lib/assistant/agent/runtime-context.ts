@@ -23,6 +23,19 @@ export async function buildAgentRuntimeContext(input: {
   ]);
   const profile = getCustomerProfileSnapshot(input.customer);
   const configuredMissingFields = getConfiguredMissingFields(profile, input.configuration.dataCollectionRules);
+  const bookableEventTypes = new Set(input.configuration.bookableEventTypeKeys);
+  const bookablePlans = input.configuration.schedulingPlans.filter((plan) => (
+    plan.enabled && plan.steps.every((step) => bookableEventTypes.has(step.eventTypeKey))
+  ));
+  const activeOptionPlanKey = activeSchedulingOption && typeof activeSchedulingOption === "object"
+    ? (activeSchedulingOption as { planKey?: unknown }).planKey
+    : null;
+  const visibleSchedulingOption = typeof activeOptionPlanKey === "string" && (
+    bookablePlans.some((plan) => plan.key === activeOptionPlanKey) ||
+    (activeOptionPlanKey.startsWith("event:") && bookableEventTypes.has(activeOptionPlanKey.slice(6)))
+  )
+    ? activeSchedulingOption
+    : null;
   return {
     time: {
       nowUtc: new Date().toISOString(),
@@ -38,10 +51,10 @@ export async function buildAgentRuntimeContext(input: {
     operations: {
       serviceStatus: input.customer.serviceStatus ?? "ai_active",
       paymentStatus: payment?.status ?? null,
-      activeSchedulingOption,
+      activeSchedulingOption: visibleSchedulingOption,
     },
     clinic: {
-      eventTypes: calendarSettings.eventTypes.map((eventType) => {
+      eventTypes: calendarSettings.eventTypes.filter((eventType) => bookableEventTypes.has(eventType.key)).map((eventType) => {
         const resource = calendarSettings.resources.find((item) => item.id === eventType.resourceId);
         return {
           key: eventType.key,
@@ -55,7 +68,7 @@ export async function buildAgentRuntimeContext(input: {
         id: resource.id,
         name: resource.name,
       })),
-      schedulingPlans: input.configuration.schedulingPlans.filter((plan) => plan.enabled),
+      schedulingPlans: bookablePlans,
     },
     execution: {
       trigger: input.trigger,

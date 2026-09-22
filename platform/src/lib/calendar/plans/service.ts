@@ -4,7 +4,15 @@ import { ObjectId, type Collection } from "mongodb";
 import clientPromise from "../../mongodb";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
 import { scheduleFirstAppointmentQualification } from "../../qualification/triggers";
-import { bookAppointment, findAvailableSlots, getCalendarSettings, updateCustomerAppointments } from "../calendar";
+import {
+  bookAppointment,
+  confirmAppointmentHolds,
+  findAvailableSlots,
+  getCalendarSettings,
+  holdAppointment,
+  releaseAppointmentHolds,
+  updateCustomerAppointments,
+} from "../calendar";
 import {
   selectSchedulingPlanCandidates,
   type PlanCandidateStep,
@@ -29,12 +37,13 @@ export interface SchedulingPlanOptionDocument {
   steps: PlanCandidateStep[];
   purpose?: "book" | "reschedule";
   targetAppointmentIds?: ObjectId[];
-  status: "proposed" | "processing" | "superseded" | "booked" | "rescheduled";
+  status: "proposed" | "processing" | "held" | "superseded" | "booked" | "rescheduled";
   expiresAt: Date;
   createdAt: Date;
   bookedAt?: Date;
   rescheduledAt?: Date;
   processingAt?: Date;
+  heldAt?: Date;
   supersededAt?: Date;
   appointmentGroupId?: ObjectId;
 }
@@ -122,15 +131,15 @@ export async function findSchedulingPlanOptions(input: {
 
 export async function getActiveSchedulingPlanOption(customerId: ObjectId, optionId?: ObjectId) {
   const options = await getOptionsCollection();
-  const option = await options.findOne(
-    {
-      ...(optionId ? { _id: optionId } : {}),
-      customerId,
-      status: "proposed",
-      expiresAt: { $gt: new Date() },
-    },
-    { sort: { createdAt: -1, _id: -1 } },
-  );
+  const baseFilter = {
+    ...(optionId ? { _id: optionId } : {}),
+    customerId,
+    expiresAt: { $gt: new Date() },
+  };
+  const option = optionId
+    ? await options.findOne({ ...baseFilter, status: { $in: ["proposed", "held"] } })
+    : await options.findOne({ ...baseFilter, status: "held" }, { sort: { createdAt: -1, _id: -1 } })
+      ?? await options.findOne({ ...baseFilter, status: "proposed" }, { sort: { createdAt: -1, _id: -1 } });
   if (!option) return null;
   const serialized = serializeActiveOption(option);
   if (optionId) return serialized;
@@ -176,6 +185,7 @@ function serializeActiveOption(option: SchedulingPlanOptionDocument) {
     configRevision: option.configRevision,
     purpose: option.purpose ?? "book",
     preference: option.preference,
+    status: option.status,
     steps: option.steps,
     expiresAt: option.expiresAt.toISOString(),
   };
@@ -188,6 +198,120 @@ export async function getSchedulingPlanOption(customerId: ObjectId, optionId: Ob
     status: "proposed",
     expiresAt: { $gt: new Date() },
   });
+}
+
+export async function holdSchedulingPlanOption(input: {
+  customerId: ObjectId;
+  customerName: string;
+  contactPhone: string;
+  optionId: ObjectId;
+  plan: SchedulingPlan;
+  configRevision: number;
+}) {
+  const options = await getOptionsCollection();
+  const option = await options.findOneAndUpdate({
+    _id: input.optionId,
+    customerId: input.customerId,
+    planKey: input.plan.key,
+    configRevision: input.configRevision,
+    status: "proposed",
+    purpose: { $ne: "reschedule" },
+    expiresAt: { $gt: new Date() },
+  }, { $set: { status: "processing", processingAt: new Date() } }, { returnDocument: "after" });
+  if (!option) throw new Error("A opção expirou, foi substituída ou já está reservada. Consulte novos horários.");
+
+  const now = new Date();
+  const firstStartAt = Math.min(...option.steps.map((step) => new Date(step.slot.startAt).getTime()));
+  const holdExpiresAt = new Date(Math.min(
+    now.getTime() + input.plan.holdDurationMinutes * 60_000,
+    firstStartAt,
+  ));
+  if (holdExpiresAt <= now) {
+    await options.updateOne(
+      { _id: option._id, status: "processing" },
+      { $set: { status: "superseded", supersededAt: now }, $unset: { processingAt: "" } },
+    );
+    throw new Error("O horário escolhido já começou ou não pode mais ser reservado.");
+  }
+
+  const appointmentGroupId = new ObjectId();
+  const createdIds: ObjectId[] = [];
+  try {
+    for (const step of option.steps) {
+      const appointment = await holdAppointment({
+        customerId: input.customerId,
+        customerName: input.customerName,
+        contactPhone: input.contactPhone,
+        startAt: step.slot.startAt,
+        eventType: step.eventTypeKey,
+        source: "assistant",
+        visitGroupId: appointmentGroupId,
+        schedulingOptionId: option._id,
+        holdExpiresAt,
+        deferQualificationTrigger: true,
+      });
+      createdIds.push(appointment._id);
+    }
+  } catch (error) {
+    if (createdIds.length > 0) {
+      await (await clientPromise).db(DB_NAME).collection("calendar_appointments").deleteMany({ _id: { $in: createdIds } });
+    }
+    await options.updateOne(
+      { _id: option._id, status: "processing" },
+      { $set: { status: "proposed" }, $unset: { processingAt: "" } },
+    );
+    throw error;
+  }
+
+  await releaseAppointmentHolds(input.customerId, appointmentGroupId);
+  await Promise.all([
+    options.updateMany(
+      { customerId: input.customerId, status: { $in: ["held", "proposed"] }, _id: { $ne: option._id } },
+      { $set: { status: "superseded", supersededAt: now } },
+    ),
+    options.updateOne(
+      { _id: option._id, status: "processing" },
+      {
+        $set: {
+          status: "held",
+          heldAt: now,
+          expiresAt: holdExpiresAt,
+          appointmentGroupId,
+        },
+        $unset: { processingAt: "" },
+      },
+    ),
+  ]);
+  return {
+    settings: await getCalendarSettings(),
+    option,
+    appointmentGroupId,
+    holdExpiresAt,
+  };
+}
+
+export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId) {
+  const appointments = await confirmAppointmentHolds(customerId);
+  if (appointments.length === 0) return [];
+  const groupIds = appointments.flatMap((appointment) => appointment.visitGroupId ? [appointment.visitGroupId] : []);
+  await (await getOptionsCollection()).updateMany(
+    {
+      customerId,
+      status: "held",
+      ...(groupIds.length > 0 ? { appointmentGroupId: { $in: groupIds } } : {}),
+    },
+    { $set: { status: "booked", bookedAt: new Date() } },
+  );
+  return appointments;
+}
+
+export async function releaseHeldSchedulingPlanOptions(customerId: ObjectId) {
+  const released = await releaseAppointmentHolds(customerId);
+  await (await getOptionsCollection()).updateMany(
+    { customerId, status: "held" },
+    { $set: { status: "superseded", supersededAt: new Date() } },
+  );
+  return released;
 }
 
 export async function bookSchedulingPlanOption(input: {

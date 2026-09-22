@@ -48,7 +48,9 @@ export interface AppointmentDocument {
   startAt: Date;
   endAt: Date;
   timezone: string;
-  status: "scheduled" | "cancelled" | "completed";
+  status: "held" | "scheduled" | "cancelled" | "completed";
+  holdExpiresAt?: Date;
+  schedulingOptionId?: ObjectId;
   eventType: string;
   visitGroupId?: ObjectId;
   notes?: string;
@@ -89,6 +91,9 @@ interface PersistAppointmentInput {
   source: "assistant" | "manual";
   eventType?: string;
   visitGroupId?: ObjectId;
+  status?: "held" | "scheduled";
+  holdExpiresAt?: Date;
+  schedulingOptionId?: ObjectId;
 }
 
 interface BookAppointmentInput extends PersistAppointmentInput {
@@ -191,7 +196,7 @@ export async function updateCalendarSettings(input: {
   if (removedResourceIds.length > 0) {
     const futureAppointment = await (await getAppointmentsCollection()).findOne({
       providerId: { $in: removedResourceIds },
-      status: "scheduled",
+      status: { $in: ["held", "scheduled"] },
       endAt: { $gt: new Date() },
     });
     if (futureAppointment) {
@@ -224,8 +229,15 @@ export async function updateCalendarSettings(input: {
 }
 
 export async function listAppointments(from: Date, to: Date) {
+  const now = new Date();
   return (await getAppointmentsCollection())
-    .find({ startAt: { $gte: from, $lt: to } })
+    .find({
+      startAt: { $gte: from, $lt: to },
+      $or: [
+        { status: { $ne: "held" } },
+        { status: "held", holdExpiresAt: { $gt: now } },
+      ],
+    })
     .sort({ startAt: 1 })
     .toArray();
 }
@@ -344,6 +356,7 @@ export async function findAvailableSlots(input: {
   excludeAppointmentId?: ObjectId;
   excludeAppointmentIds?: ObjectId[];
 }) {
+  await releaseExpiredAppointmentHolds();
   const settings = await getCalendarSettings();
   const startDay = DateTime.fromISO(input.fromDate, { zone: settings.timezone }).startOf("day");
   const endDay = DateTime.fromISO(input.toDate, { zone: settings.timezone }).endOf("day");
@@ -362,7 +375,10 @@ export async function findAvailableSlots(input: {
   const excludedAppointmentIds = input.excludeAppointmentIds ?? (input.excludeAppointmentId ? [input.excludeAppointmentId] : []);
   const occupied = appointments
     .filter((appointment) => (
-      appointment.status === "scheduled" &&
+      (
+        appointment.status === "scheduled" ||
+        (appointment.status === "held" && appointment.holdExpiresAt && appointment.holdExpiresAt > new Date())
+      ) &&
       appointment.providerId === eventType.resourceId &&
       !excludedAppointmentIds.some((appointmentId) => appointment._id.equals(appointmentId))
     ))
@@ -446,6 +462,92 @@ export async function bookAppointment(input: BookAppointmentInput) {
     await scheduleFirstAppointmentQualification(input.customerId, appointment._id, appointment.createdAt);
   }
   return appointment;
+}
+
+export async function holdAppointment(input: BookAppointmentInput & {
+  holdExpiresAt: Date;
+  schedulingOptionId: ObjectId;
+}) {
+  const settings = await getCalendarSettings();
+  const requested = DateTime.fromISO(input.startAt, { setZone: true }).setZone(settings.timezone);
+  if (!requested.isValid) throw new Error("Data da reserva temporária inválida.");
+  if (input.holdExpiresAt <= new Date()) throw new Error("O prazo da reserva temporária já expirou.");
+  const date = requested.toISODate();
+  const available = await findAvailableSlots({ fromDate: date!, toDate: date!, eventType: input.eventType, limit: 50 });
+  const slot = available.slots.find((item) => DateTime.fromISO(item.startAt).toUTC().toMillis() === requested.toUTC().toMillis());
+  if (!slot) throw new Error("O horário escolhido não está mais disponível.");
+
+  return persistAppointment(
+    {
+      ...input,
+      status: "held",
+      notes: input.notes ?? "Reserva temporária aguardando confirmação do sinal.",
+    },
+    settings,
+    DateTime.fromISO(slot.startAt).toUTC(),
+    DateTime.fromISO(slot.endAt).toUTC(),
+  );
+}
+
+export async function confirmAppointmentHolds(customerId: ObjectId) {
+  const appointments = await getAppointmentsCollection();
+  await releaseExpiredAppointmentHolds();
+  const now = new Date();
+  const held = await appointments.find({
+    customerId,
+    status: "held",
+    holdExpiresAt: { $gt: now },
+  }).sort({ startAt: 1 }).toArray();
+  if (held.length === 0) return [];
+  const result = await appointments.updateMany(
+    {
+      _id: { $in: held.map((appointment) => appointment._id) },
+      customerId,
+      status: "held",
+      holdExpiresAt: { $gt: now },
+    },
+    {
+      $set: { status: "scheduled", updatedAt: now },
+      $unset: { holdExpiresAt: "", schedulingOptionId: "" },
+    },
+  );
+  if (result.modifiedCount !== held.length) {
+    throw new Error("Uma reserva temporária expirou durante a confirmação do sinal.");
+  }
+  await scheduleFirstAppointmentQualification(
+    customerId,
+    held.map((appointment) => appointment._id),
+  );
+  return held.map((appointment) => ({
+    ...appointment,
+    status: "scheduled" as const,
+    updatedAt: now,
+    holdExpiresAt: undefined,
+    schedulingOptionId: undefined,
+  }));
+}
+
+export async function releaseAppointmentHolds(customerId: ObjectId, preserveVisitGroupId?: ObjectId) {
+  const now = new Date();
+  const result = await (await getAppointmentsCollection()).updateMany(
+    {
+      customerId,
+      status: "held",
+      ...(preserveVisitGroupId ? { visitGroupId: { $ne: preserveVisitGroupId } } : {}),
+    },
+    {
+      $set: { status: "cancelled", updatedAt: now },
+      $unset: { holdExpiresAt: "", schedulingOptionId: "" },
+    },
+  );
+  return result.modifiedCount;
+}
+
+async function releaseExpiredAppointmentHolds(now = new Date()) {
+  await (await getAppointmentsCollection()).deleteMany({
+    status: "held",
+    holdExpiresAt: { $lte: now },
+  });
 }
 
 export async function bookManualAppointment(input: PersistAppointmentInput) {
@@ -683,7 +785,9 @@ async function persistAppointment(
     startAt: startAt.toJSDate(),
     endAt: endAt.toJSDate(),
     timezone: settings.timezone,
-    status: "scheduled",
+    status: input.status ?? "scheduled",
+    holdExpiresAt: input.holdExpiresAt,
+    schedulingOptionId: input.schedulingOptionId,
     notes: input.notes?.trim().slice(0, 1_000),
     eventType: input.eventType ?? settings.eventTypes[0].key,
     visitGroupId: input.visitGroupId,
@@ -745,25 +849,30 @@ export async function ensureCalendarIndexes() {
     if (error instanceof MongoServerError && error.code === 26) return [];
     throw error;
   });
-  const restrictiveIndex = indexes.find((index) => (
+  const activeAppointmentIndexName = "unique_active_appointment_start";
+  const legacyIndexes = indexes.filter((index) => (
     index.unique === true &&
     index.key?.providerId === 1 &&
     index.key?.startAt === 1 &&
-    index.key?.eventType === undefined
+    index.key?.eventType === undefined &&
+    index.name !== activeAppointmentIndexName
   ));
-  if (restrictiveIndex?.name) {
-    try {
-      await appointments.dropIndex(restrictiveIndex.name);
-    } catch (error) {
+  await appointments.createIndex(
+    { providerId: 1, startAt: 1 },
+    {
+      name: activeAppointmentIndexName,
+      unique: true,
+      partialFilterExpression: { status: { $in: ["held", "scheduled"] } },
+    },
+  );
+  await Promise.all(legacyIndexes.flatMap((index) => index.name ? [
+    appointments.dropIndex(index.name).catch((error) => {
       if (!(error instanceof MongoServerError) || error.code !== 27) throw error;
-    }
-  }
+    }),
+  ] : []));
   await Promise.all([
-    appointments.createIndex(
-      { providerId: 1, startAt: 1 },
-      { unique: true, partialFilterExpression: { status: "scheduled" } },
-    ),
     appointments.createIndex({ customerId: 1, startAt: -1 }),
+    appointments.createIndex({ holdExpiresAt: 1 }, { expireAfterSeconds: 0 }),
     accessEvents.createIndex({ startAt: 1, endAt: 1 }),
     accessEvents.createIndex({ resourceIds: 1, startAt: 1 }),
   ]);

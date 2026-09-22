@@ -42,7 +42,8 @@ interface Appointment {
   customerName: string;
   startAt: string;
   endAt: string;
-  status: "scheduled" | "cancelled" | "completed";
+  status: "held" | "scheduled" | "cancelled" | "completed";
+  holdExpiresAt?: string;
   eventType?: CalendarEventType;
   notes?: string;
   source: "assistant" | "manual";
@@ -238,6 +239,19 @@ export default function CalendarPage() {
       await refreshCalendar("Evento cancelado.");
     } else {
       setFeedback(data.error ?? "Não foi possível cancelar.");
+    }
+    setBusy(false);
+  }
+
+  async function remove(id: string) {
+    if (!window.confirm("Excluir este evento permanentemente? Esta ação não pode ser desfeita.")) return;
+    setBusy(true);
+    const response = await fetch(`/api/calendar/appointments/${id}?permanent=true`, { method: "DELETE" });
+    const data = await response.json() as { error?: string };
+    if (response.ok) {
+      await refreshCalendar("Evento excluído permanentemente.");
+    } else {
+      setFeedback(data.error ?? "Não foi possível excluir.");
     }
     setBusy(false);
   }
@@ -704,7 +718,7 @@ export default function CalendarPage() {
             <table className="w-full min-w-[680px] text-left text-sm">
               <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Profissional</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Observação</th><th className="px-4 py-3 text-right">Ação</th></tr></thead>
               <tbody className="divide-y divide-mist">{appointments.map((appointment) => (
-                <tr key={appointment._id}><td className="px-4 py-3 font-semibold text-slate-ink">{formatDateTime(appointment.startAt, settings.timezone)}</td><td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td><td className="px-4 py-3 text-stone">{getEventTypeName(settings, appointment.eventType)}</td><td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td><td className="px-4 py-3 text-stone">{appointment.status === "scheduled" ? "Agendado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td><td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td><td className="px-4 py-3 text-right">{appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline">Cancelar</button>}</td></tr>
+                <tr key={appointment._id}><td className="px-4 py-3 font-semibold text-slate-ink">{formatDateTime(appointment.startAt, settings.timezone)}</td><td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td><td className="px-4 py-3 text-stone">{getEventTypeName(settings, appointment.eventType)}</td><td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td><td className="px-4 py-3 text-stone">{appointment.status === "held" ? "Reserva temporária" : appointment.status === "scheduled" ? "Agendado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td><td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td><td className="px-4 py-3 text-right"><div className="flex items-center justify-end gap-3">{appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Cancelar</button>}<button type="button" onClick={() => void remove(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Excluir</button></div></td></tr>
               ))}</tbody>
             </table>
           )}

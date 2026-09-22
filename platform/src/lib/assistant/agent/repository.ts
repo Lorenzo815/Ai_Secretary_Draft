@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
+import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument } from "./contracts";
 import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RESPONSE_STYLE } from "./defaults";
@@ -19,18 +20,28 @@ export async function getAgentConfiguration() {
   const collection = await getCollection();
   const existing = await collection.findOne({ _id: "active" });
   if (existing) {
+    const existingAuthorization = (existing as AgentConfigurationDocument & {
+      bookableEventTypeKeys?: unknown;
+    }).bookableEventTypeKeys;
+    const initialEventTypeKeys = existingAuthorization === undefined
+      ? (await getCalendarSettings()).eventTypes.map((eventType) => eventType.key)
+      : [];
+    const bookableEventTypeKeys = normalizeBookableEventTypeKeys(existingAuthorization, initialEventTypeKeys);
     const enabledTools = migrateLegacyToolKeys(existing.enabledTools);
     const toolGuidance = normalizeToolGuidance(existing.toolGuidance);
     const journeyPolicy = normalizeJourneyPolicy(existing.journeyPolicy);
     const responseStyle = normalizeResponseStyle(existing.responseStyle);
     const loopPolicy = normalizeLoopPolicy(existing.loopPolicy);
+    const schedulingPlans = normalizeSchedulingPlans(existing.schedulingPlans);
     if (
       enabledTools.join("|") === existing.enabledTools.join("|") &&
       existing.toolGuidance !== undefined &&
       JSON.stringify(toolGuidance) === JSON.stringify(existing.toolGuidance) &&
       journeyPolicy === existing.journeyPolicy &&
       responseStyle === existing.responseStyle &&
-      JSON.stringify(loopPolicy) === JSON.stringify(existing.loopPolicy)
+      JSON.stringify(loopPolicy) === JSON.stringify(existing.loopPolicy) &&
+      JSON.stringify(schedulingPlans) === JSON.stringify(existing.schedulingPlans) &&
+      JSON.stringify(bookableEventTypeKeys) === JSON.stringify(existingAuthorization)
     ) return existing;
     const migrated = withContentHash({
       ...existing,
@@ -39,6 +50,8 @@ export async function getAgentConfiguration() {
       journeyPolicy,
       responseStyle,
       loopPolicy,
+      schedulingPlans,
+      bookableEventTypeKeys,
       revision: existing.revision + 1,
       contentHash: "",
       updatedAt: new Date(),
@@ -55,11 +68,20 @@ export async function getAgentConfiguration() {
           journeyPolicy: normalizeJourneyPolicy(concurrent.journeyPolicy),
           responseStyle: normalizeResponseStyle(concurrent.responseStyle),
           loopPolicy: normalizeLoopPolicy(concurrent.loopPolicy),
+          schedulingPlans: normalizeSchedulingPlans(concurrent.schedulingPlans),
+          bookableEventTypeKeys: normalizeBookableEventTypeKeys(
+            (concurrent as AgentConfigurationDocument & { bookableEventTypeKeys?: unknown }).bookableEventTypeKeys,
+            initialEventTypeKeys,
+          ),
         }
       : migrated;
   }
 
-  const initial = withContentHash(createDefaultAgentConfiguration());
+  const calendarSettings = await getCalendarSettings();
+  const initial = withContentHash({
+    ...createDefaultAgentConfiguration(),
+    bookableEventTypeKeys: calendarSettings.eventTypes.map((eventType) => eventType.key),
+  });
   await collection.updateOne(
     { _id: "active" },
     { $setOnInsert: initial },
@@ -77,7 +99,8 @@ export async function updateAgentConfiguration(input: {
     ...input.configuration,
     toolGuidance: normalizeToolGuidance(input.configuration.toolGuidance),
   };
-  validateConfiguration(configuration);
+  const calendarSettings = await getCalendarSettings();
+  validateConfiguration(configuration, new Set(calendarSettings.eventTypes.map((eventType) => eventType.key)));
   const collection = await getCollection();
   const next = withContentHash({
     _id: "active" as const,
@@ -139,6 +162,7 @@ function withoutMetadata(document: AgentConfigurationDocument) {
     knowledge: document.knowledge,
     dataCollectionRules: document.dataCollectionRules,
     schedulingPlans: document.schedulingPlans,
+    bookableEventTypeKeys: document.bookableEventTypeKeys,
     enabledTools: document.enabledTools,
     toolGuidance: document.toolGuidance ?? {},
     loopPolicy: document.loopPolicy,
@@ -156,6 +180,7 @@ function withContentHash(document: AgentConfigurationDocument) {
 
 function validateConfiguration(
   configuration: Omit<AgentConfigurationDocument, "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy">,
+  availableEventTypeKeys: Set<string>,
 ) {
   if (!configuration.identityPrompt.trim() || !configuration.conversationPolicy.trim() || !configuration.responseStyle.trim()) {
     throw new Error("Identidade, política de conversa e estilo de resposta são obrigatórios.");
@@ -178,6 +203,20 @@ function validateConfiguration(
   if (new Set(configuration.schedulingPlans.map((plan) => plan.key)).size !== configuration.schedulingPlans.length) {
     throw new Error("Planos de agenda não podem ter chaves duplicadas.");
   }
+  if (
+    !Array.isArray(configuration.bookableEventTypeKeys) ||
+    new Set(configuration.bookableEventTypeKeys).size !== configuration.bookableEventTypeKeys.length ||
+    configuration.bookableEventTypeKeys.some((key) => typeof key !== "string" || !availableEventTypeKeys.has(key))
+  ) {
+    throw new Error("A seleção de tipos de evento autorizados para a IA é inválida ou está desatualizada.");
+  }
+  const bookableEventTypes = new Set(configuration.bookableEventTypeKeys);
+  const blockedPlans = configuration.schedulingPlans.filter((plan) => (
+    plan.enabled && plan.steps.some((step) => !bookableEventTypes.has(step.eventTypeKey))
+  ));
+  if (blockedPlans.length > 0) {
+    throw new Error(`Autorize os tipos de evento usados pelos planos ativos ou desative os planos: ${blockedPlans.map((plan) => plan.name).join(", ")}.`);
+  }
   for (const plan of configuration.schedulingPlans) {
     const steps = new Set(plan.steps.map((step) => step.key));
     if (!plan.key.trim() || !plan.name.trim() || steps.size !== plan.steps.length || plan.steps.length === 0) {
@@ -192,6 +231,16 @@ function validateConfiguration(
       if (referenced.some((step) => !steps.has(step))) {
         throw new Error(`O plano ${plan.key} contém uma restrição para uma etapa inexistente.`);
       }
+    }
+    if (
+      !Number.isInteger(plan.proposalExpiryMinutes) ||
+      plan.proposalExpiryMinutes < 1 ||
+      plan.proposalExpiryMinutes > 10_080 ||
+      !Number.isInteger(plan.holdDurationMinutes) ||
+      plan.holdDurationMinutes < 5 ||
+      plan.holdDurationMinutes > 10_080
+    ) {
+      throw new Error(`O plano ${plan.key} deve ter expirações válidas de até 7 dias.`);
     }
   }
   const loop = configuration.loopPolicy;
@@ -221,6 +270,20 @@ function normalizeLoopPolicy(value: AgentConfigurationDocument["loopPolicy"]) {
   };
 }
 
+function normalizeSchedulingPlans(plans: AgentConfigurationDocument["schedulingPlans"]) {
+  return plans.map((plan) => ({
+    ...plan,
+    holdDurationMinutes: Number.isInteger(plan.holdDurationMinutes)
+      ? plan.holdDurationMinutes
+      : 48 * 60,
+  }));
+}
+
+function normalizeBookableEventTypeKeys(value: unknown, fallback: string[]) {
+  const keys = Array.isArray(value) ? value : fallback;
+  return [...new Set(keys.filter((key): key is string => typeof key === "string" && key.trim().length > 0))];
+}
+
 function migrateLegacyToolKeys(keys: readonly string[]) {
   const migrated = new Set<AssistantToolKey>();
   for (const key of keys) {
@@ -232,6 +295,9 @@ function migrateLegacyToolKeys(keys: readonly string[]) {
       migrated.add("calendar.reschedule");
     }
     else if (isAssistantToolKey(key)) migrated.add(key);
+  }
+  if (migrated.has("calendar.find_slots") && migrated.has("calendar.book")) {
+    migrated.add("calendar.hold");
   }
   return [...migrated];
 }

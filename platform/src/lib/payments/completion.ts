@@ -1,6 +1,7 @@
 import "server-only";
 
 import { emitAutomationEvent } from "../automation";
+import { confirmHeldSchedulingPlanOptions, releaseHeldSchedulingPlanOptions } from "../calendar/plans";
 import { updateCustomerServiceStatus } from "../crm";
 import { saveWhatsAppMessage, sendTextMessage } from "../whatsapp";
 import type { PaymentRequestDocument } from "./payments";
@@ -16,15 +17,19 @@ export async function completePaymentTransition(
     payload: { status, provider: payment.provider ?? "manual" },
   });
   if (status === "rejected") {
+    await releaseHeldSchedulingPlanOptions(payment.customerId);
     await updateCustomerServiceStatus(payment.customerId, "human_active");
     return {};
   }
 
+  const confirmedAppointments = await confirmHeldSchedulingPlanOptions(payment.customerId);
   const customer = await updateCustomerServiceStatus(payment.customerId, "ai_active");
   const contactPhone = customer.phones[0];
   if (!contactPhone) return {};
   const confirmationSource = payment.provider === "mercado_pago" ? "Mercado Pago" : "equipe";
-  const body = `Pagamento confirmado pelo ${confirmationSource}. Agora vamos encontrar as melhores opções para sua Bioimpedância e Consulta com o Dr. Matheus. Você prefere realizá-las próximas uma da outra ou em dias e horários diferentes?`;
+  const body = confirmedAppointments.length > 0
+    ? `Pagamento confirmado pelo ${confirmationSource}. Os horários que você escolheu também foram confirmados na agenda.`
+    : `Pagamento confirmado pelo ${confirmationSource}. Agora vamos encontrar as melhores opções para sua Bioimpedância e Consulta com o Dr. Matheus. Você prefere realizá-las próximas uma da outra ou em dias e horários diferentes?`;
   try {
     const sent = await sendTextMessage({ to: contactPhone, body });
     await saveWhatsAppMessage({

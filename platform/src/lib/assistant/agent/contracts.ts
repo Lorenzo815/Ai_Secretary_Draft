@@ -44,6 +44,7 @@ export interface SchedulingPlan {
   constraints: SchedulingConstraint[];
   prerequisites: AgentConditionGroup;
   proposalExpiryMinutes: number;
+  holdDurationMinutes: number;
 }
 
 export interface AgentLoopPolicy {
@@ -65,6 +66,7 @@ export interface AgentConfigurationDocument {
   knowledge: string;
   dataCollectionRules: DataCollectionRule[];
   schedulingPlans: SchedulingPlan[];
+  bookableEventTypeKeys: string[];
   enabledTools: AssistantToolKey[];
   toolGuidance: Partial<Record<AssistantToolKey, string>>;
   loopPolicy: AgentLoopPolicy;

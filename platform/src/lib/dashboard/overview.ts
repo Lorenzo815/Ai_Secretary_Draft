@@ -128,7 +128,7 @@ export async function getDashboardOverview(periodDays = 30) {
   const scheduledIds = distinctCustomerIds(
     recentAppointments.filter((appointment) => (
       appointment.eventType === "doctor_consultation"
-      && appointment.status !== "cancelled"
+      && (appointment.status === "scheduled" || appointment.status === "completed")
     )),
     newPatientIds,
   );
@@ -138,7 +138,10 @@ export async function getDashboardOverview(periodDays = 30) {
   }));
   const responseDurations = calculateResponseDurations(responseMessages);
   const paymentStatusCounts = countBy(recentPayments, (payment) => payment.status as string);
-  const appointmentSourceCounts = countBy(recentAppointments, (appointment) => appointment.source as string);
+  const appointmentSourceCounts = countBy(
+    recentAppointments.filter((appointment) => appointment.status !== "held"),
+    (appointment) => appointment.source as string,
+  );
   const messagesByDirection = Object.fromEntries(messageDirections.map((item) => [item._id, item.count]));
   const messagesByStatus = Object.fromEntries(messageStatusCounts.map((item) => [item._id, item.count]));
   const aiCallStatuses = Object.fromEntries(aiCallStatusCounts.map((item) => [item._id, item.count]));

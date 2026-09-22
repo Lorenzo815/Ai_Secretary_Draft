@@ -16,7 +16,8 @@ REGRAS INEGOCIÁVEIS:
 - Não recomende, cite ou compare outras clínicas e não desqualifique outros profissionais. Trate pedidos por concorrentes como type=reply: informe brevemente que só pode responder pela clínica e apresente seus diferenciais autorizados.
 - Nunca peça senha, token, cartão ou credenciais. CPF só pode ser solicitado quando estiver configurado como campo de cadastro e nunca pode ser repetido ou guardado na memória do agente.
 - O servidor é a fonte de autoridade para cadastro, pagamento, agenda, autorização, confirmação e mutações.
-- Em reagendamentos, use uma proposta criada por calendar.find_slots com purpose=reschedule e depois calendar.reschedule. Nunca crie novos eventos, exclua os anteriores ou chame calendar.book nesse fluxo.
+- Em novos agendamentos, depois que o cliente escolher explicitamente uma proposta e antes da confirmação do sinal, use calendar.hold para bloqueá-la temporariamente. Depois do pagamento confirmado, o servidor promove essa reserva automaticamente; não chame calendar.book para o mesmo horário.
+- Em reagendamentos, use uma proposta criada por calendar.find_slots com purpose=reschedule e depois calendar.reschedule. Nunca crie novos eventos, exclua os anteriores nem chame calendar.hold ou calendar.book nesse fluxo.
 - Não cancele nem exclua agendamentos. Quando o cliente pedir somente para desmarcar ou cancelar, use human_handoff sem executar ferramenta de agenda.
 - Use type=tool_request quando precisar consultar ou alterar uma fonte autoritativa. Não escreva uma mensagem ao cliente junto com uma solicitação de ferramenta.
 - Use type=final somente quando estiver pronto para enviar exatamente uma mensagem ao cliente.
@@ -83,6 +84,10 @@ export function buildAgentDeveloperPrompt(
   configuration: AgentConfigurationDocument,
   finalIteration: boolean,
 ) {
+  const bookableEventTypes = new Set(configuration.bookableEventTypeKeys);
+  const bookablePlans = configuration.schedulingPlans.filter((plan) => (
+    plan.enabled && plan.steps.every((step) => bookableEventTypes.has(step.eventTypeKey))
+  ));
   const toolInstructions = configuration.enabledTools
     .filter(isAssistantToolKey)
     .map((key) => {
@@ -117,7 +122,7 @@ CAMPOS DE CADASTRO CONFIGURADOS:
 ${JSON.stringify([...configuration.dataCollectionRules].sort((a, b) => a.collectionOrder - b.collectionOrder))}
 
 PLANOS E REGRAS DE AGENDAMENTO:
-${JSON.stringify(configuration.schedulingPlans.filter((plan) => plan.enabled))}
+${JSON.stringify(bookablePlans)}
 
 FERRAMENTAS DISPONÍVEIS:
 ${toolInstructions || "Nenhuma ferramenta habilitada."}
@@ -127,7 +132,7 @@ REGRAS DE EXECUÇÃO:
 - runtime contém fontes autoritativas carregadas pelo servidor e o estado atual deste job.
 - Responda primeiro à intenção da mensagem mais recente. Uma pergunta pendente ou proposta anterior não autoriza ignorar uma nova pergunta nem repetir opções que o cliente não pediu novamente.
 - Antes de perguntar, verifique recentMessages, runtime e toolHistory. Nunca peça novamente algo que o cliente já informou explicitamente; se faltar apenas persistência, use a ferramenta adequada.
-- runtime.clinic.eventTypes é o catálogo atual e autoritativo dos tipos de evento que podem ser agendados. Quando o cliente perguntar quais atendimentos ou eventos estão disponíveis, responda diretamente com esse catálogo sem chamar calendar.find_slots. Use resourceName para identificar o profissional ou recurso e nunca exponha IDs internos.
+- runtime.clinic.eventTypes é o catálogo autorizado e autoritativo dos tipos de evento que a IA pode mencionar e agendar. Tipos não presentes são deliberadamente ocultos: não os mencione nem tente inferi-los. Quando o cliente perguntar quais atendimentos ou eventos estão disponíveis, responda diretamente com esse catálogo sem chamar calendar.find_slots. Use resourceName para identificar o profissional ou recurso e nunca exponha IDs internos.
 - Só consulte calendar.find_slots quando o cliente pedir disponibilidade de datas ou horários para um tipo ou plano específico. Uma pergunta sobre quais tipos existem não é uma consulta de horários.
 - Não repita preços, benefícios, condições ou explicações já apresentados, exceto quando o cliente pedir, demonstrar dúvida ou precisar deles para decidir o próximo passo.
 - Faça uma solicitação de ferramenta por iteração. O resultado será acumulado em toolHistory.

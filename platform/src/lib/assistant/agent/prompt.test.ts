@@ -167,9 +167,19 @@ describe("assistant commercial conduct", () => {
   it("instructs the model to answer event catalog questions from live runtime data", () => {
     const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
 
-    expect(prompt).toContain("runtime.clinic.eventTypes é o catálogo atual e autoritativo");
+    expect(prompt).toContain("runtime.clinic.eventTypes é o catálogo autorizado e autoritativo");
     expect(prompt).toContain("responda diretamente com esse catálogo sem chamar calendar.find_slots");
     expect(prompt).toContain("Uma pergunta sobre quais tipos existem não é uma consulta de horários");
     expect(prompt).toContain("não autoriza ignorar uma nova pergunta");
+  });
+
+  it("omits active plans that depend on hidden event types", () => {
+    const configuration = createDefaultAgentConfiguration();
+    configuration.bookableEventTypeKeys = ["doctor_consultation"];
+
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(prompt).not.toContain('"key":"first_visit"');
+    expect(prompt).toContain("Tipos não presentes são deliberadamente ocultos");
   });
 });

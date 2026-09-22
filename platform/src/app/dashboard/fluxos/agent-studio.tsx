@@ -47,7 +47,9 @@ interface AgentConfiguration {
     constraints: Constraint[];
     prerequisites: ConditionGroup;
     proposalExpiryMinutes: number;
+    holdDurationMinutes: number;
   }>;
+  bookableEventTypeKeys: string[];
   enabledTools: string[];
   toolGuidance: Record<string, string>;
   loopPolicy: {
@@ -120,7 +122,7 @@ const tabs: Array<{ id: Tab; label: string; group: "Agente" | "Operação" | "Ta
   { id: "journey", label: "Jornada", group: "Agente", icon: ListOrdered, description: "Oriente a sequência ideal sem bloquear consultas úteis solicitadas pelo cliente.", configKey: "agent_config.journeyPolicy" },
   { id: "knowledge", label: "Conhecimento", group: "Agente", icon: BookOpen, description: "Mantenha os fatos que o agente pode usar como fonte nas respostas.", configKey: "agent_config.knowledge" },
   { id: "data", label: "Dados", group: "Agente", icon: Database, description: "Escolha quais dados cadastrais o agente coleta e em qual ordem.", configKey: "agent_config.dataCollectionRules" },
-  { id: "scheduling", label: "Agenda", group: "Operação", icon: CalendarDays, description: "Monte planos de agendamento usando eventos do calendário e pré-requisitos reais.", configKey: "agent_config.schedulingPlans" },
+  { id: "scheduling", label: "Agenda", group: "Operação", icon: CalendarDays, description: "Escolha os eventos autorizados para a IA e monte planos com pré-requisitos reais.", configKey: "agent_config.bookableEventTypeKeys / schedulingPlans" },
   { id: "tools", label: "Ferramentas", group: "Operação", icon: Wrench, description: "Autorize ações do agente e oriente quando cada ferramenta deve ser usada.", configKey: "agent_config.enabledTools / toolGuidance" },
   { id: "limits", label: "Execução", group: "Operação", icon: Gauge, description: "Controle a proteção contra loops e o valor do sinal solicitado ao cliente.", configKey: "agent_config.loopPolicy / payment" },
   { id: "qualification", label: "Qualificação", group: "Tarefas", icon: UserCheck, description: "Configure a análise independente de aderência e contexto dos leads.", configKey: "lead_qualification_config" },
@@ -330,7 +332,7 @@ export function AgentStudio() {
       {tab === "journey" && <JourneyEditor value={agent} change={setAgent} />}
       {tab === "knowledge" && <Field label="Conhecimento autorizado" fieldKey="knowledge"><textarea rows={22} value={agent.knowledge} onChange={(event) => setAgent({ ...agent, knowledge: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></Field>}
       {tab === "data" && <DataEditor rules={agent.dataCollectionRules} change={(dataCollectionRules) => setAgent({ ...agent, dataCollectionRules })} />}
-      {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} eventTypes={payload.calendarEventTypes} change={(schedulingPlans) => setAgent({ ...agent, schedulingPlans })} />}
+      {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} bookableEventTypeKeys={agent.bookableEventTypeKeys} eventTypes={payload.calendarEventTypes} change={(schedulingPlans, bookableEventTypeKeys) => setAgent({ ...agent, schedulingPlans, bookableEventTypeKeys })} />}
       {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} guidance={agent.toolGuidance} change={(enabledTools, toolGuidance) => setAgent({ ...agent, enabledTools, toolGuidance })} />}
       {tab === "limits" && <LimitsEditor value={agent} change={setAgent} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
@@ -420,21 +422,33 @@ function DataEditor({ rules, change }: { rules: AgentConfiguration["dataCollecti
   </div>;
 }
 
-function SchedulingEditor({ plans, eventTypes, change }: { plans: AgentConfiguration["schedulingPlans"]; eventTypes: StudioPayload["calendarEventTypes"]; change: (plans: AgentConfiguration["schedulingPlans"]) => void }) {
+function SchedulingEditor({ plans, bookableEventTypeKeys, eventTypes, change }: { plans: AgentConfiguration["schedulingPlans"]; bookableEventTypeKeys: string[]; eventTypes: StudioPayload["calendarEventTypes"]; change: (plans: AgentConfiguration["schedulingPlans"], bookableEventTypeKeys: string[]) => void }) {
   function updatePlan(index: number, patch: Partial<AgentConfiguration["schedulingPlans"][number]>) {
-    change(plans.map((plan, planIndex) => planIndex === index ? { ...plan, ...patch } : plan));
+    change(plans.map((plan, planIndex) => planIndex === index ? { ...plan, ...patch } : plan), bookableEventTypeKeys);
   }
   function addPlan() {
-    change([...plans, { key: `plan_${plans.length + 1}`, name: "Novo plano", description: "", enabled: false, steps: [{ key: "step_1", eventTypeKey: eventTypes[0]?.key ?? "", label: "Etapa 1", required: true }], constraints: [], prerequisites: {}, proposalExpiryMinutes: 60 }]);
+    change([...plans, { key: `plan_${plans.length + 1}`, name: "Novo plano", description: "", enabled: false, steps: [{ key: "step_1", eventTypeKey: bookableEventTypeKeys[0] ?? eventTypes[0]?.key ?? "", label: "Etapa 1", required: true }], constraints: [], prerequisites: {}, proposalExpiryMinutes: 60, holdDurationMinutes: 48 * 60 }], bookableEventTypeKeys);
   }
+  const blockedPlans = plans.filter((plan) => plan.enabled && plan.steps.some((step) => !bookableEventTypeKeys.includes(step.eventTypeKey)));
   return <div className="space-y-6">
+    <section className="space-y-3 border-b border-mist pb-6">
+      <SectionHeader title="Tipos autorizados para a IA" description="Somente os tipos selecionados são expostos ao modelo e podem ser consultados ou agendados por ele. Todos continuam bloqueando a agenda conforme o profissional associado." />
+      <div className="grid gap-2 md:grid-cols-2">{eventTypes.map((eventType) => {
+        const checked = bookableEventTypeKeys.includes(eventType.key);
+        return <label key={eventType.key} className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 ${checked ? "border-deep-teal/40 bg-deep-teal/5" : "border-mist bg-white"}`}>
+          <input type="checkbox" checked={checked} onChange={(event) => change(plans, event.target.checked ? [...bookableEventTypeKeys, eventType.key] : bookableEventTypeKeys.filter((key) => key !== eventType.key))} className="mt-0.5 h-4 w-4 accent-deep-teal" />
+          <span className="min-w-0"><span className="block text-sm font-semibold text-slate-ink">{eventType.name}</span><code className="mt-1 block truncate text-[10px] text-stone">{eventType.key} · {eventType.durationMinutes} min · {eventType.resourceId}</code></span>
+        </label>;
+      })}</div>
+      {blockedPlans.length > 0 && <p role="alert" className="rounded-lg border border-burnt-coral/30 bg-burnt-coral/5 px-3 py-2 text-xs font-medium text-burnt-coral">Não será possível salvar enquanto estes planos ativos usarem eventos não autorizados: {blockedPlans.map((plan) => plan.name).join(", ")}.</p>}
+    </section>
     <SectionHeader title="Planos de agendamento" description="Cada proposta usa eventos configurados no calendário e restrições validadas pelo servidor." action="Adicionar plano" onAction={addPlan} />
     <FieldCatalog fields={eventTypes.map((eventType) => ({ key: eventType.key, label: eventType.name, group: "Tipo de evento", description: `${eventType.durationMinutes} minutos · recurso ${eventType.resourceId}` }))} />
     {plans.length === 0 && <EmptyState title="Nenhum plano configurado" description="Adicione um plano para combinar tipos de evento, ordem e pré-requisitos." />}
     {plans.map((plan, index) => <section key={`${plan.key}-${index}`} className="space-y-5 border-b border-mist pb-7">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid flex-1 gap-3 md:grid-cols-2"><Field label="Nome do plano" fieldKey="name"><input value={plan.name} onChange={(event) => updatePlan(index, { name: event.target.value })} className={inputClass} /></Field><Field label="Chave do plano" fieldKey="key"><input value={plan.key} onChange={(event) => updatePlan(index, { key: event.target.value })} className={`${inputClass} font-mono text-xs`} /></Field></div>
-        <div className="flex items-center gap-4 pt-6"><Toggle checked={plan.enabled} onChange={(enabled) => updatePlan(index, { enabled })} label="Ativo" /><button type="button" onClick={() => change(plans.filter((_, planIndex) => planIndex !== index))} className="text-sm font-semibold text-burnt-coral">Remover</button></div>
+        <div className="flex items-center gap-4 pt-6"><Toggle checked={plan.enabled} onChange={(enabled) => updatePlan(index, { enabled })} label="Ativo" /><button type="button" onClick={() => change(plans.filter((_, planIndex) => planIndex !== index), bookableEventTypeKeys)} className="text-sm font-semibold text-burnt-coral">Remover</button></div>
       </div>
       <Field label="Descrição" fieldKey="description"><input value={plan.description} onChange={(event) => updatePlan(index, { description: event.target.value })} className={inputClass} /></Field>
       <div className="grid gap-4 md:grid-cols-[1fr_220px]"><div><p className="text-sm font-semibold text-slate-ink">Etapas</p><div className="mt-2 space-y-3">{plan.steps.map((step, stepIndex) => <div key={`${step.key}-${stepIndex}`} className="grid gap-2 border-l-2 border-mist pl-3 md:grid-cols-[1fr_1fr_1.2fr_auto]">
@@ -443,7 +457,10 @@ function SchedulingEditor({ plans, eventTypes, change }: { plans: AgentConfigura
         <Field label="Evento do calendário" fieldKey="steps[].eventTypeKey"><select aria-label="Tipo de evento" value={step.eventTypeKey} onChange={(event) => updatePlan(index, { steps: plan.steps.map((item, itemIndex) => itemIndex === stepIndex ? { ...item, eventTypeKey: event.target.value } : item) })} className={inputClass}>{eventTypes.map((eventType) => <option key={eventType.key} value={eventType.key}>{eventType.name} · {eventType.durationMinutes} min · {eventType.key}</option>)}</select></Field>
         <div className="flex items-end gap-2"><Toggle checked={step.required} onChange={(required) => updatePlan(index, { steps: plan.steps.map((item, itemIndex) => itemIndex === stepIndex ? { ...item, required } : item) })} label="Obrigatória" /><button type="button" onClick={() => updatePlan(index, { steps: plan.steps.filter((_, itemIndex) => itemIndex !== stepIndex) })} className="pb-2 text-sm text-burnt-coral">Remover</button></div>
       </div>)}</div><button type="button" onClick={() => updatePlan(index, { steps: [...plan.steps, { key: `step_${plan.steps.length + 1}`, eventTypeKey: eventTypes[0]?.key ?? "", label: `Etapa ${plan.steps.length + 1}`, required: true }] })} className={`${buttonClass} mt-3`}>Adicionar etapa</button></div>
-      <Field label="Expiração da proposta (minutos)" fieldKey="proposalExpiryMinutes"><input type="number" min={1} value={plan.proposalExpiryMinutes} onChange={(event) => updatePlan(index, { proposalExpiryMinutes: Number(event.target.value) })} className={inputClass} /></Field></div>
+      <div className="space-y-4">
+        <Field label="Expiração da proposta (minutos)" fieldKey="proposalExpiryMinutes"><input type="number" min={1} max={10080} value={plan.proposalExpiryMinutes} onChange={(event) => updatePlan(index, { proposalExpiryMinutes: Number(event.target.value) })} className={inputClass} /></Field>
+        <Field label="Reserva aguardando sinal (horas)" fieldKey="holdDurationMinutes"><input type="number" min={1} max={168} value={plan.holdDurationMinutes / 60} onChange={(event) => updatePlan(index, { holdDurationMinutes: Math.round(Number(event.target.value) * 60) })} className={inputClass} /><p className="mt-1 text-[11px] leading-4 text-stone">Começa quando o cliente confirma uma opção. O horário é liberado se o sinal não for confirmado neste prazo.</p></Field>
+      </div></div>
       <ConstraintEditor constraints={plan.constraints} steps={plan.steps} change={(constraints) => updatePlan(index, { constraints })} />
       <div><p className="text-sm font-semibold text-slate-ink">Pré-requisitos</p><p className="mt-1 text-xs text-stone">Escolha um dado disponível, a comparação e o valor esperado.</p><ConditionEditor value={plan.prerequisites} fields={schedulingConditionFields} change={(prerequisites) => updatePlan(index, { prerequisites })} /></div>
     </section>)}
@@ -594,4 +611,4 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
 function formatHour(hour: number) { return `${String(hour).padStart(2, "0")}:00`; }
-function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }
+function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, bookableEventTypeKeys: agent.bookableEventTypeKeys, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }

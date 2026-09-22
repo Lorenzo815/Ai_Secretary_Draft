@@ -3,7 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
 import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointments } from "../../calendar";
-import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
+import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, holdSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
 import { getLatestPaymentRequest } from "../../payments";
@@ -12,7 +12,7 @@ import { getConfiguredMissingFields } from "../agent/runtime-context";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 interface CalendarToolArguments {
-  action: "find_slots" | "book" | "reschedule" | "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  action: "find_slots" | "hold" | "book" | "reschedule" | "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
   purpose: "book" | "reschedule" | null;
   dateIntent: "exact_date" | "date_range" | "next_available" | null;
   fromDate: string | null;
@@ -186,6 +186,56 @@ async function executeCalendarAction(input: {
       };
     } catch (error) {
       return operationalError(tool, error, input.action.action === "book" ? "Falha na reserva." : "Falha no reagendamento.");
+    }
+  }
+
+  if (input.action.action === "hold") {
+    const tool = "calendar.hold";
+    if (!input.action.candidateId || !ObjectId.isValid(input.action.candidateId) || !input.action.confirmedByCustomer) {
+      return validationError(tool, [invalid("arguments", "Informe candidateId válido e confirmação explícita do cliente.")]);
+    }
+    const option = await getSchedulingPlanOption(input.customerId, new ObjectId(input.action.candidateId));
+    if (!option || option.purpose === "reschedule") {
+      return validationError(tool, [invalid("candidateId", "A proposta expirou, foi substituída ou não serve para uma nova reserva.")]);
+    }
+    const settings = await getCalendarSettings();
+    const plan = resolveOptionPlan(option, input.configuration, settings);
+    if (!plan || plan.key.startsWith("event:")) {
+      return validationError(tool, [invalid("candidateId", "A reserva temporária exige um plano de agendamento ativo.")]);
+    }
+    const prerequisiteError = await validatePlanPrerequisites(
+      input.customerId,
+      plan,
+      input.configuration,
+      tool,
+      { ignorePayment: true, rejectPaid: true },
+    );
+    if (prerequisiteError) return prerequisiteError;
+    if (input.isMutationAllowed && !(await input.isMutationAllowed())) {
+      return validationError(tool, [invalid("job", "Uma mensagem mais recente chegou antes da reserva. Nenhum horário foi bloqueado.")]);
+    }
+    try {
+      const result = await holdSchedulingPlanOption({
+        customerId: input.customerId,
+        customerName: input.customerName,
+        contactPhone: input.contactPhone,
+        optionId: option._id,
+        plan,
+        configRevision: input.configuration.revision,
+      });
+      return {
+        output: JSON.stringify({
+          ok: true,
+          tool,
+          appointmentGroupId: result.appointmentGroupId.toString(),
+          holdExpiresAt: result.holdExpiresAt.toISOString(),
+          timezone: result.settings.timezone,
+          steps: serializeCandidate(result.option, plan).steps,
+        }),
+        retryable: false,
+      };
+    } catch (error) {
+      return operationalError(tool, error, "Falha ao criar a reserva temporária.");
     }
   }
 
@@ -414,8 +464,17 @@ function validateFindSlotsInput(
   const hasEventType = Boolean(action.eventType);
   const hasPlan = Boolean(action.planKey);
   if (hasEventType === hasPlan) errors.push(invalid("arguments", "Informe eventType ou planKey, mas não ambos."));
-  if (hasEventType) validateEventType(action.eventType, settings, errors, "arguments.eventType");
-  if (hasPlan && !configuration.schedulingPlans.some((plan) => plan.enabled && plan.key === action.planKey)) {
+  if (hasEventType) {
+    validateEventType(action.eventType, settings, errors, "arguments.eventType");
+    if (action.eventType && !configuration.bookableEventTypeKeys.includes(action.eventType)) {
+      errors.push(invalid("arguments.eventType", "Este tipo de evento não está autorizado para agendamento pela IA."));
+    }
+  }
+  if (hasPlan && !configuration.schedulingPlans.some((plan) => (
+    plan.enabled &&
+    plan.key === action.planKey &&
+    plan.steps.every((step) => configuration.bookableEventTypeKeys.includes(step.eventTypeKey))
+  ))) {
     errors.push(invalid("arguments.planKey", "Informe a chave de um plano habilitado."));
   }
   if (!action.purpose) errors.push(required("arguments.purpose", "Informe book ou reschedule."));
@@ -471,8 +530,16 @@ function resolveSchedulingPlan(
   configuration: AgentConfigurationDocument,
   settings: Awaited<ReturnType<typeof getCalendarSettings>>,
 ) {
-  if (action.planKey) return configuration.schedulingPlans.find((plan) => plan.enabled && plan.key === action.planKey) ?? null;
-  const eventType = settings.eventTypes.find((item) => item.key === action.eventType);
+  if (action.planKey) {
+    return configuration.schedulingPlans.find((plan) => (
+      plan.enabled &&
+      plan.key === action.planKey &&
+      plan.steps.every((step) => configuration.bookableEventTypeKeys.includes(step.eventTypeKey))
+    )) ?? null;
+  }
+  const eventType = settings.eventTypes.find((item) => (
+    item.key === action.eventType && configuration.bookableEventTypeKeys.includes(item.key)
+  ));
   return eventType ? singleEventPlan(eventType.key, eventType.name) : null;
 }
 
@@ -482,9 +549,15 @@ function resolveOptionPlan(
   settings: Awaited<ReturnType<typeof getCalendarSettings>>,
 ) {
   if (!option.planKey.startsWith("event:")) {
-    return configuration.schedulingPlans.find((plan) => plan.enabled && plan.key === option.planKey) ?? null;
+    return configuration.schedulingPlans.find((plan) => (
+      plan.enabled &&
+      plan.key === option.planKey &&
+      plan.steps.every((step) => configuration.bookableEventTypeKeys.includes(step.eventTypeKey))
+    )) ?? null;
   }
-  const eventType = settings.eventTypes.find((item) => `event:${item.key}` === option.planKey);
+  const eventType = settings.eventTypes.find((item) => (
+    `event:${item.key}` === option.planKey && configuration.bookableEventTypeKeys.includes(item.key)
+  ));
   return eventType ? singleEventPlan(eventType.key, eventType.name) : null;
 }
 
@@ -498,6 +571,7 @@ function singleEventPlan(eventType: string, name: string): SchedulingPlan {
     constraints: [],
     prerequisites: {},
     proposalExpiryMinutes: 30,
+    holdDurationMinutes: 30,
   };
 }
 
@@ -628,6 +702,7 @@ async function validatePlanPrerequisites(
   plan: SchedulingPlan,
   configuration: AgentConfigurationDocument,
   tool = "calendar.find_plan_option",
+  options: { ignorePayment?: boolean; rejectPaid?: boolean } = {},
 ) {
   const [customer, payment] = await Promise.all([
     findCustomerById(customerId.toString()),
@@ -640,7 +715,16 @@ async function validatePlanPrerequisites(
     customer: { ...profile, missingFieldsCount: missingFields.length },
     operations: { paymentStatus: payment?.status ?? null },
   };
-  return matchesConditions(facts, plan.prerequisites)
+  if (options.rejectPaid && payment?.status === "paid") {
+    return validationError(tool, [invalid("payment", "O sinal já foi confirmado. Use calendar.book para concluir o agendamento.")]);
+  }
+  const prerequisites = options.ignorePayment
+    ? {
+        ...(plan.prerequisites.all ? { all: plan.prerequisites.all.filter((condition) => condition.field !== "operations.paymentStatus") } : {}),
+        ...(plan.prerequisites.any ? { any: plan.prerequisites.any.filter((condition) => condition.field !== "operations.paymentStatus") } : {}),
+      }
+    : plan.prerequisites;
+  return matchesConditions(facts, prerequisites)
     ? null
     : validationError(tool, [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
 }
@@ -741,7 +825,6 @@ async function validationError(tool: string, errors: ToolValidationIssue[]): Pro
       tool,
       calendarNow: DateTime.now().setZone(settings.timezone).toISO(),
       timezone: settings.timezone,
-      eventTypes: serializeEventTypes(settings.eventTypes),
       errors,
     }),
     retryable: true,

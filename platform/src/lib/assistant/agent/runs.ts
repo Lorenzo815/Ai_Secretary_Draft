@@ -106,6 +106,7 @@ function createConfigurationSnapshot(configuration: AgentConfigurationDocument):
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,
     schedulingPlans: configuration.schedulingPlans,
+    bookableEventTypeKeys: configuration.bookableEventTypeKeys,
     enabledTools: configuration.enabledTools,
     toolGuidance: configuration.toolGuidance,
     loopPolicy: configuration.loopPolicy,

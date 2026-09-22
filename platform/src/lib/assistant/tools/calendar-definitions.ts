@@ -33,7 +33,7 @@ export const calendarToolDefinitions = {
     }),
     promptInstructions: `calendar.find_slots busca um evento (eventType) ou um plano (planKey), nunca ambos.
 - purpose=book busca um novo agendamento; purpose=reschedule busca uma nova opção para o único agendamento atual compatível identificado pelo servidor.
-- A busca é somente leitura. Quando o pedido e as preferências estiverem claros, execute-a imediatamente; não peça autorização para apenas consultar horários. Confirmação explícita é exigida somente antes de calendar.book ou calendar.reschedule.
+- A busca é somente leitura. Quando o pedido e as preferências estiverem claros, execute-a imediatamente; não peça autorização para apenas consultar horários. Confirmação explícita é exigida somente antes de calendar.hold, calendar.book ou calendar.reschedule.
 - Consulte horários mesmo que cadastro, pagamento ou outros pré-requisitos do plano ainda estejam pendentes. Esses pré-requisitos são obrigatórios para reservar, não para visualizar disponibilidade.
 - A disponibilidade operacional vem exclusivamente da configuração: tipo de evento -> recurso -> expediente semanal intersectado com uma permissão aplicável, menos bloqueios e agendamentos existentes. Uma permissão não amplia o expediente semanal; qualquer bloqueio aplicável prevalece. Nunca informe, invente ou tente ampliar uma janela retornada.
 - Permissões e bloqueios podem valer para todos os profissionais ou somente para recursos selecionados. Confie exclusivamente nos candidatos retornados pelo servidor.
@@ -58,8 +58,8 @@ export const calendarToolDefinitions = {
     getGroundedReply: getCalendarResultOverride,
   }),
   "calendar.book": defineTool({
-    label: "Reservar horário",
-    description: "Reserva um candidato de evento ou plano após confirmação explícita.",
+    label: "Confirmar agendamento",
+    description: "Confirma um candidato após a escolha explícita e o atendimento aos pré-requisitos, incluindo o sinal configurado.",
     mutates: true,
     argumentsSchema: strictArguments(["candidateId", "confirmedByCustomer"], {
       candidateId: { type: "string" },
@@ -71,6 +71,23 @@ export const calendarToolDefinitions = {
 - Uma proposta expirada, substituída ou já consumida deve ser pesquisada novamente.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book", context, args),
     getGroundedReply: getCalendarResultOverride,
+  }),
+  "calendar.hold": defineTool({
+    label: "Reservar enquanto aguarda sinal",
+    description: "Bloqueia temporariamente uma opção escolhida pelo cliente até o sinal ser confirmado ou o prazo configurado expirar.",
+    mutates: true,
+    argumentsSchema: strictArguments(["candidateId", "confirmedByCustomer"], {
+      candidateId: { type: "string" },
+      confirmedByCustomer: { type: "boolean" },
+    }),
+    promptInstructions: `calendar.hold exige candidateId retornado por calendar.find_slots com purpose=book e confirmedByCustomer=true.
+- Use somente quando o cliente escolher explicitamente uma opção completa e o sinal ainda não estiver confirmado.
+- Não bloqueie todas as opções apresentadas. Bloqueie apenas o candidateId escolhido pelo cliente.
+- Esta ferramenta cria uma reserva temporária pelo prazo configurado no plano. Ela não confirma o agendamento e não substitui o pagamento.
+- Depois de uma reserva bem-sucedida, prossiga com payment.request_deposit quando o cliente já tiver aceitado pagar; caso contrário, explique o prazo da reserva e peça confirmação para emitir o sinal.
+- Se o sinal já estiver pago, use calendar.book em vez desta ferramenta.
+- Nunca use para reagendamento, nunca monte IDs ou horários manualmente e nunca afirme que o agendamento está confirmado enquanto o resultado estiver apenas reservado.`,
+    execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("hold", context, args),
   }),
   "calendar.reschedule": defineTool({
     label: "Reagendar horário",

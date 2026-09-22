@@ -41,7 +41,7 @@ export async function GET() {
     getCalendarSettings(),
   ]);
   return NextResponse.json({
-    configuration: sanitizeConfiguration(configuration),
+    configuration: sanitizeConfiguration(configuration, calendarSettings.eventTypes.map((eventType) => eventType.key)),
     qualification,
     followUp,
     automationRules,
@@ -149,7 +149,8 @@ export async function PUT(request: Request) {
   }
 }
 
-function sanitizeConfiguration(configuration: AgentConfigurationDocument) {
+function sanitizeConfiguration(configuration: AgentConfigurationDocument, availableEventTypeKeys?: string[]) {
+  const available = availableEventTypeKeys ? new Set(availableEventTypeKeys) : null;
   return {
     revision: configuration.revision,
     contentHash: configuration.contentHash,
@@ -163,6 +164,9 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument) {
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,
     schedulingPlans: configuration.schedulingPlans,
+    bookableEventTypeKeys: available
+      ? configuration.bookableEventTypeKeys.filter((key) => available.has(key))
+      : configuration.bookableEventTypeKeys,
     enabledTools: configuration.enabledTools,
     toolGuidance: configuration.toolGuidance ?? {},
     loopPolicy: configuration.loopPolicy,

@@ -10,7 +10,8 @@ interface Appointment {
   customerName: string;
   startAt: string;
   endAt: string;
-  status: "scheduled" | "cancelled" | "completed";
+  status: "held" | "scheduled" | "cancelled" | "completed";
+  holdExpiresAt?: string;
   eventType?: string;
   notes?: string;
   source: "assistant" | "manual";
@@ -295,6 +296,11 @@ export default function WeekCalendar({
                           </div>
                         </div>
                         <p className="mt-1 truncate text-[10px] text-stone">{definition?.name ?? "Tipo removido"} · {getResourceName(appointment.providerId, resources)}</p>
+                        {appointment.status === "held" && appointment.holdExpiresAt && (
+                          <p className="mt-1 truncate text-[10px] font-medium text-amber-700">
+                            Aguardando sinal até {formatDateTime(appointment.holdExpiresAt, timezone)}
+                          </p>
+                        )}
                         <div className="mt-1.5 flex flex-wrap items-center gap-1">
                           <StatusBadge status={appointment.status} />
                           {hasConflict && (
@@ -357,7 +363,9 @@ function Toggle({ label, checked, onChange, color }: { label: string; checked: b
 }
 
 function StatusBadge({ status }: { status: Appointment["status"] }) {
-  const style = status === "scheduled"
+  const style = status === "held"
+    ? "bg-amber-50 text-amber-700"
+    : status === "scheduled"
     ? "bg-sky-50 text-sky-700"
     : status === "cancelled"
       ? "bg-slate-100 text-stone"
@@ -419,9 +427,20 @@ function accessEventTouchesDate(event: CalendarAccessEvent, dateKey: string, tim
 }
 
 function formatAppointmentStatus(status: Appointment["status"]) {
+  if (status === "held") return "Reserva temporária";
   if (status === "scheduled") return "Agendado";
   if (status === "cancelled") return "Cancelado";
   return "Concluído";
+}
+
+function formatDateTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: timezone,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function getResourceName(resourceId: string, resources: ResourceDefinition[]) {
