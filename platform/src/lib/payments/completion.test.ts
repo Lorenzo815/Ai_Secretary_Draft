@@ -56,9 +56,30 @@ describe("payment completion scheduling holds", () => {
 
     expect(mocks.confirmHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId);
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
-      body: expect.stringContaining("horários que você escolheu"),
+      body: "Pagamento confirmado pela equipe. A reserva temporária foi confirmada e o horário escolhido está agendado.",
     }));
     expect(mocks.releaseHeldSchedulingPlanOptions).not.toHaveBeenCalled();
+  });
+
+  it("explains that no appointment was confirmed when there is no active hold", async () => {
+    await completePaymentTransition(payment, "paid");
+
+    expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Pagamento confirmado pela equipe. Como não havia mais uma reserva temporária ativa, nenhum horário foi confirmado automaticamente. Vamos escolher uma nova opção para concluir seu agendamento.",
+    }));
+  });
+
+  it("uses the provider and plural wording when confirming multiple held appointments", async () => {
+    mocks.confirmHeldSchedulingPlanOptions.mockResolvedValue([
+      { _id: new ObjectId() },
+      { _id: new ObjectId() },
+    ]);
+
+    await completePaymentTransition({ ...payment, provider: "mercado_pago" }, "paid");
+
+    expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Pagamento confirmado pelo Mercado Pago. A reserva temporária foi confirmada e os horários escolhidos estão agendados.",
+    }));
   });
 
   it("releases active holds after payment rejection", async () => {

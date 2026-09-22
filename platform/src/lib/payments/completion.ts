@@ -26,10 +26,14 @@ export async function completePaymentTransition(
   const customer = await updateCustomerServiceStatus(payment.customerId, "ai_active");
   const contactPhone = customer.phones[0];
   if (!contactPhone) return {};
-  const confirmationSource = payment.provider === "mercado_pago" ? "Mercado Pago" : "equipe";
+  const paymentConfirmation = payment.provider === "mercado_pago"
+    ? "Pagamento confirmado pelo Mercado Pago."
+    : "Pagamento confirmado pela equipe.";
   const body = confirmedAppointments.length > 0
-    ? `Pagamento confirmado pelo ${confirmationSource}. Os horários que você escolheu também foram confirmados na agenda.`
-    : `Pagamento confirmado pelo ${confirmationSource}. Agora vamos encontrar as melhores opções para sua Bioimpedância e Consulta com o Dr. Matheus. Você prefere realizá-las próximas uma da outra ou em dias e horários diferentes?`;
+    ? `${paymentConfirmation} ${confirmedAppointments.length === 1
+      ? "A reserva temporária foi confirmada e o horário escolhido está agendado."
+      : "A reserva temporária foi confirmada e os horários escolhidos estão agendados."}`
+    : `${paymentConfirmation} Como não havia mais uma reserva temporária ativa, nenhum horário foi confirmado automaticamente. Vamos escolher uma nova opção para concluir seu agendamento.`;
   try {
     const sent = await sendTextMessage({ to: contactPhone, body });
     await saveWhatsAppMessage({
