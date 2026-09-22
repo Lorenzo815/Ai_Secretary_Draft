@@ -203,14 +203,10 @@ async function executeCalendarAction(input: {
     if (!plan || plan.key.startsWith("event:")) {
       return validationError(tool, [invalid("candidateId", "A reserva temporária exige um plano de agendamento ativo.")]);
     }
-    const prerequisiteError = await validatePlanPrerequisites(
-      input.customerId,
-      plan,
-      input.configuration,
-      tool,
-      { ignorePayment: true, rejectPaid: true },
-    );
-    if (prerequisiteError) return prerequisiteError;
+    const payment = await getLatestPaymentRequest(input.customerId);
+    if (payment?.status === "paid") {
+      return validationError(tool, [invalid("payment", "O sinal já foi confirmado. Use calendar.book para concluir o agendamento.")]);
+    }
     if (input.isMutationAllowed && !(await input.isMutationAllowed())) {
       return validationError(tool, [invalid("job", "Uma mensagem mais recente chegou antes da reserva. Nenhum horário foi bloqueado.")]);
     }
@@ -702,7 +698,6 @@ async function validatePlanPrerequisites(
   plan: SchedulingPlan,
   configuration: AgentConfigurationDocument,
   tool = "calendar.find_plan_option",
-  options: { ignorePayment?: boolean; rejectPaid?: boolean } = {},
 ) {
   const [customer, payment] = await Promise.all([
     findCustomerById(customerId.toString()),
@@ -715,16 +710,7 @@ async function validatePlanPrerequisites(
     customer: { ...profile, missingFieldsCount: missingFields.length },
     operations: { paymentStatus: payment?.status ?? null },
   };
-  if (options.rejectPaid && payment?.status === "paid") {
-    return validationError(tool, [invalid("payment", "O sinal já foi confirmado. Use calendar.book para concluir o agendamento.")]);
-  }
-  const prerequisites = options.ignorePayment
-    ? {
-        ...(plan.prerequisites.all ? { all: plan.prerequisites.all.filter((condition) => condition.field !== "operations.paymentStatus") } : {}),
-        ...(plan.prerequisites.any ? { any: plan.prerequisites.any.filter((condition) => condition.field !== "operations.paymentStatus") } : {}),
-      }
-    : plan.prerequisites;
-  return matchesConditions(facts, prerequisites)
+  return matchesConditions(facts, plan.prerequisites)
     ? null
     : validationError(tool, [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
 }

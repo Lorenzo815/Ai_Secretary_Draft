@@ -175,7 +175,9 @@ describe("calendar plan prerequisites", () => {
     };
     getSchedulingPlanOption.mockResolvedValue(option);
     findCustomerById.mockResolvedValue({ _id: customerId });
-    getCustomerProfileSnapshot.mockReturnValue({ missingFields: [] });
+    getCustomerProfileSnapshot.mockReturnValue({
+      missingFields: ["relationshipStatus", "fullName", "birthDate", "cpf", "postalCode", "addressNumber", "profession"],
+    });
     getLatestPaymentRequest.mockResolvedValue(null);
     holdSchedulingPlanOption.mockResolvedValue({
       option,
@@ -199,6 +201,8 @@ describe("calendar plan prerequisites", () => {
       optionId,
       plan: expect.objectContaining({ key: "first_visit", holdDurationMinutes: 48 * 60 }),
     }));
+    expect(findCustomerById).not.toHaveBeenCalled();
+    expect(getCustomerProfileSnapshot).not.toHaveBeenCalled();
   });
 
   it("does not hold an option without explicit customer confirmation", async () => {
@@ -211,6 +215,32 @@ describe("calendar plan prerequisites", () => {
       ok: false,
       type: "validation_error",
     });
+    expect(holdSchedulingPlanOption).not.toHaveBeenCalled();
+  });
+
+  it("does not hold an option after payment confirmation", async () => {
+    const optionId = new ObjectId();
+    getSchedulingPlanOption.mockResolvedValue({
+      _id: optionId,
+      customerId,
+      planKey: "first_visit",
+      configRevision: configuration.revision,
+      status: "proposed",
+      expiresAt: new Date("2026-09-23T15:00:00.000Z"),
+    });
+    getLatestPaymentRequest.mockResolvedValue({ status: "paid" });
+
+    const execution = await executeRegisteredCalendarTool("hold", context, {
+      candidateId: optionId.toString(),
+      confirmedByCustomer: true,
+    });
+    const result = JSON.parse(execution!.output);
+
+    expect(result).toMatchObject({
+      ok: false,
+      type: "validation_error",
+    });
+    expect(result.errors[0]).toMatchObject({ field: "payment" });
     expect(holdSchedulingPlanOption).not.toHaveBeenCalled();
   });
 });
