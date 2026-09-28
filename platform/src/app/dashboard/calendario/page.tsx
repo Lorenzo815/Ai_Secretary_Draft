@@ -204,7 +204,10 @@ export default function CalendarPage() {
   }
 
   function openCreateEvent(targetDate?: string, targetTime?: string) {
-    const nextDate = targetDate ?? date;
+    const nextDate = targetDate || date || formatDateInput(
+      new Date().toISOString(),
+      settings?.timezone ?? "America/Sao_Paulo",
+    );
     setEditingAppointmentId("");
     setCustomerId("");
     setDate(nextDate);
@@ -376,11 +379,14 @@ export default function CalendarPage() {
               durationMinutes: String(customDurationMinutes),
             } : {}),
             ...(editingAppointmentId ? { excludeAppointmentId: editingAppointmentId } : {}),
+            ...(allowOutsideAvailability ? { allowOutsideAvailability: "true" } : {}),
           });
           const response = await fetch(`/api/calendar?${parameters}`, { cache: "no-store" });
           const data = await response.json() as { slots?: Array<{ startAt: string; localTime: string; label: string }>; error?: string };
           if (!response.ok) throw new Error(data.error ?? "Não foi possível sugerir encaixes.");
-          setSuggestedSlots(data.slots ?? []);
+          const slots = data.slots ?? [];
+          setSuggestedSlots(slots);
+          setTime((current) => current || slots[0]?.localTime || "");
           setSuggestionsLoaded(true);
         } catch (error) {
           setFeedback(error instanceof Error ? error.message : "Não foi possível sugerir encaixes.");
@@ -389,13 +395,13 @@ export default function CalendarPage() {
         } finally {
           setSuggestionsLoading(false);
         }
-      }, [date, eventType, customResourceId, customDurationMinutes, editingAppointmentId]);
+      }, [date, eventType, customResourceId, customDurationMinutes, editingAppointmentId, allowOutsideAvailability]);
 
     useEffect(() => {
-      if (!eventOpen || allowOutsideAvailability) return;
+      if (!eventOpen) return;
       const timeout = window.setTimeout(() => void loadSuggestions(), 250);
       return () => window.clearTimeout(timeout);
-    }, [eventOpen, allowOutsideAvailability, loadSuggestions]);
+    }, [eventOpen, loadSuggestions]);
 
     async function setAppointmentConfirmation(id: string, confirmationStatus: "pending" | "confirmed") {
         setBusy(true);
@@ -675,7 +681,7 @@ export default function CalendarPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">{editingAppointmentId ? "Editar evento" : "Novo evento"}</h2>
-              <p className="mt-1 text-xs leading-5 text-stone">Eventos manuais não expiram. O override opcional permite sair do expediente, mas bloqueios e conflitos continuam protegidos.</p>
+              <p className="mt-1 text-xs leading-5 text-stone">Eventos manuais não expiram. O override ignora expediente, permissões e bloqueios; somente conflitos com outros eventos continuam protegidos.</p>
             </div>
             <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar evento"><X className="h-4 w-4" /></button>
           </div>
@@ -725,12 +731,14 @@ export default function CalendarPage() {
               <input type="checkbox" checked={allowOutsideAvailability} onChange={(event) => setAllowOutsideAvailability(event.target.checked)} className="h-4 w-4 accent-deep-teal" />
               Permitir fora do expediente/permissões
             </label>
-            {date && <button type="button" onClick={() => void loadSuggestions()} disabled={suggestionsLoading || allowOutsideAvailability} className="rounded-md border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">{suggestionsLoading ? "Buscando encaixes..." : "Atualizar encaixes"}</button>}
+            {date && <button type="button" onClick={() => void loadSuggestions()} disabled={suggestionsLoading} className="rounded-md border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">{suggestionsLoading ? "Buscando encaixes..." : "Atualizar encaixes"}</button>}
           </div>
-          {!allowOutsideAvailability && suggestionsLoaded && suggestedSlots.length === 0 && (
-            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800">Nenhum bloco livre deste tipo foi encontrado no dia selecionado.</p>
+          {suggestionsLoaded && suggestedSlots.length === 0 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800">{allowOutsideAvailability
+              ? "Não há espaço livre no dia sem sobrepor outro evento."
+              : `Nenhum bloco livre foi encontrado considerando expediente, permissões e antecedência mínima de ${settings.minimumNoticeHours} h. Use o override para ignorar essas regras.`}</p>
           )}
-          {!allowOutsideAvailability && suggestedSlots.length > 0 && (
+          {suggestedSlots.length > 0 && (
             <div className="mt-3 rounded-lg bg-soft-ivory p-3">
               <p className="text-xs font-semibold text-slate-ink">Próximos blocos que comportam este evento</p>
               <div className="mt-2 flex flex-wrap gap-2">

@@ -425,6 +425,7 @@ export async function findAvailableSlots(input: {
   limit?: number;
   excludeAppointmentId?: ObjectId;
   excludeAppointmentIds?: ObjectId[];
+  allowOutsideAvailability?: boolean;
 }) {
   await releaseExpiredAppointmentHolds();
   const settings = await getCalendarSettings();
@@ -477,20 +478,38 @@ export async function findAvailableSlots(input: {
       DateTime.fromJSDate(appointment.startAt),
       DateTime.fromJSDate(appointment.endAt),
     ));
-  const earliest = DateTime.now().setZone(settings.timezone).plus({ hours: settings.minimumNoticeHours });
+  const now = DateTime.now().setZone(settings.timezone);
+  const earliest = input.allowOutsideAvailability
+    ? now
+    : now.plus({ hours: settings.minimumNoticeHours });
   const durationMinutes = eventType.durationMinutes;
-  const slotDurationMinutes = normalizeSlotDuration(settings.slotDurationMinutes);
+  const slotDurationMinutes = input.allowOutsideAvailability
+    ? Math.min(durationMinutes, 15)
+    : normalizeSlotDuration(settings.slotDurationMinutes);
   const slots: AvailableSlot[] = [];
+  const seenSlotStarts = new Set<string>();
   const limit = Math.min(Math.max(input.limit ?? 12, 1), 50);
 
   for (let day = startDay; day <= endDay && slots.length < limit; day = day.plus({ days: 1 })) {
     const resource = settings.resources.find((item) => item.id === eventType.resourceId);
     const availability = (resource?.weeklyAvailability ?? settings.weeklyAvailability)
       .find((item) => item.weekday === day.weekday);
-    if (!availability?.enabled) continue;
-    for (const interval of availability.intervals) {
-      let cursor = atLocalTime(day, interval.startTime);
-      const intervalEnd = atLocalTime(day, interval.endTime);
+    const configuredIntervals = availability?.enabled
+      ? availability.intervals.map((interval) => ({
+          start: atLocalTime(day, interval.startTime),
+          end: atLocalTime(day, interval.endTime),
+        }))
+      : [];
+    const searchIntervals = input.allowOutsideAvailability
+      ? [
+          ...configuredIntervals,
+          { start: day.set({ hour: 8, minute: 0 }), end: day.plus({ days: 1 }).startOf("day") },
+          { start: day.startOf("day"), end: day.set({ hour: 8, minute: 0 }) },
+        ]
+      : configuredIntervals;
+    for (const interval of searchIntervals) {
+      let cursor = interval.start;
+      const intervalEnd = interval.end;
       while (cursor.plus({ minutes: durationMinutes }) <= intervalEnd && slots.length < limit) {
         const slotEnd = cursor.plus({ minutes: durationMinutes });
         const slotInterval = Interval.fromDateTimes(cursor.toUTC(), slotEnd.toUTC());
@@ -500,20 +519,28 @@ export async function findAvailableSlots(input: {
             ? cursor.hour >= 12
             : true;
         const timeMatches = !input.startTime || cursor.toFormat("HH:mm") === input.startTime;
-        const accessAllowed = isSlotAllowedByAccessEvents(
-          accessEvents,
-          eventType.resourceId,
-          slotInterval.start!.toJSDate(),
-          slotInterval.end!.toJSDate(),
-        );
-        if (cursor >= earliest && periodMatches && timeMatches && accessAllowed && !occupied.some((item) => item.overlaps(slotInterval))) {
+        const accessAllowed = input.allowOutsideAvailability || isSlotAllowedByAccessEvents(
+            accessEvents,
+            eventType.resourceId,
+            slotInterval.start!.toJSDate(),
+            slotInterval.end!.toJSDate(),
+          );
+        const slotKey = cursor.toUTC().toISO()!;
+        if (
+          cursor >= earliest
+          && periodMatches
+          && timeMatches
+          && accessAllowed
+          && !seenSlotStarts.has(slotKey)
+          && !occupied.some((item) => item.overlaps(slotInterval))
+        ) {
           const previousBoundary = occupied
             .filter((item) => item.end && item.end <= cursor.toUTC())
             .reduce((latest, item) => item.end! > latest ? item.end! : latest, cursor.startOf("day").toUTC());
           const nextBoundary = occupied
             .filter((item) => item.start && item.start >= slotEnd.toUTC())
             .reduce((earliestBoundary, item) => item.start! < earliestBoundary ? item.start! : earliestBoundary, cursor.endOf("day").toUTC());
-          const openStart = DateTime.max(atLocalTime(day, interval.startTime).toUTC(), previousBoundary);
+          const openStart = DateTime.max(interval.start.toUTC(), previousBoundary);
           const openEnd = DateTime.min(intervalEnd.toUTC(), nextBoundary);
           slots.push({
             startAt: cursor.toISO()!,
@@ -526,6 +553,7 @@ export async function findAvailableSlots(input: {
             gapWasteMinutes: Math.max(0, openEnd.diff(openStart, "minutes").minutes - durationMinutes),
             label: cursor.setLocale("pt-BR").toFormat("ccc, dd/LL 'às' HH:mm"),
           });
+          seenSlotStarts.add(slotKey);
         }
         cursor = cursor.plus({ minutes: slotDurationMinutes });
       }
@@ -710,6 +738,7 @@ export async function updateManualAppointment(input: {
     eventType: slot.eventType.key,
     ...(input.customTitle ? { customTitle: input.customTitle.trim().slice(0, 120) } : {}),
     durationMinutes: Math.round(slot.endAt.diff(slot.startAt, "minutes").minutes),
+    allowOutsideAvailability: Boolean(input.allowOutsideAvailability),
     ...(input.confirmationStatus ? { confirmationStatus: input.confirmationStatus } : {}),
     ...(notes ? { notes } : {}),
     updatedAt: now,
@@ -907,6 +936,7 @@ async function persistAppointment(
     eventType: input.eventType ?? settings.eventTypes[0].key,
     customTitle: input.customTitle?.trim().slice(0, 120),
     durationMinutes: Math.round(endAt.diff(startAt, "minutes").minutes),
+    allowOutsideAvailability: input.allowOutsideAvailability,
     confirmationStatus: input.confirmationStatus,
     visitGroupId: input.visitGroupId,
     source: input.source,
@@ -1145,7 +1175,9 @@ async function validateManualAppointmentSlot(input: {
   const requestedStartUtc = requested.toUTC();
   const requestedEndUtc = endAt.toUTC();
   const [accessEvents, conflictingAppointment] = await Promise.all([
-    listCalendarAccessEvents(requestedStartUtc.toJSDate(), requestedEndUtc.toJSDate()),
+    input.allowOutsideAvailability
+      ? Promise.resolve([])
+      : listCalendarAccessEvents(requestedStartUtc.toJSDate(), requestedEndUtc.toJSDate()),
     (await getAppointmentsCollection()).findOne({
       ...(input.excludeAppointmentId ? { _id: { $ne: input.excludeAppointmentId } } : {}),
       providerId: resource.id,
@@ -1154,19 +1186,21 @@ async function validateManualAppointmentSlot(input: {
       endAt: { $gt: requestedStartUtc.toJSDate() },
     }),
   ]);
-  const accessDecision = getSlotAccessDecision(
-    accessEvents,
-    resource.id,
-    requestedStartUtc.toJSDate(),
-    requestedEndUtc.toJSDate(),
-  );
-  if (accessDecision.blocker) {
-    throw new Error(
-      `Conflita com o bloqueio “${accessDecision.blocker.title}” de ${formatLocalTime(accessDecision.blocker.startAt, input.settings.timezone)} a ${formatLocalTime(accessDecision.blocker.endAt, input.settings.timezone)} para ${resource.name}.`,
+  if (!input.allowOutsideAvailability) {
+    const accessDecision = getSlotAccessDecision(
+      accessEvents,
+      resource.id,
+      requestedStartUtc.toJSDate(),
+      requestedEndUtc.toJSDate(),
     );
-  }
-  if (!accessDecision.permitted && !input.allowOutsideAvailability) {
-    throw new Error(`Não há uma permissão que cubra todo o período de ${requested.toFormat("HH:mm")} a ${endAt.toFormat("HH:mm")} para ${resource.name}.`);
+    if (accessDecision.blocker) {
+      throw new Error(
+        `Conflita com o bloqueio “${accessDecision.blocker.title}” de ${formatLocalTime(accessDecision.blocker.startAt, input.settings.timezone)} a ${formatLocalTime(accessDecision.blocker.endAt, input.settings.timezone)} para ${resource.name}.`,
+      );
+    }
+    if (!accessDecision.permitted) {
+      throw new Error(`Não há uma permissão que cubra todo o período de ${requested.toFormat("HH:mm")} a ${endAt.toFormat("HH:mm")} para ${resource.name}.`);
+    }
   }
   if (conflictingAppointment) {
     throw new Error(

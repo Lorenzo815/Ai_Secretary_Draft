@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
       const resourceId = request.nextUrl.searchParams.get("resourceId") ?? undefined;
       const durationMinutes = Number(request.nextUrl.searchParams.get("durationMinutes"));
       const excludeId = request.nextUrl.searchParams.get("excludeAppointmentId");
+      const allowOutsideAvailability = request.nextUrl.searchParams.get("allowOutsideAvailability") === "true";
       return NextResponse.json(await findAvailableSlots({
         fromDate,
         toDate,
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
         resourceId,
         durationMinutes: Number.isFinite(durationMinutes) ? durationMinutes : undefined,
         excludeAppointmentId: excludeId && ObjectId.isValid(excludeId) ? new ObjectId(excludeId) : undefined,
+        allowOutsideAvailability,
         limit: 30,
       }));
     } catch (error) {

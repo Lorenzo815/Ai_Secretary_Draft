@@ -29,6 +29,36 @@ describe("calendar access policy", () => {
     ], "doctor", slotStart, slotEnd)).toBe(false);
   });
 
+  it("accepts consecutive permissions that jointly cover the entire slot", () => {
+    expect(isSlotAllowedByAccessEvents([
+      event({
+        type: "permission",
+        startAt: date("2026-09-18T13:00:00.000Z"),
+        endAt: date("2026-09-18T13:30:00.000Z"),
+      }),
+      event({
+        type: "permission",
+        startAt: date("2026-09-18T13:30:00.000Z"),
+        endAt: date("2026-09-18T14:00:00.000Z"),
+      }),
+    ], "doctor", slotStart, slotEnd)).toBe(true);
+  });
+
+  it("rejects a gap between consecutive permissions", () => {
+    expect(isSlotAllowedByAccessEvents([
+      event({
+        type: "permission",
+        startAt: date("2026-09-18T13:00:00.000Z"),
+        endAt: date("2026-09-18T13:25:00.000Z"),
+      }),
+      event({
+        type: "permission",
+        startAt: date("2026-09-18T13:30:00.000Z"),
+        endAt: date("2026-09-18T14:00:00.000Z"),
+      }),
+    ], "doctor", slotStart, slotEnd)).toBe(false);
+  });
+
   it("applies resource-specific permissions only to their targets", () => {
     const events = [event({ type: "permission", resourceIds: ["technician"] })];
     expect(isSlotAllowedByAccessEvents(events, "technician", slotStart, slotEnd)).toBe(true);
