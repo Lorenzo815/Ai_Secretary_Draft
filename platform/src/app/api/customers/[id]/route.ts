@@ -1,7 +1,31 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { updateCustomer } from "@/lib/crm";
+import { findCustomerById, updateCustomer } from "@/lib/crm";
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  if (!(await getServerSession(authOptions))) {
+    return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+  }
+  const { id } = await params;
+  const customer = await findCustomerById(id);
+  if (!customer) {
+    return NextResponse.json({ error: "Cliente não encontrado." }, { status: 404 });
+  }
+  return NextResponse.json(
+    {
+      customer: {
+        id: customer._id.toString(),
+        name: customer.name,
+        phone: customer.phones[0] ?? "",
+      },
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
+}
 
 export async function PATCH(
   request: Request,

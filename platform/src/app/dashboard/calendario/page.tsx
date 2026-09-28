@@ -423,6 +423,38 @@ export default function CalendarPage() {
         }
       }
 
+    async function openAppointmentWhatsApp(appointment: Appointment) {
+      const popup = window.open("", "_blank");
+      if (!popup) {
+        setFeedback("O navegador bloqueou a nova aba. Permita pop-ups para abrir o WhatsApp Web.");
+        return;
+      }
+      popup.opener = null;
+      setFeedback("");
+      try {
+        let phone = appointment.contactPhone ?? "";
+        if (appointment.customerId) {
+          const response = await fetch(`/api/customers/${appointment.customerId}`, { cache: "no-store" });
+          const data = await response.json() as { customer?: CustomerOption; error?: string };
+          if (!response.ok || !data.customer) {
+            throw new Error(data.error ?? "Não foi possível consultar o cadastro atual do cliente.");
+          }
+          phone = data.customer.phone;
+          setCustomers((current) => current.map((customer) => (
+            customer.id === data.customer!.id ? data.customer! : customer
+          )));
+        }
+        const normalizedPhone = phone.replace(/\D/g, "");
+        if (!normalizedPhone) {
+          throw new Error("O cliente não possui um WhatsApp principal cadastrado.");
+        }
+        popup.location.href = buildWhatsAppUrl(appointment, settings!, normalizedPhone);
+      } catch (error) {
+        popup.close();
+        setFeedback(error instanceof Error ? error.message : "Não foi possível abrir o WhatsApp Web.");
+      }
+    }
+
     async function removeAccessEvent(id: string) {
       setBusy(true);
       setFeedback("");
@@ -946,7 +978,7 @@ export default function CalendarPage() {
                     <td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
-                        {appointment.contactPhone && <a href={buildWhatsAppUrl(appointment, settings)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline" title="Abrir conversa no WhatsApp Web com a mensagem padrão"><MessageCircle className="h-4 w-4" />WhatsApp</a>}
+                        {(appointment.customerId || appointment.contactPhone) && <button type="button" onClick={() => void openAppointmentWhatsApp(appointment)} className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline" title="Consultar o telefone atual do cadastro e abrir o WhatsApp Web"><MessageCircle className="h-4 w-4" />WhatsApp</button>}
                         {pendingConfirmation
                           ? <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "confirmed")} disabled={busy} className="font-semibold text-deep-teal hover:underline disabled:opacity-50">Confirmar</button>
                           : appointment.status === "scheduled" && <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "pending")} disabled={busy} className="font-semibold text-amber-700 hover:underline disabled:opacity-50">Desconfirmar</button>}
@@ -985,7 +1017,7 @@ function formatAppointmentDateTime(value: string, timezone: string) {
   }).format(new Date(value));
 }
 
-function buildWhatsAppUrl(appointment: Appointment, settings: Settings) {
+function buildWhatsAppUrl(appointment: Appointment, settings: Settings, phone: string) {
   const local = new Date(appointment.startAt);
   const data = new Intl.DateTimeFormat("pt-BR", {
     weekday: "long",
@@ -1003,8 +1035,7 @@ function buildWhatsAppUrl(appointment: Appointment, settings: Settings) {
     .replaceAll("{hora}", hora)
     .replaceAll("{tipo}", tipo)
     .replaceAll("{evento}", evento);
-  const phone = (appointment.contactPhone ?? "").replace(/\D/g, "");
-  return `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+  return `https://web.whatsapp.com/send?phone=${phone.replace(/\D/g, "")}&text=${encodeURIComponent(message)}`;
 }
 
 function matchesAppointmentStatus(appointment: Appointment, status: string) {
