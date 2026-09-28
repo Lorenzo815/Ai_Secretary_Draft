@@ -14,6 +14,7 @@ import PaymentReviewPanel from "./_components/payment-review-panel";
 import WhatsAppConversation from "./_components/whatsapp-conversation";
 import CpfDetail from "./_components/cpf-detail";
 import BrowserDateTime from "@/components/browser-date-time";
+import CustomerFormButton from "../_components/customer-form-button";
 import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +60,28 @@ export default async function CustomerPage({
               {customer.phones.map((phone) => `+${phone}`).join(" · ")}
             </p>
           </div>
-          <span className="rounded-full bg-deep-teal/10 px-3 py-1.5 text-xs font-semibold text-deep-teal">{relationshipLabel}</span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-deep-teal/10 px-3 py-1.5 text-xs font-semibold text-deep-teal">{relationshipLabel}</span>
+            <CustomerFormButton customer={{
+              id: customer._id.toString(),
+              name: customer.name,
+              whatsapp: customer.phones[0] ?? "",
+              relationshipStatus: profile.relationshipStatus,
+              birthDate: profile.birthDate ?? "",
+              maskedCpf: profile.cpf ?? undefined,
+              profession: profile.profession ?? "",
+              secondaryPhones: customer.phones.slice(1),
+              address: profile.address ? {
+                postalCode: profile.address.postalCode,
+                street: profile.address.street,
+                neighborhood: profile.address.neighborhood,
+                city: profile.address.city,
+                state: profile.address.state,
+                number: profile.address.number ?? undefined,
+                complement: profile.address.complement ?? undefined,
+              } : undefined,
+            }} />
+          </div>
         </div>
       </header>
 

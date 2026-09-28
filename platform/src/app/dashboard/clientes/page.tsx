@@ -12,6 +12,7 @@ import LeadInsightTags from "@/components/lead-insight-tags";
 import BrowserDateTime from "@/components/browser-date-time";
 import CustomerServiceStatusControl from "@/components/customer-service-status-control";
 import CustomerTableRow from "./_components/customer-table-row";
+import CustomerFormButton from "./_components/customer-form-button";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,10 @@ export default async function CustomersPage({
           <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Clientes</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone">Acompanhe quem precisa de atenção, o contexto mais recente e o avanço até o agendamento.</p>
         </div>
-        <p className="text-xs font-semibold text-stone">{result.total} resultado(s) · página {result.page} de {result.pageCount}</p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs font-semibold text-stone">{result.total} resultado(s) · página {result.page} de {result.pageCount}</p>
+          <CustomerFormButton />
+        </div>
       </header>
 
       <section aria-label="Resumo da base" className="grid overflow-hidden rounded-lg border border-mist bg-white sm:grid-cols-2 xl:grid-cols-4">

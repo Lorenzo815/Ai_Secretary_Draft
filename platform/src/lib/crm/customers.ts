@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { LEAD_QUALIFICATION_VERSION, type LeadInsightTag } from "../qualification/contracts";
-import { CustomerProfileValidationError, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone } from "./validation";
+import { CustomerProfileValidationError, getWhatsAppPhoneAliases, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone, normalizeWhatsAppPhone } from "./validation";
 
 export interface CustomerIdentifier {
   kind: string;
@@ -169,32 +169,59 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
   const customers = await getCustomersCollection();
   await ensureCustomerIndexes();
 
-  const phone = input.phone.replace(/\D/g, "");
+  const phone = normalizeWhatsAppPhone(input.phone);
+  const phoneAliases = getWhatsAppPhoneAliases(input.phone);
+  const legacyPhoneAliases = phoneAliases.filter((alias) => alias !== phone);
   const now = new Date();
+  const update = {
+    $set: {
+      ...(input.name ? { name: input.name } : {}),
+      updatedAt: now,
+    },
+    $min: { firstInteractionAt: input.interactionAt },
+    $max: { lastInteractionAt: input.interactionAt },
+    $setOnInsert: {
+      _id: new ObjectId(),
+      ...(!input.name ? { name: phone } : {}),
+      phones: [phone],
+      identifiers: [
+        { kind: "whatsapp_phone", value: phone, provider: "whatsapp" },
+      ],
+      serviceStatus: "ai_active" as const,
+      createdAt: now,
+    },
+  };
+  const exactCustomer = await customers.findOneAndUpdate(
+    {
+      identifiers: {
+        $elemMatch: { kind: "whatsapp_phone", value: phone },
+      },
+    },
+    update,
+    { returnDocument: "after" },
+  );
+  if (exactCustomer) return exactCustomer;
+
+  if (legacyPhoneAliases.length > 0) {
+    const legacyCustomer = await customers.findOneAndUpdate(
+      {
+        identifiers: {
+          $elemMatch: { kind: "whatsapp_phone", value: { $in: legacyPhoneAliases } },
+        },
+      },
+      update,
+      { returnDocument: "after" },
+    );
+    if (legacyCustomer) return legacyCustomer;
+  }
+
   const customer = await customers.findOneAndUpdate(
     {
       identifiers: {
         $elemMatch: { kind: "whatsapp_phone", value: phone },
       },
     },
-    {
-      $set: {
-        ...(input.name ? { name: input.name } : {}),
-        updatedAt: now,
-      },
-      $min: { firstInteractionAt: input.interactionAt },
-      $max: { lastInteractionAt: input.interactionAt },
-      $setOnInsert: {
-        _id: new ObjectId(),
-        ...(!input.name ? { name: phone } : {}),
-        phones: [phone],
-        identifiers: [
-          { kind: "whatsapp_phone", value: phone, provider: "whatsapp" },
-        ],
-        serviceStatus: "ai_active",
-        createdAt: now,
-      },
-    },
+    update,
     { upsert: true, returnDocument: "after" },
   );
 
@@ -207,10 +234,178 @@ export async function listCustomers() {
   return customers.find({}).sort({ lastInteractionAt: -1 }).toArray();
 }
 
+export async function listCustomerOptions() {
+  const customers = await getCustomersCollection();
+  return customers.find(
+    {},
+    { projection: { name: 1, phones: 1 } },
+  ).sort({ name: 1 }).toArray();
+}
+
 export async function findCustomerById(id: string) {
   if (!ObjectId.isValid(id)) return null;
   const customers = await getCustomersCollection();
   return customers.findOne({ _id: new ObjectId(id) });
+}
+
+export async function createCustomer(input: { name: string; whatsapp: string }) {
+  const customers = await getCustomersCollection();
+  await ensureCustomerIndexes();
+  const name = input.name.trim().slice(0, 120);
+  const phone = normalizeWhatsAppPhone(input.whatsapp);
+  const phoneAliases = getWhatsAppPhoneAliases(input.whatsapp);
+  if (!name) throw new CustomerProfileValidationError("Informe o nome do cliente.");
+  if (!isValidPhone(phone)) throw new CustomerProfileValidationError("Informe um WhatsApp válido com DDD.");
+  const existing = await customers.findOne({
+    identifiers: { $elemMatch: { kind: "whatsapp_phone", value: { $in: phoneAliases } } },
+  });
+  if (existing) {
+    throw new CustomerProfileValidationError(`Este WhatsApp já está vinculado a ${existing.name}.`);
+  }
+  const now = new Date();
+  const customer: CustomerDocument = {
+    _id: new ObjectId(),
+    name,
+    phones: [phone],
+    identifiers: [{ kind: "whatsapp_phone", value: phone, provider: "whatsapp" }],
+    serviceStatus: "ai_active",
+    profile: { fullName: name, updatedAt: now },
+    firstInteractionAt: now,
+    lastInteractionAt: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    await customers.insertOne(customer);
+    return customer;
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new CustomerProfileValidationError("Este WhatsApp já está vinculado a outro cliente.");
+    }
+    throw error;
+  }
+}
+
+export interface AdminCustomerUpdateInput {
+  name: string;
+  whatsapp: string;
+  relationshipStatus?: CustomerRelationshipStatus | null;
+  birthDate?: string;
+  cpf?: string;
+  postalCode?: string;
+  street?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  addressNumber?: string;
+  addressComplement?: string;
+  profession?: string;
+  secondaryPhones?: string[];
+}
+
+export async function updateCustomer(id: string, input: AdminCustomerUpdateInput) {
+  if (!ObjectId.isValid(id)) throw new CustomerProfileValidationError("Cliente inválido.");
+  const customers = await getCustomersCollection();
+  await ensureCustomerIndexes();
+  const customerId = new ObjectId(id);
+  const current = await customers.findOne({ _id: customerId });
+  if (!current) throw new CustomerProfileValidationError("Cliente não encontrado.");
+  const name = input.name.trim().slice(0, 120);
+  const phone = normalizeWhatsAppPhone(input.whatsapp);
+  const phoneAliases = getWhatsAppPhoneAliases(input.whatsapp);
+  if (!name) throw new CustomerProfileValidationError("Informe o nome do cliente.");
+  if (!isValidPhone(phone)) throw new CustomerProfileValidationError("Informe um WhatsApp válido com DDD.");
+  const duplicate = await customers.findOne({
+    _id: { $ne: customerId },
+    identifiers: { $elemMatch: { kind: "whatsapp_phone", value: { $in: phoneAliases } } },
+  });
+  if (duplicate) {
+    throw new CustomerProfileValidationError(`Este WhatsApp já está vinculado a ${duplicate.name}.`);
+  }
+  const previousWhatsApp = current.identifiers.find((identifier) => identifier.kind === "whatsapp_phone")?.value;
+  const identifiers = [
+    ...current.identifiers.filter((identifier) => identifier.kind !== "whatsapp_phone"),
+    { kind: "whatsapp_phone", value: phone, provider: "whatsapp" },
+  ];
+  const now = new Date();
+  const profile = { ...current.profile, fullName: name, updatedAt: now };
+  if (input.birthDate !== undefined) {
+    if (input.birthDate && !isValidBirthDate(input.birthDate)) {
+      throw new CustomerProfileValidationError("A data de nascimento deve ser válida e usar AAAA-MM-DD.");
+    }
+    if (input.birthDate) profile.birthDate = input.birthDate;
+    else delete profile.birthDate;
+  }
+  if (input.cpf?.trim()) {
+    if (!isValidCpf(input.cpf)) throw new CustomerProfileValidationError("O CPF informado é inválido.");
+    profile.cpf = protectCpf(normalizeCpf(input.cpf));
+  }
+  if (input.profession !== undefined) {
+    const profession = input.profession.trim();
+    if (profession && profession.length < 2) throw new CustomerProfileValidationError("Informe uma profissão válida.");
+    if (profession) profile.profession = profession.slice(0, 120);
+    else delete profile.profession;
+  }
+  if (input.postalCode !== undefined) {
+    const postalCode = normalizePostalCode(input.postalCode);
+    if (postalCode) {
+      if (postalCode.length !== 8) throw new CustomerProfileValidationError("O CEP deve conter 8 dígitos.");
+      const baseAddress = normalizePostalCode(current.profile?.address?.postalCode ?? "") === postalCode
+        ? current.profile!.address!
+        : await resolvePostalCode(postalCode);
+      const address: CustomerAddress = {
+        ...baseAddress,
+        postalCode,
+        street: input.street?.trim() || baseAddress.street,
+        neighborhood: input.neighborhood?.trim() || baseAddress.neighborhood,
+        city: input.city?.trim() || baseAddress.city,
+        state: input.state?.trim().toUpperCase() || baseAddress.state,
+      };
+      if (input.addressNumber?.trim()) address.number = input.addressNumber.trim();
+      else delete address.number;
+      if (input.addressComplement?.trim()) address.complement = input.addressComplement.trim();
+      else delete address.complement;
+      profile.address = address;
+    } else {
+      delete profile.address;
+    }
+  }
+  const secondaryPhones = [...new Set((input.secondaryPhones ?? current.phones.filter((item) => item !== previousWhatsApp))
+    .map(normalizeWhatsAppPhone)
+    .filter((item) => item && item !== phone))];
+  if (secondaryPhones.some((item) => !isValidPhone(item))) {
+    throw new CustomerProfileValidationError("Um dos telefones secundários é inválido.");
+  }
+  const relationship = input.relationshipStatus
+    ? { status: input.relationshipStatus, source: "staff" as const, classifiedAt: now }
+    : current.relationship;
+  try {
+    const customer = await customers.findOneAndUpdate(
+      { _id: customerId, updatedAt: current.updatedAt },
+      {
+        $set: {
+          name,
+          phones: [phone, ...secondaryPhones],
+          identifiers,
+          profile,
+          ...(input.relationshipStatus === null ? {} : relationship ? { relationship } : {}),
+          updatedAt: now,
+        },
+        ...(input.relationshipStatus === null ? { $unset: { relationship: "" as const } } : {}),
+      },
+      { returnDocument: "after" },
+    );
+    if (!customer) throw new Error("O cadastro foi alterado por outra operação. Atualize a página e tente novamente.");
+    return customer;
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      if (error.keyPattern?.["profile.cpf.hash"]) {
+        throw new CustomerProfileValidationError("Este CPF já está vinculado a outro cliente.");
+      }
+      throw new CustomerProfileValidationError("Este WhatsApp já está vinculado a outro cliente.");
+    }
+    throw error;
+  }
 }
 
 export async function revealCustomerCpf(id: ObjectId) {

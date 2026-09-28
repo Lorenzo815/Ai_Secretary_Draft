@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { DateTime } from "luxon";
+import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import {
@@ -13,7 +14,7 @@ import {
   CalendarEventTypeDefinition,
   CalendarResourceDefinition,
 } from "@/lib/calendar";
-import { findCustomerById, listCustomers } from "@/lib/crm";
+import { findCustomerById, listCustomerOptions } from "@/lib/crm";
 
 async function isAuthenticated() {
   return Boolean(await getServerSession(authOptions));
@@ -29,7 +30,18 @@ export async function GET(request: NextRequest) {
       const fromDate = request.nextUrl.searchParams.get("fromDate") ?? "";
       const toDate = request.nextUrl.searchParams.get("toDate") ?? fromDate;
       const eventType = request.nextUrl.searchParams.get("eventType") ?? undefined;
-      return NextResponse.json(await findAvailableSlots({ fromDate, toDate, eventType, limit: 30 }));
+      const resourceId = request.nextUrl.searchParams.get("resourceId") ?? undefined;
+      const durationMinutes = Number(request.nextUrl.searchParams.get("durationMinutes"));
+      const excludeId = request.nextUrl.searchParams.get("excludeAppointmentId");
+      return NextResponse.json(await findAvailableSlots({
+        fromDate,
+        toDate,
+        eventType,
+        resourceId,
+        durationMinutes: Number.isFinite(durationMinutes) ? durationMinutes : undefined,
+        excludeAppointmentId: excludeId && ObjectId.isValid(excludeId) ? new ObjectId(excludeId) : undefined,
+        limit: 30,
+      }));
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Falha ao consultar horários." },
@@ -66,7 +78,7 @@ export async function GET(request: NextRequest) {
   const [appointments, accessEvents, customers] = await Promise.all([
     listAppointments(from, to),
     listCalendarAccessEvents(),
-    listCustomers(),
+    listCustomerOptions(),
   ]);
   return NextResponse.json({
     settings,
@@ -92,6 +104,7 @@ export async function PUT(request: Request) {
     weeklyAvailability?: WeeklyAvailability[];
     resources?: CalendarResourceDefinition[];
     eventTypes?: CalendarEventTypeDefinition[];
+    confirmationMessageTemplate?: string;
   };
   try {
     const settings = await updateCalendarSettings({
@@ -102,6 +115,7 @@ export async function PUT(request: Request) {
       weeklyAvailability: input.weeklyAvailability ?? [],
       resources: input.resources ?? [],
       eventTypes: input.eventTypes ?? [],
+      confirmationMessageTemplate: input.confirmationMessageTemplate,
     });
     return NextResponse.json({ settings });
   } catch (error) {
@@ -116,7 +130,16 @@ export async function POST(request: Request) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
-  const input = (await request.json()) as { customerId?: string; startAt?: string; eventType?: string; notes?: string };
+  const input = (await request.json()) as {
+    customerId?: string;
+    startAt?: string;
+    eventType?: string;
+    resourceId?: string;
+    customTitle?: string;
+    durationMinutes?: number;
+    allowOutsideAvailability?: boolean;
+    notes?: string;
+  };
   const customer = input.customerId ? await findCustomerById(input.customerId) : null;
   if (!input.startAt || !input.eventType) {
     return NextResponse.json({ error: "Tipo, data e hora são obrigatórios." }, { status: 400 });
@@ -125,7 +148,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Cliente inválido." }, { status: 400 });
   }
   const settings = await getCalendarSettings();
-  if (input.eventType && !settings.eventTypes.some((eventType) => eventType.key === input.eventType)) {
+  if (input.eventType !== "custom" && !settings.eventTypes.some((eventType) => eventType.key === input.eventType)) {
     return NextResponse.json({ error: "Tipo de evento inválido." }, { status: 400 });
   }
   try {
@@ -135,6 +158,11 @@ export async function POST(request: Request) {
       contactPhone: customer?.phones[0] ?? "",
       startAt: input.startAt,
       eventType: input.eventType,
+      resourceId: input.resourceId,
+      customTitle: input.customTitle,
+      durationMinutes: input.durationMinutes,
+      allowOutsideAvailability: input.allowOutsideAvailability,
+      confirmationStatus: "pending",
       notes: input.notes,
       source: "manual",
     });

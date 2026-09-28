@@ -1,8 +1,9 @@
 import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { collection, findOne, findOneAndUpdate } = vi.hoisted(() => ({
+const { collection, createIndex, findOne, findOneAndUpdate } = vi.hoisted(() => ({
   collection: vi.fn(),
+  createIndex: vi.fn().mockResolvedValue("index"),
   findOne: vi.fn(),
   findOneAndUpdate: vi.fn(),
 }));
@@ -11,15 +12,93 @@ vi.mock("../mongodb", () => ({
   default: Promise.resolve({ db: () => ({ collection }) }),
 }));
 
-import { revealCustomerCpf, updateCustomerProfile } from "./customers";
+import { findOrCreateCustomerFromWhatsApp, revealCustomerCpf, updateCustomer, updateCustomerProfile } from "./customers";
 
 describe("updateCustomerProfile address updates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    collection.mockReturnValue({ findOne, findOneAndUpdate });
+    collection.mockReturnValue({ createIndex, findOne, findOneAndUpdate });
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("reuses a customer stored with the legacy Brazilian mobile number", async () => {
+    const customer = {
+      _id: new ObjectId(),
+      name: "Lorenzo Puppi",
+      phones: ["554288076200"],
+      identifiers: [{ kind: "whatsapp_phone", value: "554288076200", provider: "whatsapp" }],
+    };
+    findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce(customer);
+
+    await expect(findOrCreateCustomerFromWhatsApp({
+      phone: "5542988076200",
+      name: "Lorenzo Puppi",
+      interactionAt: new Date("2026-09-28T14:44:00.000Z"),
+    })).resolves.toBe(customer);
+
+    expect(findOneAndUpdate).toHaveBeenNthCalledWith(
+      1,
+      {
+        identifiers: {
+          $elemMatch: {
+            kind: "whatsapp_phone",
+            value: "5542988076200",
+          },
+        },
+      },
+      expect.any(Object),
+      { returnDocument: "after" },
+    );
+    expect(findOneAndUpdate).toHaveBeenNthCalledWith(
+      2,
+      {
+        identifiers: {
+          $elemMatch: {
+            kind: "whatsapp_phone",
+            value: { $in: ["554288076200"] },
+          },
+        },
+      },
+      expect.objectContaining({
+        $setOnInsert: expect.objectContaining({
+          phones: ["5542988076200"],
+          identifiers: [
+            { kind: "whatsapp_phone", value: "5542988076200", provider: "whatsapp" },
+          ],
+        }),
+      }),
+      { returnDocument: "after" },
+    );
+    expect(findOneAndUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("prefers the exact current mobile number when both formats exist", async () => {
+    const currentCustomer = {
+      _id: new ObjectId(),
+      name: "Lorenzo Puppi",
+      phones: ["5542988076200"],
+      identifiers: [{ kind: "whatsapp_phone", value: "5542988076200", provider: "whatsapp" }],
+    };
+    findOneAndUpdate.mockResolvedValueOnce(currentCustomer);
+
+    await expect(findOrCreateCustomerFromWhatsApp({
+      phone: "5542988076200",
+      name: "Lorenzo Puppi",
+      interactionAt: new Date("2026-09-28T14:44:00.000Z"),
+    })).resolves.toBe(currentCustomer);
+
+    expect(findOneAndUpdate).toHaveBeenCalledTimes(1);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      {
+        identifiers: {
+          $elemMatch: { kind: "whatsapp_phone", value: "5542988076200" },
+        },
+      },
+      expect.any(Object),
+      { returnDocument: "after" },
+    );
+  });
 
   it("does not resolve an unchanged postal code again", async () => {
     const customerId = new ObjectId();
@@ -176,6 +255,55 @@ describe("updateCustomerProfile address updates", () => {
       { _id: customerId },
       { projection: { "profile.cpf": 1 } },
     );
+  });
+
+  it("allows staff to replace and clear the complete editable profile", async () => {
+    const customerId = new ObjectId();
+    const updatedAt = new Date("2026-09-01T12:00:00.000Z");
+    const customer = {
+      _id: customerId,
+      name: "Nome anterior",
+      phones: ["5511999999999", "5511888888888"],
+      identifiers: [{ kind: "whatsapp_phone", value: "5511999999999", provider: "whatsapp" }],
+      relationship: { status: "new", source: "customer", classifiedAt: new Date() },
+      profile: {
+        fullName: "Nome anterior",
+        birthDate: "1990-01-01",
+        profession: "Profissão anterior",
+        address: {
+          postalCode: "12345678",
+          street: "Rua anterior",
+          neighborhood: "Bairro",
+          city: "Cidade",
+          state: "SP",
+        },
+        updatedAt,
+      },
+      updatedAt,
+    };
+    findOne.mockResolvedValueOnce(customer).mockResolvedValueOnce(null);
+    findOneAndUpdate.mockResolvedValue({ ...customer, name: "Nome atualizado" });
+
+    await updateCustomer(customerId.toString(), {
+      name: "Nome atualizado",
+      whatsapp: "(11) 97777-7777",
+      relationshipStatus: null,
+      birthDate: "",
+      profession: "",
+      postalCode: "",
+      secondaryPhones: ["(11) 96666-6666"],
+    });
+
+    const [, update] = findOneAndUpdate.mock.calls[0] as [
+      unknown,
+      { $set: { name: string; phones: string[]; profile: Record<string, unknown> }; $unset: { relationship: string } },
+    ];
+    expect(update.$set.name).toBe("Nome atualizado");
+    expect(update.$set.phones).toEqual(["5511977777777", "5511966666666"]);
+    expect(update.$set.profile).not.toHaveProperty("birthDate");
+    expect(update.$set.profile).not.toHaveProperty("profession");
+    expect(update.$set.profile).not.toHaveProperty("address");
+    expect(update.$unset).toEqual({ relationship: "" });
   });
 });
 

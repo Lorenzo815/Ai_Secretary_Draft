@@ -36,6 +36,7 @@ export interface CalendarSettingsDocument {
   weeklyAvailability: WeeklyAvailability[];
   resources: CalendarResourceDefinition[];
   eventTypes: CalendarEventTypeDefinition[];
+  confirmationMessageTemplate: string;
   updatedAt: Date;
 }
 
@@ -52,6 +53,10 @@ export interface AppointmentDocument {
   holdExpiresAt?: Date;
   schedulingOptionId?: ObjectId;
   eventType: string;
+  customTitle?: string;
+  durationMinutes?: number;
+  allowOutsideAvailability?: boolean;
+  confirmationStatus?: "pending" | "confirmed";
   visitGroupId?: ObjectId;
   notes?: string;
   source: "assistant" | "manual";
@@ -90,6 +95,11 @@ interface PersistAppointmentInput {
   notes?: string;
   source: "assistant" | "manual";
   eventType?: string;
+  resourceId?: string;
+  customTitle?: string;
+  durationMinutes?: number;
+  allowOutsideAvailability?: boolean;
+  confirmationStatus?: "pending" | "confirmed";
   visitGroupId?: ObjectId;
   status?: "held" | "scheduled";
   holdExpiresAt?: Date;
@@ -105,6 +115,8 @@ const DB_NAME = "ai_secretary";
 export const DEFAULT_PROVIDER_ID = "default-doctor";
 const SETTINGS_ID = "default-calendar";
 const DEFAULT_SLOT_DURATION_MINUTES = 30;
+const LEGACY_CONFIRMATION_MESSAGE = "Olá, {nome}! Podemos confirmar sua consulta em {data} às {hora}?";
+const DEFAULT_CONFIRMATION_MESSAGE = "Olá, {nome}! Podemos confirmar {evento} em {data} às {hora}?";
 const validSlotDurations = new Set([15, 20, 30, 45, 60, 90, 120]);
 
 const defaultWeek: WeeklyAvailability[] = [
@@ -152,13 +164,17 @@ export async function getCalendarSettings() {
     const weeklyAvailability = normalizeWeeklyAvailability(existing.weeklyAvailability);
     const resources = normalizeResources(existing.resources, weeklyAvailability);
     const eventTypes = normalizeEventTypes(existing.eventTypes, slotDurationMinutes);
-    if (slotDurationMinutes !== existing.slotDurationMinutes || JSON.stringify(weeklyAvailability) !== JSON.stringify(existing.weeklyAvailability) || JSON.stringify(resources) !== JSON.stringify(existing.resources) || JSON.stringify(eventTypes) !== JSON.stringify(existing.eventTypes)) {
+    const storedMessage = existing.confirmationMessageTemplate?.trim();
+    const confirmationMessageTemplate = !storedMessage || storedMessage === LEGACY_CONFIRMATION_MESSAGE
+      ? DEFAULT_CONFIRMATION_MESSAGE
+      : storedMessage;
+    if (slotDurationMinutes !== existing.slotDurationMinutes || JSON.stringify(weeklyAvailability) !== JSON.stringify(existing.weeklyAvailability) || JSON.stringify(resources) !== JSON.stringify(existing.resources) || JSON.stringify(eventTypes) !== JSON.stringify(existing.eventTypes) || confirmationMessageTemplate !== existing.confirmationMessageTemplate) {
       await settings.updateOne(
         { _id: SETTINGS_ID },
-        { $set: { slotDurationMinutes, weeklyAvailability, resources, eventTypes, updatedAt: new Date() }, $unset: { followUpHoursBefore: "" } },
+        { $set: { slotDurationMinutes, weeklyAvailability, resources, eventTypes, confirmationMessageTemplate, updatedAt: new Date() }, $unset: { followUpHoursBefore: "" } },
       );
     }
-    const normalized = { ...existing, slotDurationMinutes, weeklyAvailability, resources, eventTypes };
+    const normalized = { ...existing, slotDurationMinutes, weeklyAvailability, resources, eventTypes, confirmationMessageTemplate };
     delete (normalized as typeof normalized & { followUpHoursBefore?: number }).followUpHoursBefore;
     return normalized;
   }
@@ -172,6 +188,7 @@ export async function getCalendarSettings() {
     weeklyAvailability: defaultWeek,
     resources: defaultResources,
     eventTypes: defaultEventTypes,
+    confirmationMessageTemplate: DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
   await settings.insertOne(initial);
@@ -186,6 +203,7 @@ export async function updateCalendarSettings(input: {
   weeklyAvailability: WeeklyAvailability[];
   resources: CalendarResourceDefinition[];
   eventTypes: CalendarEventTypeDefinition[];
+  confirmationMessageTemplate?: string;
 }) {
   validateSettings(input);
   const current = await getCalendarSettings();
@@ -222,6 +240,7 @@ export async function updateCalendarSettings(input: {
       durationMinutes: eventType.durationMinutes,
       resourceId: eventType.resourceId.trim(),
     })),
+    confirmationMessageTemplate: input.confirmationMessageTemplate?.trim().slice(0, 500) || DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
   await (await getSettingsCollection()).replaceOne({ _id: SETTINGS_ID }, next, { upsert: true });
@@ -300,6 +319,55 @@ export async function createCalendarAccessEvent(input: {
   return event;
 }
 
+export async function updateCalendarAccessEvent(id: string, input: {
+  type: "permission" | "blocker";
+  title: string;
+  startAt: string;
+  endAt: string;
+  resourceIds: string[];
+}) {
+  if (!ObjectId.isValid(id)) throw new Error("Regra de agenda inválida.");
+  const accessEvents = await getAccessEventsCollection();
+  const current = await accessEvents.findOne({ _id: new ObjectId(id) });
+  if (!current) throw new Error("Regra de agenda não encontrada.");
+  const settings = await getCalendarSettings();
+  const startAt = DateTime.fromISO(input.startAt, { zone: settings.timezone, setZone: true });
+  const endAt = DateTime.fromISO(input.endAt, { zone: settings.timezone, setZone: true });
+  if (!startAt.isValid || !endAt.isValid || endAt <= startAt) {
+    throw new Error("Informe um intervalo válido com término posterior ao início.");
+  }
+  const validResourceIds = new Set(settings.resources.map((resource) => resource.id));
+  const resourceIds = [...new Set(input.resourceIds)];
+  if (resourceIds.some((resourceId) => !validResourceIds.has(resourceId))) {
+    throw new Error("A regra aponta para um profissional inexistente.");
+  }
+  if (input.type === "blocker") {
+    const conflict = await (await getAppointmentsCollection()).findOne({
+      status: "scheduled",
+      ...(resourceIds.length > 0 ? { providerId: { $in: resourceIds } } : {}),
+      startAt: { $lt: endAt.toUTC().toJSDate() },
+      endAt: { $gt: startAt.toUTC().toJSDate() },
+    });
+    if (conflict) throw new Error("Este bloqueio conflita com um agendamento existente.");
+  }
+  const updated = await accessEvents.findOneAndUpdate(
+    { _id: current._id, updatedAt: current.updatedAt },
+    {
+      $set: {
+        type: input.type,
+        title: input.title.trim().slice(0, 120) || (input.type === "permission" ? "Atendimento permitido" : "Agenda bloqueada"),
+        startAt: startAt.toUTC().toJSDate(),
+        endAt: endAt.toUTC().toJSDate(),
+        resourceIds,
+        updatedAt: new Date(),
+      },
+    },
+    { returnDocument: "after" },
+  );
+  if (!updated) throw new Error("A regra foi alterada por outra operação. Atualize a agenda e tente novamente.");
+  return updated;
+}
+
 export async function deleteCalendarAccessEvent(id: string) {
   if (!ObjectId.isValid(id)) throw new Error("Regra de agenda inválida.");
   const result = await (await getAccessEventsCollection()).findOneAndDelete({ _id: new ObjectId(id) });
@@ -350,6 +418,8 @@ export async function findAvailableSlots(input: {
   fromDate: string;
   toDate: string;
   eventType?: string;
+  resourceId?: string;
+  durationMinutes?: number;
   period?: "morning" | "afternoon" | "any";
   startTime?: string | null;
   limit?: number;
@@ -367,7 +437,28 @@ export async function findAvailableSlots(input: {
     throw new Error("A busca de disponibilidade deve cobrir no máximo 60 dias.");
   }
 
-  const eventType = settings.eventTypes.find((item) => item.key === input.eventType) ?? settings.eventTypes[0];
+  const configuredEventType = settings.eventTypes.find((item) => item.key === input.eventType);
+  const customDuration = Number(input.durationMinutes);
+  const eventType = input.eventType === "custom"
+    ? {
+        key: "custom",
+        name: "Evento personalizado",
+        color: "#475569",
+        durationMinutes: customDuration,
+        resourceId: input.resourceId ?? "",
+      }
+    : configuredEventType ?? settings.eventTypes[0];
+  if (
+    input.eventType === "custom"
+    && (
+      !settings.resources.some((resource) => resource.id === eventType.resourceId)
+      || !Number.isInteger(customDuration)
+      || customDuration < 5
+      || customDuration > 720
+    )
+  ) {
+    throw new Error("Informe profissional e duração válidos para sugerir encaixes.");
+  }
   const [appointments, accessEvents] = await Promise.all([
     listAppointments(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate()),
     listCalendarAccessEvents(startDay.toUTC().toJSDate(), endDay.toUTC().toJSDate()),
@@ -556,6 +647,9 @@ export async function bookManualAppointment(input: PersistAppointmentInput) {
     settings,
     startAt: input.startAt,
     eventTypeKey: input.eventType,
+    resourceId: input.resourceId,
+    durationMinutes: input.durationMinutes,
+    allowOutsideAvailability: input.allowOutsideAvailability,
   });
 
   const appointment = await persistAppointment(
@@ -577,6 +671,11 @@ export async function updateManualAppointment(input: {
   contactPhone: string;
   startAt: string;
   eventType: string;
+  resourceId?: string;
+  customTitle?: string;
+  durationMinutes?: number;
+  allowOutsideAvailability?: boolean;
+  confirmationStatus?: "pending" | "confirmed";
   notes?: string;
 }) {
   if (!ObjectId.isValid(input.appointmentId)) throw new Error("Evento inválido.");
@@ -584,16 +683,18 @@ export async function updateManualAppointment(input: {
   const appointmentId = new ObjectId(input.appointmentId);
   const current = await appointments.findOne({
     _id: appointmentId,
-    source: "manual",
-    status: "scheduled",
+    status: { $in: ["held", "scheduled"] },
   });
-  if (!current) throw new Error("Evento manual não encontrado ou já encerrado.");
+  if (!current) throw new Error("Evento não encontrado ou já encerrado.");
 
   const settings = await getCalendarSettings();
   const slot = await validateManualAppointmentSlot({
     settings,
     startAt: input.startAt,
     eventTypeKey: input.eventType,
+    resourceId: input.resourceId,
+    durationMinutes: input.durationMinutes,
+    allowOutsideAvailability: input.allowOutsideAvailability,
     excludeAppointmentId: appointmentId,
   });
   const now = new Date();
@@ -607,6 +708,9 @@ export async function updateManualAppointment(input: {
     endAt: slot.endAt.toJSDate(),
     timezone: settings.timezone,
     eventType: slot.eventType.key,
+    ...(input.customTitle ? { customTitle: input.customTitle.trim().slice(0, 120) } : {}),
+    durationMinutes: Math.round(slot.endAt.diff(slot.startAt, "minutes").minutes),
+    ...(input.confirmationStatus ? { confirmationStatus: input.confirmationStatus } : {}),
     ...(notes ? { notes } : {}),
     updatedAt: now,
   };
@@ -619,7 +723,7 @@ export async function updateManualAppointment(input: {
   }
   try {
     const appointment = await appointments.findOneAndUpdate(
-      { _id: appointmentId, source: "manual", status: "scheduled", updatedAt: current.updatedAt },
+      { _id: appointmentId, status: { $in: ["held", "scheduled"] }, updatedAt: current.updatedAt },
       update,
       { returnDocument: "after" },
     );
@@ -634,6 +738,17 @@ export async function updateManualAppointment(input: {
     }
     throw error;
   }
+}
+
+export async function updateAppointmentConfirmation(id: string, confirmationStatus: "pending" | "confirmed") {
+  if (!ObjectId.isValid(id)) throw new Error("Evento inválido.");
+  const appointment = await (await getAppointmentsCollection()).findOneAndUpdate(
+    { _id: new ObjectId(id), status: "scheduled" },
+    { $set: { confirmationStatus, updatedAt: new Date() } },
+    { returnDocument: "after" },
+  );
+  if (!appointment) throw new Error("Evento agendado não encontrado.");
+  return appointment;
 }
 
 export async function updateCustomerAppointment(input: {
@@ -778,7 +893,7 @@ async function persistAppointment(
   const now = new Date();
   const appointment: AppointmentDocument = {
     _id: new ObjectId(),
-    providerId: settings.eventTypes.find((item) => item.key === input.eventType)?.resourceId ?? settings.providerId,
+    providerId: input.resourceId ?? settings.eventTypes.find((item) => item.key === input.eventType)?.resourceId ?? settings.providerId,
     customerId: input.customerId,
     customerName: input.customerName,
     contactPhone: input.contactPhone,
@@ -790,6 +905,9 @@ async function persistAppointment(
     schedulingOptionId: input.schedulingOptionId,
     notes: input.notes?.trim().slice(0, 1_000),
     eventType: input.eventType ?? settings.eventTypes[0].key,
+    customTitle: input.customTitle?.trim().slice(0, 120),
+    durationMinutes: Math.round(endAt.diff(startAt, "minutes").minutes),
+    confirmationStatus: input.confirmationStatus,
     visitGroupId: input.visitGroupId,
     source: input.source,
     createdAt: now,
@@ -872,6 +990,7 @@ export async function ensureCalendarIndexes() {
   ] : []));
   await Promise.all([
     appointments.createIndex({ customerId: 1, startAt: -1 }),
+    appointments.createIndex({ startAt: 1, status: 1 }),
     appointments.createIndex({ holdExpiresAt: 1 }, { expireAfterSeconds: 0 }),
     accessEvents.createIndex({ startAt: 1, endAt: 1 }),
     accessEvents.createIndex({ resourceIds: 1, startAt: 1 }),
@@ -980,15 +1099,32 @@ async function validateManualAppointmentSlot(input: {
   settings: CalendarSettingsDocument;
   startAt: string;
   eventTypeKey?: string;
+  resourceId?: string;
+  durationMinutes?: number;
+  allowOutsideAvailability?: boolean;
   excludeAppointmentId?: ObjectId;
 }) {
+  await releaseExpiredAppointmentHolds();
   const requested = DateTime.fromISO(input.startAt, { zone: input.settings.timezone, setZone: true });
   if (!requested.isValid) throw new Error("Data do agendamento inválida.");
   if (requested <= DateTime.now().setZone(input.settings.timezone)) {
     throw new Error("O evento manual deve começar em uma data e hora futuras.");
   }
-  const eventType = input.settings.eventTypes.find((item) => item.key === input.eventTypeKey);
-  if (!eventType) throw new Error("Tipo de evento inválido.");
+  const configuredEventType = input.settings.eventTypes.find((item) => item.key === input.eventTypeKey);
+  const customDuration = Number(input.durationMinutes);
+  const isCustom = input.eventTypeKey === "custom";
+  if (!configuredEventType && !isCustom) throw new Error("Tipo de evento inválido.");
+  if (isCustom && (!Number.isInteger(customDuration) || customDuration < 5 || customDuration > 720)) {
+    throw new Error("A duração personalizada deve estar entre 5 e 720 minutos.");
+  }
+  const eventType: CalendarEventTypeDefinition = configuredEventType ?? {
+    key: "custom",
+    name: "Evento personalizado",
+    color: "#475569",
+    durationMinutes: customDuration,
+    resourceId: input.resourceId ?? "",
+  };
+  if (isCustom && input.resourceId) eventType.resourceId = input.resourceId;
   const resource = input.settings.resources.find((item) => item.id === eventType.resourceId);
   if (!resource) throw new Error("O tipo de evento aponta para um profissional inexistente.");
   const endAt = requested.plus({ minutes: eventType.durationMinutes });
@@ -999,7 +1135,7 @@ async function validateManualAppointmentSlot(input: {
         && endAt <= atLocalTime(requested, interval.endTime)
       ))
     : undefined;
-  if (!containingInterval) {
+  if (!containingInterval && !input.allowOutsideAvailability) {
     const configured = availability?.enabled && availability.intervals.length > 0
       ? availability.intervals.map((interval) => `${interval.startTime}–${interval.endTime}`).join(" ou ")
       : "sem expediente";
@@ -1013,7 +1149,7 @@ async function validateManualAppointmentSlot(input: {
     (await getAppointmentsCollection()).findOne({
       ...(input.excludeAppointmentId ? { _id: { $ne: input.excludeAppointmentId } } : {}),
       providerId: resource.id,
-      status: "scheduled",
+      status: { $in: ["held", "scheduled"] },
       startAt: { $lt: requestedEndUtc.toJSDate() },
       endAt: { $gt: requestedStartUtc.toJSDate() },
     }),
@@ -1029,7 +1165,7 @@ async function validateManualAppointmentSlot(input: {
       `Conflita com o bloqueio “${accessDecision.blocker.title}” de ${formatLocalTime(accessDecision.blocker.startAt, input.settings.timezone)} a ${formatLocalTime(accessDecision.blocker.endAt, input.settings.timezone)} para ${resource.name}.`,
     );
   }
-  if (!accessDecision.permitted) {
+  if (!accessDecision.permitted && !input.allowOutsideAvailability) {
     throw new Error(`Não há uma permissão que cubra todo o período de ${requested.toFormat("HH:mm")} a ${endAt.toFormat("HH:mm")} para ${resource.name}.`);
   }
   if (conflictingAppointment) {

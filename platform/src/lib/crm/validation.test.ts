@@ -4,8 +4,10 @@ import {
   isValidCpf,
   isValidFullName,
   isValidPhone,
+  getWhatsAppPhoneAliases,
   normalizeCpf,
   normalizePhone,
+  normalizeWhatsAppPhone,
 } from "./validation";
 
 describe("customer profile validation", () => {
@@ -29,5 +31,18 @@ describe("customer profile validation", () => {
     expect(normalizePhone("+55 (11) 98765-4321")).toBe("5511987654321");
     expect(isValidPhone("+55 (11) 98765-4321")).toBe(true);
     expect(isValidPhone("12345")).toBe(false);
+  });
+
+  it("canonicalizes Brazilian WhatsApp numbers for deduplication", () => {
+    expect(normalizeWhatsAppPhone("(11) 98765-4321")).toBe("5511987654321");
+    expect(normalizeWhatsAppPhone("+55 (11) 98765-4321")).toBe("5511987654321");
+    expect(normalizeWhatsAppPhone("(42) 8807-6200")).toBe("5542988076200");
+    expect(normalizeWhatsAppPhone("+55 (42) 8807-6200")).toBe("5542988076200");
+    expect(normalizeWhatsAppPhone("(42) 3333-4444")).toBe("554233334444");
+    expect(normalizeWhatsAppPhone("+1 202 555 0100")).toBe("12025550100");
+    expect(getWhatsAppPhoneAliases("+55 (42) 98807-6200")).toEqual([
+      "5542988076200",
+      "554288076200",
+    ]);
   });
 });

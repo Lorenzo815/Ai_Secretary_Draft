@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { cancelAppointment, deleteAppointment, updateManualAppointment } from "@/lib/calendar";
+import { cancelAppointment, deleteAppointment, updateAppointmentConfirmation, updateManualAppointment } from "@/lib/calendar";
 import { findCustomerById } from "@/lib/crm";
 
 export async function PATCH(
@@ -15,8 +15,30 @@ export async function PATCH(
     customerId?: string | null;
     startAt?: string;
     eventType?: string;
+    resourceId?: string;
+    customTitle?: string;
+    durationMinutes?: number;
+    allowOutsideAvailability?: boolean;
+    confirmationStatus?: "pending" | "confirmed";
     notes?: string;
   };
+  const { id } = await params;
+  if (
+    input.confirmationStatus
+    && input.startAt === undefined
+    && input.eventType === undefined
+  ) {
+    try {
+      return NextResponse.json({
+        appointment: await updateAppointmentConfirmation(id, input.confirmationStatus),
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Falha ao confirmar evento." },
+        { status: 409 },
+      );
+    }
+  }
   if (
     !input.startAt
     || !input.eventType
@@ -30,7 +52,6 @@ export async function PATCH(
     return NextResponse.json({ error: "Cliente inválido." }, { status: 400 });
   }
   try {
-    const { id } = await params;
     const appointment = await updateManualAppointment({
       appointmentId: id,
       customerId: customer?._id,
@@ -38,6 +59,11 @@ export async function PATCH(
       contactPhone: customer?.phones[0] ?? "",
       startAt: input.startAt,
       eventType: input.eventType,
+      resourceId: input.resourceId,
+      customTitle: input.customTitle,
+      durationMinutes: input.durationMinutes,
+      allowOutsideAvailability: input.allowOutsideAvailability,
+      confirmationStatus: input.confirmationStatus,
       notes: input.notes,
     });
     return NextResponse.json({ appointment });

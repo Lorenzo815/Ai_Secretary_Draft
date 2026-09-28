@@ -24,6 +24,26 @@ export function normalizePhone(value: string) {
   return value.replace(/\D/g, "");
 }
 
+export function normalizeWhatsAppPhone(value: string) {
+  const phone = normalizePhone(value);
+  const hasExplicitCountryCode = value.trim().startsWith("+") || value.trim().startsWith("00");
+  const internationalPhone = !hasExplicitCountryCode && (phone.length === 10 || phone.length === 11)
+    ? `55${phone}`
+    : phone;
+  return /^55\d{2}[6-9]\d{7}$/.test(internationalPhone)
+    ? `${internationalPhone.slice(0, 4)}9${internationalPhone.slice(4)}`
+    : internationalPhone;
+}
+
+export function getWhatsAppPhoneAliases(value: string) {
+  const canonicalPhone = normalizeWhatsAppPhone(value);
+  const aliases = [canonicalPhone];
+  if (/^55\d{2}9[6-9]\d{7}$/.test(canonicalPhone)) {
+    aliases.push(`${canonicalPhone.slice(0, 4)}${canonicalPhone.slice(5)}`);
+  }
+  return aliases;
+}
+
 export function isValidPhone(value: string) {
   const phone = normalizePhone(value);
   return phone.length >= 10 && phone.length <= 13;

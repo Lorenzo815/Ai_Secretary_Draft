@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Ban, CalendarPlus, Plus, RefreshCw, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
+import { Ban, CalendarPlus, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import WeekCalendar from "./_components/week-calendar";
+import CustomerFormButton from "../clientes/_components/customer-form-button";
 
 interface DayAvailability {
   weekday: number;
@@ -33,6 +34,7 @@ interface Settings {
   weeklyAvailability: DayAvailability[];
   resources: ResourceDefinition[];
   eventTypes: EventTypeDefinition[];
+  confirmationMessageTemplate: string;
 }
 
 interface Appointment {
@@ -45,7 +47,11 @@ interface Appointment {
   status: "held" | "scheduled" | "cancelled" | "completed";
   holdExpiresAt?: string;
   eventType?: CalendarEventType;
+  customTitle?: string;
+  durationMinutes?: number;
+  confirmationStatus?: "pending" | "confirmed";
   notes?: string;
+  contactPhone?: string;
   source: "assistant" | "manual";
 }
 
@@ -71,6 +77,14 @@ export default function CalendarPage() {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [eventType, setEventType] = useState<CalendarEventType>("consultation");
+  const [customTitle, setCustomTitle] = useState("");
+  const [customDurationMinutes, setCustomDurationMinutes] = useState(30);
+  const [customResourceId, setCustomResourceId] = useState("");
+  const [allowOutsideAvailability, setAllowOutsideAvailability] = useState(false);
+  const [suggestedSlots, setSuggestedSlots] = useState<Array<{ startAt: string; localTime: string; label: string }>>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [notes, setNotes] = useState("");
   const [editingAppointmentId, setEditingAppointmentId] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -79,6 +93,7 @@ export default function CalendarPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
+  const [editingAccessEventId, setEditingAccessEventId] = useState("");
   const [accessType, setAccessType] = useState<"permission" | "blocker">("permission");
   const [accessTitle, setAccessTitle] = useState("");
   const [accessStartDate, setAccessStartDate] = useState("");
@@ -87,6 +102,11 @@ export default function CalendarPage() {
   const [accessEndTime, setAccessEndTime] = useState("18:00");
   const [accessResourceIds, setAccessResourceIds] = useState<string[]>([]);
   const [activeResourceId, setActiveResourceId] = useState("doctor");
+  const [upcomingQuery, setUpcomingQuery] = useState("");
+  const [upcomingStatus, setUpcomingStatus] = useState("");
+  const [upcomingEventType, setUpcomingEventType] = useState("");
+  const [upcomingResourceId, setUpcomingResourceId] = useState("");
+  const deferredUpcomingQuery = useDeferredValue(upcomingQuery);
   const backgroundRefreshInFlight = useRef(false);
   const interactionBlocked = useRef(false);
   interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen;
@@ -183,27 +203,44 @@ export default function CalendarPage() {
     setBusy(false);
   }
 
-  function openCreateEvent(targetDate?: string) {
+  function openCreateEvent(targetDate?: string, targetTime?: string) {
     const nextDate = targetDate ?? date;
     setEditingAppointmentId("");
     setCustomerId("");
     setDate(nextDate);
-    setTime("");
+    setTime(targetTime ?? "");
+    setCustomTitle("");
+    setCustomDurationMinutes(30);
+    setCustomResourceId(settings?.resources[0]?.id ?? "");
+    setAllowOutsideAvailability(false);
+    setSuggestedSlots([]);
+    setSuggestionsLoaded(false);
+    setShowAllSuggestions(false);
     setNotes("");
     setFeedback("");
     setEventOpen(true);
   }
 
-  function openEditEvent(appointment: Appointment) {
-    if (appointment.source !== "manual" || appointment.status !== "scheduled") return;
+  const openEditEvent = useCallback((appointment: Appointment) => {
+    if (appointment.status === "cancelled" || appointment.status === "completed") return;
     setEditingAppointmentId(appointment._id);
     setCustomerId(appointment.customerId ?? "");
     setEventType(appointment.eventType ?? settings?.eventTypes[0]?.key ?? "");
+    setCustomTitle(appointment.customTitle ?? "");
+    setCustomDurationMinutes(appointment.durationMinutes ?? 30);
+    setCustomResourceId(appointment.providerId);
+    setAllowOutsideAvailability(false);
     setDate(formatDateInput(appointment.startAt, settings?.timezone ?? "America/Sao_Paulo"));
     setTime(formatTimeInput(appointment.startAt, settings?.timezone ?? "America/Sao_Paulo"));
     setNotes(appointment.notes ?? "");
     setFeedback("");
     setEventOpen(true);
+  }, [settings]);
+
+  function selectCreatedCustomer(customer: CustomerOption) {
+    setCustomers((current) => [...current.filter((item) => item.id !== customer.id), customer]
+      .sort((first, second) => first.name.localeCompare(second.name, "pt-BR")));
+    setCustomerId(customer.id);
   }
 
   async function saveAppointment() {
@@ -213,7 +250,18 @@ export default function CalendarPage() {
     const response = await fetch(editingAppointmentId ? `/api/calendar/appointments/${editingAppointmentId}` : "/api/calendar", {
       method: editingAppointmentId ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customerId, startAt: `${date}T${time}`, eventType, notes }),
+      body: JSON.stringify({
+        customerId,
+        startAt: `${date}T${time}`,
+        eventType,
+        notes,
+        ...(eventType === "custom" ? {
+          customTitle,
+          durationMinutes: customDurationMinutes,
+          resourceId: customResourceId,
+        } : {}),
+        allowOutsideAvailability,
+      }),
     });
     const data = await response.json() as { appointment?: Appointment; error?: string };
     if (response.ok && data.appointment) {
@@ -256,15 +304,16 @@ export default function CalendarPage() {
     setBusy(false);
   }
 
-  function openAccessEvent(type: "permission" | "blocker") {
+  function openAccessEvent(type: "permission" | "blocker", accessEvent?: CalendarAccessEvent) {
       const today = new Date().toISOString().slice(0, 10);
+      setEditingAccessEventId(accessEvent?._id ?? "");
       setAccessType(type);
-      setAccessTitle("");
-      setAccessStartDate(today);
-      setAccessEndDate(today);
-      setAccessStartTime(type === "permission" ? "08:00" : "12:00");
-      setAccessEndTime(type === "permission" ? "18:00" : "13:00");
-      setAccessResourceIds([]);
+      setAccessTitle(accessEvent?.title ?? "");
+      setAccessStartDate(accessEvent ? formatDateInput(accessEvent.startAt, settings?.timezone ?? "America/Sao_Paulo") : today);
+      setAccessEndDate(accessEvent ? formatDateInput(accessEvent.endAt, settings?.timezone ?? "America/Sao_Paulo") : today);
+      setAccessStartTime(accessEvent ? formatTimeInput(accessEvent.startAt, settings?.timezone ?? "America/Sao_Paulo") : type === "permission" ? "08:00" : "12:00");
+      setAccessEndTime(accessEvent ? formatTimeInput(accessEvent.endAt, settings?.timezone ?? "America/Sao_Paulo") : type === "permission" ? "18:00" : "13:00");
+      setAccessResourceIds(accessEvent?.resourceIds ?? []);
       setFeedback("");
       setAccessOpen(true);
     }
@@ -282,8 +331,8 @@ export default function CalendarPage() {
       setBusy(true);
       setFeedback("");
       try {
-        const response = await fetch("/api/calendar/access-events", {
-          method: "POST",
+        const response = await fetch(editingAccessEventId ? `/api/calendar/access-events/${editingAccessEventId}` : "/api/calendar/access-events", {
+          method: editingAccessEventId ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: accessType,
@@ -298,13 +347,75 @@ export default function CalendarPage() {
           throw new Error(data.error ?? "Não foi possível criar a regra.");
         }
         setAccessOpen(false);
-        await refreshCalendar(accessType === "permission" ? "Permissão adicionada." : "Bloqueio adicionado.");
+        await refreshCalendar(editingAccessEventId
+          ? "Regra de agenda atualizada."
+          : accessType === "permission" ? "Permissão adicionada." : "Bloqueio adicionado.");
       } catch (error) {
         setFeedback(error instanceof Error ? error.message : "Não foi possível criar a regra.");
       } finally {
         setBusy(false);
       }
     }
+
+    const loadSuggestions = useCallback(async () => {
+        if (!date || !eventType || (eventType === "custom" && (!customResourceId || customDurationMinutes < 5))) {
+          setSuggestedSlots([]);
+          setSuggestionsLoaded(false);
+          return;
+        }
+        setSuggestionsLoading(true);
+        setSuggestionsLoaded(false);
+        try {
+          const parameters = new URLSearchParams({
+            mode: "slots",
+            fromDate: date,
+            toDate: date,
+            eventType,
+            ...(eventType === "custom" ? {
+              resourceId: customResourceId,
+              durationMinutes: String(customDurationMinutes),
+            } : {}),
+            ...(editingAppointmentId ? { excludeAppointmentId: editingAppointmentId } : {}),
+          });
+          const response = await fetch(`/api/calendar?${parameters}`, { cache: "no-store" });
+          const data = await response.json() as { slots?: Array<{ startAt: string; localTime: string; label: string }>; error?: string };
+          if (!response.ok) throw new Error(data.error ?? "Não foi possível sugerir encaixes.");
+          setSuggestedSlots(data.slots ?? []);
+          setSuggestionsLoaded(true);
+        } catch (error) {
+          setFeedback(error instanceof Error ? error.message : "Não foi possível sugerir encaixes.");
+          setSuggestedSlots([]);
+          setSuggestionsLoaded(true);
+        } finally {
+          setSuggestionsLoading(false);
+        }
+      }, [date, eventType, customResourceId, customDurationMinutes, editingAppointmentId]);
+
+    useEffect(() => {
+      if (!eventOpen || allowOutsideAvailability) return;
+      const timeout = window.setTimeout(() => void loadSuggestions(), 250);
+      return () => window.clearTimeout(timeout);
+    }, [eventOpen, allowOutsideAvailability, loadSuggestions]);
+
+    async function setAppointmentConfirmation(id: string, confirmationStatus: "pending" | "confirmed") {
+        setBusy(true);
+        try {
+          const response = await fetch(`/api/calendar/appointments/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirmationStatus }),
+          });
+          const data = await response.json() as { error?: string };
+          if (!response.ok) throw new Error(data.error ?? "Não foi possível alterar a confirmação.");
+          await refreshCalendar(confirmationStatus === "confirmed"
+            ? "Atendimento marcado como confirmado."
+            : "Confirmação removida. O atendimento voltou para agendado.");
+        } catch (error) {
+          setFeedback(error instanceof Error ? error.message : "Não foi possível alterar a confirmação.");
+        } finally {
+          setBusy(false);
+        }
+      }
 
     async function removeAccessEvent(id: string) {
       setBusy(true);
@@ -445,6 +556,23 @@ export default function CalendarPage() {
     setEventType((current) => current === key ? "" : current);
   }
 
+  const filteredUpcomingAppointments = useMemo(() => {
+    const normalizedQuery = normalizeSearch(deferredUpcomingQuery);
+    return appointments.filter((appointment) => {
+      if (upcomingStatus && !matchesAppointmentStatus(appointment, upcomingStatus)) return false;
+      if (upcomingEventType && appointment.eventType !== upcomingEventType) return false;
+      if (upcomingResourceId && appointment.providerId !== upcomingResourceId) return false;
+      if (!normalizedQuery) return true;
+      return normalizeSearch([
+        appointment.customerName,
+        appointment.contactPhone,
+        appointment.notes,
+        appointment.customTitle,
+        settings ? getEventTypeName(settings, appointment.eventType) : "",
+      ].filter(Boolean).join(" ")).includes(normalizedQuery);
+    });
+  }, [appointments, deferredUpcomingQuery, settings, upcomingEventType, upcomingResourceId, upcomingStatus]);
+
   if (!settings) {
     return <p className="py-20 text-center text-sm text-stone">{feedback || "Carregando agenda..."}</p>;
   }
@@ -452,7 +580,7 @@ export default function CalendarPage() {
   const activeResourceIsRequired = defaultResourceIds.has(activeResourceId);
   const activeResourceIsInUse = settings.eventTypes.some((eventType) => eventType.resourceId === activeResourceId);
   const selectedEventType = settings.eventTypes.find((item) => item.key === eventType);
-  const selectedEventResource = settings.resources.find((resource) => resource.id === selectedEventType?.resourceId);
+  const selectedEventResource = settings.resources.find((resource) => resource.id === (eventType === "custom" ? customResourceId : selectedEventType?.resourceId));
 
   return (
     <div className="animate-fade-in-up space-y-8">
@@ -473,7 +601,11 @@ export default function CalendarPage() {
         </div>
       </header>
 
-      <section aria-labelledby="access-events-title">
+      <details className="rounded-lg border border-mist bg-white">
+        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-ink">
+          Janelas efetivas de atendimento <span className="ml-2 text-xs font-normal text-stone">({accessEvents.length} regras)</span>
+        </summary>
+      <section aria-labelledby="access-events-title" className="border-t border-mist p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase text-deep-teal">Permissões e bloqueios</p>
@@ -489,7 +621,10 @@ export default function CalendarPage() {
                   <p className={`text-[10px] font-bold uppercase ${accessEvent.type === "permission" ? "text-emerald-700" : "text-burnt-coral"}`}>{accessEvent.type === "permission" ? "Permissão" : "Bloqueio"}</p>
                   <h3 className="mt-1 text-sm font-semibold text-slate-ink">{accessEvent.title}</h3>
                 </div>
-                <button type="button" onClick={() => void removeAccessEvent(accessEvent._id)} disabled={busy} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-40" aria-label={`Remover ${accessEvent.title}`}><Trash2 className="h-4 w-4" /></button>
+                <div className="flex shrink-0">
+                  <button type="button" onClick={() => openAccessEvent(accessEvent.type, accessEvent)} disabled={busy} className="flex h-8 w-8 items-center justify-center rounded-md text-stone hover:bg-deep-teal/5 hover:text-deep-teal disabled:opacity-40" aria-label={`Editar ${accessEvent.title}`}><Pencil className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => void removeAccessEvent(accessEvent._id)} disabled={busy} className="flex h-8 w-8 items-center justify-center rounded-md text-stone hover:bg-burnt-coral/5 hover:text-burnt-coral disabled:opacity-40" aria-label={`Remover ${accessEvent.title}`}><Trash2 className="h-4 w-4" /></button>
+                </div>
               </div>
               <p className="mt-2 text-xs text-stone">{formatDateTime(accessEvent.startAt, settings.timezone)} até {formatDateTime(accessEvent.endAt, settings.timezone)}</p>
               <p className="mt-1 text-xs text-stone">{accessEvent.resourceIds.length === 0 ? "Todos os profissionais" : accessEvent.resourceIds.map((id) => settings.resources.find((resource) => resource.id === id)?.name ?? id).join(", ")}</p>
@@ -498,15 +633,16 @@ export default function CalendarPage() {
           {accessEvents.length === 0 && <div className="rounded-lg border border-dashed border-mist bg-soft-ivory p-5 text-sm text-stone md:col-span-2 xl:col-span-3">Nenhuma permissão cadastrada. Até que uma permissão seja criada, nenhum horário será considerado disponível.</div>}
         </div>
       </section>
+      </details>
 
-      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} refreshKey={calendarRefreshKey} onCreateEvent={openCreateEvent} onEditEvent={openEditEvent} />
+      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} slotDurationMinutes={settings.slotDurationMinutes} refreshKey={calendarRefreshKey} onEditEvent={openEditEvent} />
 
       {accessOpen && createPortal(<div className="fixed inset-0 z-50 flex justify-end bg-slate-ink/45" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccessOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="access-event-title" className="h-full w-full max-w-lg overflow-y-auto bg-white p-5 shadow-xl sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className={`text-xs font-semibold uppercase ${accessType === "permission" ? "text-emerald-700" : "text-burnt-coral"}`}>{accessType === "permission" ? "Permissão" : "Bloqueio"}</p>
-              <h2 id="access-event-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">{accessType === "permission" ? "Permitir agendamentos" : "Bloquear agenda"}</h2>
+              <h2 id="access-event-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">{editingAccessEventId ? "Editar regra" : accessType === "permission" ? "Permitir agendamentos" : "Bloquear agenda"}</h2>
               <p className="mt-1 text-xs leading-5 text-stone">O intervalo pode durar minutos ou vários dias. Sem profissionais selecionados, a regra vale para todos.</p>
             </div>
             <button type="button" onClick={() => setAccessOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar regra"><X className="h-4 w-4" /></button>
@@ -529,7 +665,7 @@ export default function CalendarPage() {
           </fieldset>
           <div className="mt-7 flex justify-end gap-2">
             <button type="button" onClick={() => setAccessOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>
-            <button type="button" onClick={() => void createAccessEvent()} disabled={busy || !accessStartDate || !accessEndDate || !accessStartTime || !accessEndTime} className={`rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${accessType === "permission" ? "bg-deep-teal hover:bg-forest-teal" : "bg-burnt-coral"}`}>{busy ? "Salvando..." : accessType === "permission" ? "Criar permissão" : "Criar bloqueio"}</button>
+            <button type="button" onClick={() => void createAccessEvent()} disabled={busy || !accessStartDate || !accessEndDate || !accessStartTime || !accessEndTime} className={`rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40 ${accessType === "permission" ? "bg-deep-teal hover:bg-forest-teal" : "bg-burnt-coral"}`}>{busy ? "Salvando..." : editingAccessEventId ? "Salvar alterações" : accessType === "permission" ? "Criar permissão" : "Criar bloqueio"}</button>
           </div>
         </section>
       </div>, document.body)}
@@ -539,7 +675,7 @@ export default function CalendarPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 id="event-title" className="font-heading text-lg font-semibold text-slate-ink">{editingAppointmentId ? "Editar evento" : "Novo evento"}</h2>
-              <p className="mt-1 text-xs leading-5 text-stone">Eventos manuais ignoram a antecedência mínima e a grade de horários, mas respeitam o expediente, as permissões, os bloqueios e outros eventos do profissional.</p>
+              <p className="mt-1 text-xs leading-5 text-stone">Eventos manuais não expiram. O override opcional permite sair do expediente, mas bloqueios e conflitos continuam protegidos.</p>
             </div>
             <button type="button" onClick={() => setEventOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory hover:text-slate-ink" aria-label="Fechar evento"><X className="h-4 w-4" /></button>
           </div>
@@ -548,22 +684,61 @@ export default function CalendarPage() {
             <label className="text-xs font-semibold text-slate-ink">Tipo de evento
               <select value={eventType} onChange={(event) => setEventType(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
                 {settings.eventTypes.map((item) => <option key={item.key} value={item.key}>{item.name} · {item.durationMinutes} min</option>)}
+                <option value="custom">Personalizado · duração livre</option>
               </select>
               {selectedEventResource && <span className="mt-1.5 block font-normal text-stone">{selectedEventResource.name}</span>}
             </label>
-            <label className="text-xs font-semibold text-slate-ink">Cliente
-              <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
-                <option value="">Sem cliente</option>
-                {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · +{customer.phone}</option>)}
-              </select>
-            </label>
+            <div>
+              <label className="text-xs font-semibold text-slate-ink">Cliente
+                <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
+                  <option value="">Sem cliente</option>
+                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · +{customer.phone}</option>)}
+                </select>
+              </label>
+              <div className="mt-2"><CustomerFormButton compact onCreated={selectCreatedCustomer} /></div>
+            </div>
             <label className="text-xs font-semibold text-slate-ink">Data
               <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
             </label>
             <label className="text-xs font-semibold text-slate-ink">Hora
               <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
             </label>
+            {eventType === "custom" && (
+              <>
+                <label className="text-xs font-semibold text-slate-ink">Título
+                  <input value={customTitle} onChange={(event) => setCustomTitle(event.target.value)} maxLength={120} placeholder="Ex.: Reunião administrativa" className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                </label>
+                <label className="text-xs font-semibold text-slate-ink">Profissional
+                  <select value={customResourceId} onChange={(event) => setCustomResourceId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
+                    {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-ink">Duração em minutos
+                  <input type="number" min={5} max={720} step={5} value={customDurationMinutes} onChange={(event) => setCustomDurationMinutes(Number(event.target.value))} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                </label>
+              </>
+            )}
           </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-ink">
+              <input type="checkbox" checked={allowOutsideAvailability} onChange={(event) => setAllowOutsideAvailability(event.target.checked)} className="h-4 w-4 accent-deep-teal" />
+              Permitir fora do expediente/permissões
+            </label>
+            {date && <button type="button" onClick={() => void loadSuggestions()} disabled={suggestionsLoading || allowOutsideAvailability} className="rounded-md border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">{suggestionsLoading ? "Buscando encaixes..." : "Atualizar encaixes"}</button>}
+          </div>
+          {!allowOutsideAvailability && suggestionsLoaded && suggestedSlots.length === 0 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800">Nenhum bloco livre deste tipo foi encontrado no dia selecionado.</p>
+          )}
+          {!allowOutsideAvailability && suggestedSlots.length > 0 && (
+            <div className="mt-3 rounded-lg bg-soft-ivory p-3">
+              <p className="text-xs font-semibold text-slate-ink">Próximos blocos que comportam este evento</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(showAllSuggestions ? suggestedSlots : suggestedSlots.slice(0, 3)).map((slot) => <button key={slot.startAt} type="button" onClick={() => setTime(slot.localTime)} className={`rounded-md border px-3 py-2 text-xs font-semibold hover:border-deep-teal ${time === slot.localTime ? "border-deep-teal bg-deep-teal text-white" : "border-mist bg-white text-deep-teal"}`}>{slot.localTime}</button>)}
+              </div>
+              {suggestedSlots.length > 3 && <button type="button" onClick={() => setShowAllSuggestions((current) => !current)} className="mt-2 text-xs font-semibold text-deep-teal hover:underline">{showAllSuggestions ? "Mostrar só os 3 próximos" : `Ver outros ${suggestedSlots.length - 3} horários`}</button>}
+            </div>
+          )}
 
           <label className="mt-5 block text-xs font-semibold text-slate-ink">Observação
             <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Observação administrativa opcional" className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
@@ -573,7 +748,7 @@ export default function CalendarPage() {
 
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" onClick={() => setEventOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>
-            <button type="button" onClick={saveAppointment} disabled={busy || !eventType || !date || !time} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">{busy ? "Salvando..." : editingAppointmentId ? "Salvar alterações" : "Criar evento"}</button>
+            <button type="button" onClick={saveAppointment} disabled={busy || !eventType || !date || !time || (eventType === "custom" && (!customTitle.trim() || !customResourceId || customDurationMinutes < 5))} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">{busy ? "Salvando..." : editingAppointmentId ? "Salvar alterações" : "Criar evento"}</button>
           </div>
         </section>
       </div>, document.body)}
@@ -608,6 +783,11 @@ export default function CalendarPage() {
             <span className="mt-2 block font-normal leading-5 text-stone">Evita agendamentos muito próximos. Com 24 h, só são oferecidos horários a partir de 24 horas do momento atual.</span>
           </label>
         </div>
+        <label className="block text-xs font-semibold text-slate-ink">
+          Mensagem padrão para abrir no WhatsApp Web
+          <textarea value={settings.confirmationMessageTemplate} onChange={(event) => setSettings({ ...settings, confirmationMessageTemplate: event.target.value })} maxLength={500} rows={3} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
+          <span className="mt-1 block font-normal text-stone">Variáveis disponíveis: {"{nome}"}, {"{data}"}, {"{hora}"}, {"{tipo}"} e {"{evento}"}.</span>
+        </label>
         <p className="text-xs leading-5 text-stone">Todos os horários seguem o fuso {settings.timezone}.</p>
 
         <section aria-labelledby="event-types-title" className="border-y border-mist py-5">
@@ -711,19 +891,70 @@ export default function CalendarPage() {
       </section>
       </div>, document.body)}
 
-      <section aria-labelledby="upcoming-title" className="border-t border-mist pt-7">
-        <h2 id="upcoming-title" className="font-heading text-lg font-semibold text-slate-ink">Próximos atendimentos</h2>
-        <div className="mt-4 overflow-x-auto rounded-lg border border-mist bg-white">
-          {appointments.length === 0 ? <p className="px-5 py-12 text-center text-sm text-stone">Nenhum atendimento nos próximos 60 dias.</p> : (
+      <details open className="rounded-lg border border-mist bg-white">
+        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-ink">
+          Próximos atendimentos <span className="ml-2 text-xs font-normal text-stone">({filteredUpcomingAppointments.length} de {appointments.length})</span>
+        </summary>
+      <section aria-labelledby="upcoming-title" className="border-t border-mist p-5">
+        <h2 id="upcoming-title" className="sr-only">Próximos atendimentos</h2>
+        <div className="mb-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_180px_190px_190px]">
+          <label className="relative">
+            <span className="sr-only">Pesquisar próximos atendimentos</span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" />
+            <input value={upcomingQuery} onChange={(event) => setUpcomingQuery(event.target.value)} placeholder="Cliente, telefone ou observação" className="w-full rounded-md border border-mist bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-deep-teal" />
+          </label>
+          <select value={upcomingStatus} onChange={(event) => setUpcomingStatus(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por situação">
+            <option value="">Todas as situações</option>
+            <option value="pending">Agendado · confirmar</option>
+            <option value="confirmed">Confirmados</option>
+            <option value="held">Aguardando sinal</option>
+            <option value="completed">Concluídos</option>
+            <option value="cancelled">Cancelados</option>
+          </select>
+          <select value={upcomingEventType} onChange={(event) => setUpcomingEventType(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por tipo">
+            <option value="">Todos os tipos</option>
+            {settings.eventTypes.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+            <option value="custom">Personalizados</option>
+          </select>
+          <select value={upcomingResourceId} onChange={(event) => setUpcomingResourceId(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por profissional">
+            <option value="">Todos os profissionais</option>
+            {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
+          </select>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-mist bg-white">
+          {filteredUpcomingAppointments.length === 0 ? <p className="px-5 py-12 text-center text-sm text-stone">{appointments.length === 0 ? "Nenhum atendimento nos próximos 60 dias." : "Nenhum atendimento corresponde aos filtros."}</p> : (
             <table className="w-full min-w-[680px] text-left text-sm">
               <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Profissional</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Observação</th><th className="px-4 py-3 text-right">Ação</th></tr></thead>
-              <tbody className="divide-y divide-mist">{appointments.map((appointment) => (
-                <tr key={appointment._id}><td className="px-4 py-3 font-semibold text-slate-ink">{formatDateTime(appointment.startAt, settings.timezone)}</td><td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td><td className="px-4 py-3 text-stone">{getEventTypeName(settings, appointment.eventType)}</td><td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td><td className="px-4 py-3 text-stone">{appointment.status === "held" ? "Reserva temporária" : appointment.status === "scheduled" ? "Agendado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td><td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td><td className="px-4 py-3 text-right"><div className="flex items-center justify-end gap-3">{appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Cancelar</button>}<button type="button" onClick={() => void remove(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Excluir</button></div></td></tr>
-              ))}</tbody>
+              <tbody className="divide-y divide-mist">{filteredUpcomingAppointments.map((appointment) => {
+                const pendingConfirmation = appointment.status === "scheduled"
+                  && (appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
+                return (
+                  <tr key={appointment._id}>
+                    <td className="px-4 py-3 font-semibold text-slate-ink">{formatAppointmentDateTime(appointment.startAt, settings.timezone)}</td>
+                    <td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td>
+                    <td className="px-4 py-3 text-stone">{appointment.customTitle || getEventTypeName(settings, appointment.eventType)}</td>
+                    <td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td>
+                    <td className="px-4 py-3 text-stone">{appointment.status === "held" ? "Aguardando sinal" : pendingConfirmation ? "Agendado · confirmar" : appointment.status === "scheduled" ? "Confirmado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td>
+                    <td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        {appointment.contactPhone && <a href={buildWhatsAppUrl(appointment, settings)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline" title="Abrir conversa no WhatsApp Web com a mensagem padrão"><MessageCircle className="h-4 w-4" />WhatsApp</a>}
+                        {pendingConfirmation
+                          ? <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "confirmed")} disabled={busy} className="font-semibold text-deep-teal hover:underline disabled:opacity-50">Confirmar</button>
+                          : appointment.status === "scheduled" && <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "pending")} disabled={busy} className="font-semibold text-amber-700 hover:underline disabled:opacity-50">Desconfirmar</button>}
+                        {(appointment.status === "scheduled" || appointment.status === "held") && <button type="button" onClick={() => openEditEvent(appointment)} disabled={busy} className="font-semibold text-deep-teal hover:underline disabled:opacity-50">Editar</button>}
+                        {appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Cancelar</button>}
+                        <button type="button" onClick={() => void remove(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Excluir</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           )}
         </div>
       </section>
+      </details>
 
       <p className={`text-sm ${feedback.includes("não") || feedback.includes("Falha") ? "text-burnt-coral" : "text-deep-teal"}`} aria-live="polite">{feedback}</p>
     </div>
@@ -732,6 +963,57 @@ export default function CalendarPage() {
 
 function formatDateTime(value: string, timezone: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: timezone }).format(new Date(value));
+}
+
+function formatAppointmentDateTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(value));
+}
+
+function buildWhatsAppUrl(appointment: Appointment, settings: Settings) {
+  const local = new Date(appointment.startAt);
+  const data = new Intl.DateTimeFormat("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: settings.timezone,
+  }).format(local);
+  const hora = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: settings.timezone }).format(local);
+  const tipo = getEventTypeName(settings, appointment.eventType);
+  const evento = appointment.customTitle || tipo;
+  const message = settings.confirmationMessageTemplate
+    .replaceAll("{nome}", appointment.customerName || "cliente")
+    .replaceAll("{data}", data)
+    .replaceAll("{hora}", hora)
+    .replaceAll("{tipo}", tipo)
+    .replaceAll("{evento}", evento);
+  const phone = (appointment.contactPhone ?? "").replace(/\D/g, "");
+  return `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
+}
+
+function matchesAppointmentStatus(appointment: Appointment, status: string) {
+  if (!status) return true;
+  if (status === "pending") {
+    return appointment.status === "scheduled"
+      && (appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
+  }
+  if (status === "confirmed") {
+    return appointment.status === "scheduled"
+      && !(appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
+  }
+  return appointment.status === status;
+}
+
+function normalizeSearch(value: string) {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("pt-BR").trim();
 }
 
 function formatDateInput(value: string, timezone: string) {
