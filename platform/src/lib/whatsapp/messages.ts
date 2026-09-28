@@ -94,7 +94,7 @@ export async function listWhatsAppMessagesForCustomer(
     .find({
       $or: [{ customerId }, { contactPhone: { $in: phones } }],
     }, { projection: { _id: 0 } })
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: 1, _id: 1 })
     .limit(safeLimit)
     .toArray();
 }
@@ -111,7 +111,7 @@ export async function listWhatsAppMessagesForAssistant(
       customerId,
       ...(after ? { timestamp: { $gt: after } } : {}),
     })
-    .sort({ timestamp: -1 })
+    .sort({ timestamp: -1, _id: -1 })
     .limit(safeLimit)
     .toArray();
 
@@ -128,7 +128,7 @@ export async function findLatestInboundWhatsAppMessage(customerId: ObjectId, pho
         ...(normalizedPhones.length > 0 ? [{ contactPhone: { $in: normalizedPhones } }] : []),
       ],
     },
-    { sort: { timestamp: -1 } },
+    { sort: { timestamp: -1, _id: -1 } },
   );
 }
 
