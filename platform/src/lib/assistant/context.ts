@@ -54,7 +54,7 @@ export async function loadAssistantContext(customerId: ObjectId, messageLimit: n
     .slice(-3);
   await Promise.all(recentAudios.map(async (message) => {
     try {
-      const transcription = await fetchAndTranscribeWhatsAppAudio(message.media!.id);
+      const transcription = await fetchAndTranscribeWhatsAppAudio(message.media!.id, customerId);
       message.media!.transcription = transcription;
       await updateWhatsAppMediaTranscription(message.metaMessageId, transcription);
     } catch (error) {

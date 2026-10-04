@@ -1,14 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchWhatsAppMediaFile, getAiProviderConfiguration, getVercelGatewayCredential } = vi.hoisted(() => ({
+const { createIndex, fetchWhatsAppMediaFile, getAiProviderConfiguration, getVercelGatewayCredential, insertOne, updateOne } = vi.hoisted(() => ({
+  createIndex: vi.fn(),
   fetchWhatsAppMediaFile: vi.fn(),
   getAiProviderConfiguration: vi.fn(),
   getVercelGatewayCredential: vi.fn(),
+  insertOne: vi.fn(),
+  updateOne: vi.fn(),
 }));
 
 vi.mock("./client", () => ({ fetchWhatsAppMediaFile }));
 vi.mock("../ai/provider-config", () => ({ getAiProviderConfiguration }));
 vi.mock("../ai/provider-credentials", () => ({ getVercelGatewayCredential }));
+vi.mock("../mongodb", () => ({
+  default: Promise.resolve({
+    db: () => ({ collection: () => ({ createIndex, insertOne, updateOne }) }),
+  }),
+}));
 
 import { fetchAndTranscribeWhatsAppAudio, testVercelAudioTranscription } from "./audio";
 
@@ -23,9 +31,12 @@ describe("WhatsApp audio transcription", () => {
       source: "database",
       kind: "api_key",
     });
+    createIndex.mockResolvedValue("index");
+    insertOne.mockResolvedValue({ acknowledged: true });
+    updateOne.mockResolvedValue({ acknowledged: true });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ text: " Quero marcar uma consulta. " }),
+      json: async () => ({ text: " Quero marcar uma consulta. ", durationInSeconds: 12.5 }),
     }));
   });
 
@@ -52,6 +63,20 @@ describe("WhatsApp audio transcription", () => {
           mediaType: "audio/ogg",
         }),
       }),
+    );
+    expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({
+      taskKey: "audio_transcription",
+      provider: "vercel",
+      model: "openai/gpt-4o-mini-transcribe",
+      status: "started",
+    }));
+    expect(updateOne).toHaveBeenCalledWith(
+      expect.any(Object),
+      { $set: expect.objectContaining({
+        status: "completed",
+        usage: { audioDurationSeconds: 12.5 },
+        normalizedUsage: { audioDurationSeconds: 12.5 },
+      }) },
     );
   });
 

@@ -1,6 +1,7 @@
 export * from "./audio";
 export * from "./client";
 export * from "./embedded-signup";
+export * from "./inbox";
 export * from "./manual-messages";
 export * from "./messages";
 export * from "./service-window";

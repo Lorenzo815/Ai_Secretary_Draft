@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
-import { Activity, Bot, CalendarDays, ChevronLeft, ContactRound, LayoutDashboard, LogOut, Menu, MessageSquareText, SlidersHorizontal } from "lucide-react";
+import { Activity, Bot, CalendarDays, ChevronLeft, ContactRound, LayoutDashboard, LogOut, Menu, MessageCircle, MessageSquareText, SlidersHorizontal } from "lucide-react";
 import { OriaLogo, OriaSymbol } from "@/components/oria-logo";
 import { useEffect, useState, useCallback } from "react";
 
 const navigationGroups = [
   { label: "Trabalho", items: [
     { href: "/dashboard", label: "Visão geral", icon: LayoutDashboard },
+    { href: "/dashboard/conversas", label: "Conversas", icon: MessageCircle },
     { href: "/dashboard/clientes", label: "Clientes", icon: ContactRound },
     { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays },
   ] },

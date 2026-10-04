@@ -111,6 +111,11 @@ export interface CustomerDocument {
   };
   profile?: CustomerProfile;
   leadQualification?: CustomerLeadQualification;
+  whatsappAttention?: {
+    resolvedThroughMessageId: string;
+    resolvedAt: Date;
+    resolvedBy: string;
+  };
   firstInteractionAt: Date;
   lastInteractionAt: Date;
   createdAt: Date;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateModelCallCostUsd } from "./model-cost";
+import { estimateAudioTranscriptionCostUsd, estimateModelCallCostUsd } from "./model-cost";
 
 describe("estimateModelCallCostUsd", () => {
   it("prices new input, cached input, and output separately", () => {
@@ -13,6 +13,18 @@ describe("estimateModelCallCostUsd", () => {
       cacheWritePricePerMillion: 0,
       outputPricePerMillion: 4.5,
     })).toBeCloseTo(0.795);
+  });
+
+  describe("estimateAudioTranscriptionCostUsd", () => {
+    it("prices transcription by audio duration in minutes", () => {
+      expect(estimateAudioTranscriptionCostUsd(90, { pricePerMinute: 0.006 }))
+        .toBeCloseTo(0.009);
+    });
+
+    it("does not invent estimates without duration or pricing", () => {
+      expect(estimateAudioTranscriptionCostUsd(undefined, { pricePerMinute: 0.006 })).toBeUndefined();
+      expect(estimateAudioTranscriptionCostUsd(60, undefined)).toBeUndefined();
+    });
   });
 
   it("includes cache writes when the provider charges for them", () => {

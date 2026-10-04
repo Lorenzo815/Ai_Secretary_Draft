@@ -41,10 +41,12 @@ export default function WhatsAppConversation({
   customerId,
   initialMessages,
   availability,
+  onSent,
 }: {
   customerId: string;
   initialMessages: ConversationMessage[];
   availability: MessageAvailability;
+  onSent?: () => void;
 }) {
   const router = useRouter();
   const historyRef = useRef<HTMLDivElement>(null);
@@ -72,6 +74,7 @@ export default function WhatsAppConversation({
 
   function appendSentMessage(message: ConversationMessage) {
     setOptimisticMessages((current) => [...current, message]);
+    onSent?.();
     startTransition(() => router.refresh());
   }
 

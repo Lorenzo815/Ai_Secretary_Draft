@@ -145,6 +145,19 @@ export async function findLatestInboundWhatsAppMessage(customerId: ObjectId, pho
   );
 }
 
+export async function findLatestWhatsAppMessage(customerId: ObjectId, phones: string[]) {
+  const normalizedPhones = phones.map((phone) => phone.replace(/\D/g, "")).filter(Boolean);
+  return (await getMessagesCollection()).findOne(
+    {
+      $or: [
+        { customerId },
+        ...(normalizedPhones.length > 0 ? [{ contactPhone: { $in: normalizedPhones } }] : []),
+      ],
+    },
+    { sort: { timestamp: -1, _id: -1 } },
+  );
+}
+
 export async function isLatestInboundWhatsAppMessage(customerId: ObjectId, messageId: ObjectId) {
   const latest = await (await getMessagesCollection()).findOne(
     { customerId, direction: "inbound" },
@@ -160,6 +173,8 @@ export async function ensureWhatsAppMessageIndexes() {
     messages.createIndex({ contactPhone: 1, timestamp: -1 }),
     messages.createIndex({ customerId: 1, timestamp: -1 }),
     messages.createIndex({ customerId: 1, direction: 1, timestamp: -1 }),
+    messages.createIndex({ direction: 1, timestamp: -1, customerId: 1 }),
+    messages.createIndex({ timestamp: -1 }),
   ]);
 }
 

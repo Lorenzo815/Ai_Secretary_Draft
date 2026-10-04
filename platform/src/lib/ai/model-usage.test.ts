@@ -37,4 +37,9 @@ describe("normalizeModelUsage", () => {
     expect(normalizeModelUsage(null)).toBeNull();
     expect(normalizeModelUsage({ providerOnlyMetric: 1 })).toBeNull();
   });
+
+  it("normalizes audio transcription duration", () => {
+    expect(normalizeModelUsage({ audioDurationSeconds: 42.5 }))
+      .toEqual({ audioDurationSeconds: 42.5 });
+  });
 });

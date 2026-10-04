@@ -2,9 +2,14 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import { estimateModelCallCostUsd, type ModelTokenPricing } from "../ai/model-cost";
+import {
+  estimateAudioTranscriptionCostUsd,
+  estimateModelCallCostUsd,
+  type AudioTranscriptionPricing,
+  type ModelTokenPricing,
+} from "../ai/model-cost";
 import { normalizeModelUsage, type NormalizedModelUsage } from "../ai/model-usage";
-import { listVercelLanguageModels, listVercelModelEndpoints } from "../ai/vercel-models";
+import { listVercelLanguageModels, listVercelModelEndpoints, listVercelTranscriptionModels } from "../ai/vercel-models";
 import { getUsdBrlRate, type UsdBrlRate } from "../currency/usd-brl";
 
 const DB_NAME = "ai_secretary";
@@ -105,8 +110,9 @@ export async function getOperationsDashboard() {
     { projection: { name: 1 } },
   ).toArray();
   const customerNames = new Map(customers.map((customer) => [customer._id.toString(), customer.name]));
-  const [vercelPricing, usdBrlRate] = await Promise.all([
+  const [vercelPricing, transcriptionPricing, usdBrlRate] = await Promise.all([
     loadVercelPricing([...modelCalls, ...usageCalls]),
+    loadVercelTranscriptionPricing([...modelCalls, ...usageCalls]),
     getUsdBrlRate(),
   ]);
   const withCustomer = <RecordType extends { customerId?: ObjectId }>(record: RecordType) => ({
@@ -127,9 +133,11 @@ export async function getOperationsDashboard() {
   const normalizedCalls = modelCalls.map((call) => ({
     ...call,
     normalizedUsage: call.normalizedUsage ?? normalizeModelUsage(call.usage),
-    estimatedCostUsd: estimateModelCallCostUsd(
+    estimatedCostUsd: estimateCallCost(
+      call,
       call.normalizedUsage ?? normalizeModelUsage(call.usage),
-      pricingForCall(call, vercelPricing),
+      vercelPricing,
+      transcriptionPricing,
     ),
     usage: undefined,
   }));
@@ -149,7 +157,7 @@ export async function getOperationsDashboard() {
     },
     jobs: jobs.map(withCustomer),
     runs: runs.map(withCustomer),
-    aiUsage: buildUsageSummary(now, timezone, usageCalls, vercelPricing, usdBrlRate),
+    aiUsage: buildUsageSummary(now, timezone, usageCalls, vercelPricing, transcriptionPricing, usdBrlRate),
     modelCalls: normalizedCalls.map(withCustomer),
   };
 }
@@ -166,6 +174,7 @@ function buildUsageSummary(
   timezone: string,
   calls: ModelCallRecord[],
   vercelPricing: Map<string, ModelTokenPricing>,
+  transcriptionPricing: Map<string, AudioTranscriptionPricing>,
   usdBrlRate?: UsdBrlRate,
 ) {
   const normalizedCalls = calls.flatMap((call) => {
@@ -176,7 +185,7 @@ function buildUsageSummary(
       model: call.model,
       providerId: providerIdForCall(call),
       usage,
-      estimatedCostUsd: estimateModelCallCostUsd(usage, pricingForCall(call, vercelPricing)),
+      estimatedCostUsd: estimateCallCost(call, usage, vercelPricing, transcriptionPricing),
     }] : [];
   });
   const usages = normalizedCalls.map((call) => call.usage);
@@ -184,8 +193,8 @@ function buildUsageSummary(
   const callsWithCacheData = usages.filter((usage) => usage.cachedInputTokens !== undefined && usage.inputTokens !== undefined);
   const cacheEligibleInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.inputTokens));
   const cachedInputTokens = sumKnown(callsWithCacheData.map((usage) => usage.cachedInputTokens));
-  const dailyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; estimatedCostUsd: number }>();
-  const hourlyUsage = new Map<string, { inputTokens: number; cachedInputTokens: number; outputTokens: number; estimatedCostUsd: number }>();
+  const dailyUsage = new Map<string, ReturnType<typeof emptyUsageBucket>>();
+  const hourlyUsage = new Map<string, ReturnType<typeof emptyUsageBucket>>();
   const groupedCalls = new Map<string, typeof normalizedCalls>();
 
   for (const call of normalizedCalls) {
@@ -211,6 +220,7 @@ function buildUsageSummary(
     cachedInputTokens: sumKnown(usages.map((usage) => usage.cachedInputTokens)),
     cacheWriteInputTokens: sumKnown(usages.map((usage) => usage.cacheWriteInputTokens)),
     reasoningTokens: sumKnown(usages.map((usage) => usage.reasoningTokens)),
+    audioDurationSeconds: sumKnown(usages.map((usage) => usage.audioDurationSeconds)),
     cacheRate: cacheEligibleInputTokens && cachedInputTokens !== undefined
       ? Math.round((cachedInputTokens / cacheEligibleInputTokens) * 1_000) / 10
       : undefined,
@@ -225,6 +235,7 @@ function buildUsageSummary(
         inputTokens: sumKnown(group.map((call) => call.usage.inputTokens)),
         cachedInputTokens: sumKnown(group.map((call) => call.usage.cachedInputTokens)),
         outputTokens: sumKnown(group.map((call) => call.usage.outputTokens)),
+        audioDurationSeconds: sumKnown(group.map((call) => call.usage.audioDurationSeconds)),
         estimatedCostUsd: groupCostUsd,
         estimatedCostBrl: convertUsdToBrl(groupCostUsd, usdBrlRate),
       };
@@ -269,12 +280,13 @@ function addUsage(
   current.inputTokens += Math.max((usage.inputTokens ?? 0) - cachedTokens, 0);
   current.cachedInputTokens += cachedTokens;
   current.outputTokens += usage.outputTokens ?? 0;
+  current.audioDurationSeconds += usage.audioDurationSeconds ?? 0;
   current.estimatedCostUsd += estimatedCostUsd ?? 0;
   buckets.set(key, current);
 }
 
 function emptyUsageBucket() {
-  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, audioDurationSeconds: 0, estimatedCostUsd: 0 };
 }
 
 async function loadVercelPricing(calls: ModelCallRecord[]) {
@@ -306,6 +318,39 @@ async function loadVercelPricing(calls: ModelCallRecord[]) {
   });
 
   return pricing;
+}
+
+async function loadVercelTranscriptionPricing(calls: ModelCallRecord[]) {
+  const modelIds = new Set(
+    calls
+      .filter((call) => call.taskKey === "audio_transcription" || call.taskKey === "audio_transcription_test")
+      .map((call) => call.model),
+  );
+  const pricing = new Map<string, AudioTranscriptionPricing>();
+  if (modelIds.size === 0) return pricing;
+  try {
+    for (const model of await listVercelTranscriptionModels()) {
+      if (modelIds.has(model.id)) pricing.set(model.id.toLowerCase(), model);
+    }
+  } catch {
+    return pricing;
+  }
+  return pricing;
+}
+
+function estimateCallCost(
+  call: ModelCallRecord,
+  usage: NormalizedModelUsage | null,
+  tokenPricing: Map<string, ModelTokenPricing>,
+  transcriptionPricing: Map<string, AudioTranscriptionPricing>,
+) {
+  if (usage?.audioDurationSeconds !== undefined) {
+    return estimateAudioTranscriptionCostUsd(
+      usage.audioDurationSeconds,
+      transcriptionPricing.get(call.model.toLowerCase()),
+    );
+  }
+  return estimateModelCallCostUsd(usage, pricingForCall(call, tokenPricing));
 }
 
 function pricingForCall(call: ModelCallRecord, pricing: Map<string, ModelTokenPricing>) {

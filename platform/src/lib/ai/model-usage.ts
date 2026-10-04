@@ -5,6 +5,7 @@ export interface NormalizedModelUsage {
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;
   reasoningTokens?: number;
+  audioDurationSeconds?: number;
 }
 
 export function normalizeModelUsage(usage: unknown): NormalizedModelUsage | null {
@@ -41,6 +42,7 @@ export function normalizeModelUsage(usage: unknown): NormalizedModelUsage | null
       completionDetails?.reasoning_tokens,
       responseOutputDetails?.reasoning_tokens,
     ),
+    audioDurationSeconds: firstNumber(source.audioDurationSeconds, source.audio_duration_seconds),
   });
 
   return Object.keys(normalized).length > 0 ? normalized : null;

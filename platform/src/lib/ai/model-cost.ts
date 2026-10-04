@@ -7,6 +7,10 @@ export interface ModelTokenPricing {
   cacheWritePricePerMillion: number | null;
 }
 
+export interface AudioTranscriptionPricing {
+  pricePerMinute: number | null;
+}
+
 export function estimateModelCallCostUsd(
   usage: NormalizedModelUsage | null | undefined,
   pricing: ModelTokenPricing | null | undefined,
@@ -27,4 +31,14 @@ export function estimateModelCallCostUsd(
     + cacheWriteTokens * cacheWriteRate
     + usage.outputTokens * pricing.outputPricePerMillion
   ) / 1_000_000;
+}
+
+export function estimateAudioTranscriptionCostUsd(
+  durationSeconds: number | undefined,
+  pricing: AudioTranscriptionPricing | null | undefined,
+) {
+  if (durationSeconds === undefined || pricing?.pricePerMinute === null || pricing?.pricePerMinute === undefined) {
+    return undefined;
+  }
+  return (durationSeconds / 60) * pricing.pricePerMinute;
 }

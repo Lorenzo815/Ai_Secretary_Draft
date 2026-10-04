@@ -41,10 +41,12 @@ export default function CustomerServiceStatusControl({
   customerId,
   initialStatus,
   variant = "panel",
+  onStatusChange,
 }: {
   customerId: string;
   initialStatus: ServiceStatus;
   variant?: "panel" | "compact";
+  onStatusChange?: (status: ServiceStatus) => void;
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(initialStatus);
@@ -67,6 +69,7 @@ export default function CustomerServiceStatusControl({
       const selected = STATUS_OPTIONS.find((option) => option.value === data.status)!;
       setStatus(data.status);
       setFeedback(`Responsável alterado para ${selected.owner}. ${selected.description}`);
+      onStatusChange?.(data.status);
       router.refresh();
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Não foi possível alterar o responsável.");
