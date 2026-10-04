@@ -13,9 +13,5 @@ export function getAgentFinalMessage(response: AgentFinalResponse, groundedReply
   if (groundedReply) return groundedReply;
   const message = response.message.trim();
   if (!message) throw new Error("O agente retornou uma mensagem final vazia.");
-  if (response.memory.pendingQuestion && !message.endsWith("?")) {
-    const question = response.memory.pendingQuestion.trim();
-    return `${message.slice(0, Math.max(0, 4_094 - question.length)).trimEnd()}\n\n${question}`;
-  }
   return message;
 }

@@ -13,6 +13,16 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("próximo passo de baixo atrito");
   });
 
+  it("qualifies the customer and presents relevant value before a requested price", () => {
+    const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
+
+    expect(AGENT_STRUCTURAL_POLICY).toContain("não apresente valores de imediato");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("então informe, na mesma resposta, o preço solicitado");
+    expect(prompt).toContain("Se o objetivo ainda estiver indefinido, faça somente uma pergunta curta de qualificação");
+    expect(prompt).toContain("explique-os brevemente e informe o preço solicitado na mesma mensagem");
+    expect(prompt).toContain("responda ao preço diretamente, sem repetir a qualificação");
+  });
+
   it("persuades without pressure, artificial urgency, or clinical promises", () => {
     const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
 
