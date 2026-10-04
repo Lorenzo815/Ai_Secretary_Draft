@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import {
   bookManualAppointment,
+  bookManualAppointmentSeries,
   findAvailableSlots,
   getCalendarSettings,
   listCalendarAccessEvents,
@@ -13,6 +14,7 @@ import {
   WeeklyAvailability,
   CalendarEventTypeDefinition,
   CalendarResourceDefinition,
+  AppointmentRecurrenceInput,
 } from "@/lib/calendar";
 import { findCustomerById, listCustomerOptions } from "@/lib/crm";
 
@@ -53,6 +55,27 @@ export async function GET(request: NextRequest) {
   }
 
   const settings = await getCalendarSettings();
+  if (mode === "period") {
+    try {
+      const fromDate = request.nextUrl.searchParams.get("fromDate") ?? "";
+      const toDate = request.nextUrl.searchParams.get("toDate") ?? "";
+      const from = DateTime.fromISO(fromDate, { zone: settings.timezone }).startOf("day");
+      const to = DateTime.fromISO(toDate, { zone: settings.timezone }).plus({ days: 1 }).startOf("day");
+      if (!from.isValid || !to.isValid || to <= from || to.diff(from, "days").days > 366) {
+        return NextResponse.json({ error: "Informe um período válido de até 366 dias." }, { status: 400 });
+      }
+      const [appointments, accessEvents] = await Promise.all([
+        listAppointments(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
+        listCalendarAccessEvents(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
+      ]);
+      return NextResponse.json({ appointments, accessEvents });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Falha ao carregar o período." },
+        { status: 400 },
+      );
+    }
+  }
   if (mode === "week") {
     try {
       const fromDate = request.nextUrl.searchParams.get("fromDate") ?? "";
@@ -142,6 +165,7 @@ export async function POST(request: Request) {
     durationMinutes?: number;
     allowOutsideAvailability?: boolean;
     notes?: string;
+    recurrence?: AppointmentRecurrenceInput;
   };
   const customer = input.customerId ? await findCustomerById(input.customerId) : null;
   if (!input.startAt || !input.eventType) {
@@ -155,7 +179,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Tipo de evento inválido." }, { status: 400 });
   }
   try {
-    const appointment = await bookManualAppointment({
+    const appointmentInput = {
       customerId: customer?._id,
       customerName: customer?.name ?? "",
       contactPhone: customer?.phones[0] ?? "",
@@ -168,7 +192,12 @@ export async function POST(request: Request) {
       confirmationStatus: "pending",
       notes: input.notes,
       source: "manual",
-    });
+    } as const;
+    if (input.recurrence) {
+      const appointments = await bookManualAppointmentSeries(appointmentInput, input.recurrence);
+      return NextResponse.json({ appointment: appointments[0], appointments }, { status: 201 });
+    }
+    const appointment = await bookManualAppointment(appointmentInput);
     return NextResponse.json({ appointment }, { status: 201 });
   } catch (error) {
     return NextResponse.json(

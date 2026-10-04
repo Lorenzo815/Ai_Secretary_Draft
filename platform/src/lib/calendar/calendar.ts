@@ -5,6 +5,14 @@ import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
 import { getSlotAccessDecision, isSlotAllowedByAccessEvents } from "./access-policy";
+import {
+  addAppointmentRecurrenceInterval,
+  buildAppointmentRecurrenceStarts,
+  type AppointmentRecurrenceFrequency,
+  type AppointmentRecurrenceInput,
+} from "./recurrence";
+
+export type { AppointmentRecurrenceFrequency, AppointmentRecurrenceInput } from "./recurrence";
 
 export interface WeeklyAvailability {
   weekday: number;
@@ -40,6 +48,16 @@ export interface CalendarSettingsDocument {
   updatedAt: Date;
 }
 
+export interface AppointmentRecurrenceMetadata {
+  seriesId: ObjectId;
+  frequency: AppointmentRecurrenceFrequency;
+  interval: number;
+  occurrenceIndex: number;
+  totalOccurrences: number;
+  originalStartAt: Date;
+  isException?: boolean;
+}
+
 export interface AppointmentDocument {
   _id: ObjectId;
   providerId: string;
@@ -58,6 +76,7 @@ export interface AppointmentDocument {
   allowOutsideAvailability?: boolean;
   confirmationStatus?: "pending" | "confirmed";
   visitGroupId?: ObjectId;
+  recurrence?: AppointmentRecurrenceMetadata;
   notes?: string;
   source: "assistant" | "manual";
   createdAt: Date;
@@ -104,6 +123,7 @@ interface PersistAppointmentInput {
   status?: "held" | "scheduled";
   holdExpiresAt?: Date;
   schedulingOptionId?: ObjectId;
+  recurrence?: AppointmentRecurrenceMetadata;
 }
 
 interface BookAppointmentInput extends PersistAppointmentInput {
@@ -692,6 +712,64 @@ export async function bookManualAppointment(input: PersistAppointmentInput) {
   return appointment;
 }
 
+export async function bookManualAppointmentSeries(
+  input: PersistAppointmentInput,
+  recurrence: AppointmentRecurrenceInput,
+) {
+  const settings = await getCalendarSettings();
+  const starts = buildAppointmentRecurrenceStarts(input.startAt, recurrence, settings.timezone);
+  const seriesId = new ObjectId();
+  const slots = [];
+  for (const [occurrenceIndex, startAt] of starts.entries()) {
+    const slot = await validateManualAppointmentSlot({
+      settings,
+      startAt: startAt.toISO()!,
+      eventTypeKey: input.eventType,
+      resourceId: input.resourceId,
+      durationMinutes: input.durationMinutes,
+      allowOutsideAvailability: input.allowOutsideAvailability,
+    });
+    slots.push({ occurrenceIndex, slot });
+  }
+
+  await ensureCalendarIndexes();
+  const appointments = await getAppointmentsCollection();
+  const now = new Date();
+  const documents = slots.map(({ occurrenceIndex, slot }) => createAppointmentDocument(
+    input,
+    settings,
+    slot.startAt,
+    slot.endAt,
+    now,
+    {
+      seriesId,
+      frequency: recurrence.frequency,
+      interval: recurrence.interval,
+      occurrenceIndex,
+      totalOccurrences: slots.length,
+      originalStartAt: slot.startAt.toJSDate(),
+    },
+  ));
+  const client = await clientPromise;
+  const session = client.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await appointments.insertMany(documents, { ordered: true, session });
+    });
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error("Um dos horários da série já possui outro evento para este profissional.");
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+  if (input.customerId) {
+    await scheduleFirstAppointmentQualification(input.customerId, documents[0]._id, documents[0].createdAt);
+  }
+  return documents;
+}
+
 export async function updateManualAppointment(input: {
   appointmentId: string;
   customerId?: ObjectId;
@@ -727,7 +805,7 @@ export async function updateManualAppointment(input: {
   });
   const now = new Date();
   const notes = input.notes?.trim().slice(0, 1_000);
-  const setFields = {
+  const setFields: Record<string, unknown> = {
     providerId: slot.eventType.resourceId,
     ...(input.customerId ? { customerId: input.customerId } : {}),
     customerName: input.customerName,
@@ -743,6 +821,7 @@ export async function updateManualAppointment(input: {
     ...(notes ? { notes } : {}),
     updatedAt: now,
   };
+  if (current.recurrence) setFields["recurrence.isException"] = true;
   const update: UpdateFilter<AppointmentDocument> = { $set: setFields };
   if (!input.customerId || !notes) {
     update.$unset = {
@@ -767,6 +846,134 @@ export async function updateManualAppointment(input: {
     }
     throw error;
   }
+}
+
+export async function updateManualAppointmentSeries(input: {
+  appointmentId: string;
+  customerId?: ObjectId;
+  customerName: string;
+  contactPhone: string;
+  startAt: string;
+  eventType: string;
+  resourceId?: string;
+  customTitle?: string;
+  durationMinutes?: number;
+  allowOutsideAvailability?: boolean;
+  confirmationStatus?: "pending" | "confirmed";
+  notes?: string;
+}) {
+  if (!ObjectId.isValid(input.appointmentId)) throw new Error("Evento inválido.");
+  const appointments = await getAppointmentsCollection();
+  const appointmentId = new ObjectId(input.appointmentId);
+  const current = await appointments.findOne({
+    _id: appointmentId,
+    status: { $in: ["held", "scheduled"] },
+  });
+  if (!current) throw new Error("Evento não encontrado ou já encerrado.");
+  if (!current.recurrence) return updateManualAppointment(input);
+  const now = new Date();
+  if (current.startAt < now) {
+    throw new Error("Ocorrências passadas são preservadas e não podem iniciar uma edição de série.");
+  }
+  const targets = await appointments.find({
+    "recurrence.seriesId": current.recurrence.seriesId,
+    "recurrence.occurrenceIndex": { $gte: current.recurrence.occurrenceIndex },
+    startAt: { $gte: now },
+    status: { $in: ["held", "scheduled"] },
+  }).sort({ "recurrence.occurrenceIndex": 1 }).toArray();
+  if (targets.length === 0) throw new Error("Não há ocorrências futuras nesta série.");
+
+  const settings = await getCalendarSettings();
+  const selectedStart = DateTime.fromISO(input.startAt, { zone: settings.timezone, setZone: true });
+  if (!selectedStart.isValid) throw new Error("Data do agendamento inválida.");
+  const targetIds = targets.map((appointment) => appointment._id);
+  const prepared: Array<{
+    target: AppointmentDocument;
+    slot: {
+      startAt: DateTime;
+      endAt: DateTime;
+      eventType: CalendarEventTypeDefinition;
+    };
+  }> = [];
+  for (const target of targets) {
+    const indexDifference = target.recurrence!.occurrenceIndex - current.recurrence.occurrenceIndex;
+    const nextStart = addAppointmentRecurrenceInterval(
+      selectedStart,
+      current.recurrence.frequency,
+      current.recurrence.interval * indexDifference,
+    );
+    const slot = await validateManualAppointmentSlot({
+      settings,
+      startAt: nextStart.toISO()!,
+      eventTypeKey: input.eventType,
+      resourceId: input.resourceId,
+      durationMinutes: input.durationMinutes,
+      allowOutsideAvailability: input.allowOutsideAvailability,
+      excludeAppointmentIds: targetIds,
+    });
+    prepared.push({ target, slot });
+  }
+
+  const notes = input.notes?.trim().slice(0, 1_000);
+  const customTitle = input.customTitle?.trim().slice(0, 120);
+  const client = await clientPromise;
+  const session = client.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await appointments.updateMany(
+        { _id: { $in: targetIds } },
+        { $set: { status: "cancelled", updatedAt: now } },
+        { session },
+      );
+      const result = await appointments.bulkWrite(prepared.map(({ target, slot }) => ({
+        updateOne: {
+          filter: { _id: target._id, updatedAt: now, status: "cancelled" },
+          update: {
+            $set: {
+              status: target.status,
+              providerId: slot.eventType.resourceId,
+              ...(input.customerId ? { customerId: input.customerId } : {}),
+              customerName: input.customerName,
+              contactPhone: input.contactPhone,
+              startAt: slot.startAt.toJSDate(),
+              endAt: slot.endAt.toJSDate(),
+              timezone: settings.timezone,
+              eventType: slot.eventType.key,
+              ...(customTitle ? { customTitle } : {}),
+              durationMinutes: Math.round(slot.endAt.diff(slot.startAt, "minutes").minutes),
+              allowOutsideAvailability: Boolean(input.allowOutsideAvailability),
+              ...(input.confirmationStatus ? { confirmationStatus: input.confirmationStatus } : {}),
+              ...(notes ? { notes } : {}),
+              "recurrence.originalStartAt": slot.startAt.toJSDate(),
+              "recurrence.isException": false,
+              updatedAt: now,
+            },
+            $unset: {
+              ...(!input.customerId ? { customerId: "" } : {}),
+              ...(!customTitle ? { customTitle: "" } : {}),
+              ...(!notes ? { notes: "" } : {}),
+            },
+          },
+        },
+      })), { ordered: true, session });
+      if (result.modifiedCount !== targets.length) {
+        throw new Error("Uma ou mais ocorrências foram alteradas por outra operação.");
+      }
+    });
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error("Um dos novos horários da série já possui outro evento.");
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+  if (input.customerId && !current.customerId?.equals(input.customerId)) {
+    await scheduleFirstAppointmentQualification(input.customerId, appointmentId, now);
+  }
+  const updated = await appointments.findOne({ _id: appointmentId });
+  if (!updated) throw new Error("Evento atualizado não encontrado.");
+  return updated;
 }
 
 export async function updateAppointmentConfirmation(id: string, confirmationStatus: "pending" | "confirmed") {
@@ -920,7 +1127,28 @@ async function persistAppointment(
   const appointments = await getAppointmentsCollection();
   await ensureCalendarIndexes();
   const now = new Date();
-  const appointment: AppointmentDocument = {
+  const appointment = createAppointmentDocument(input, settings, startAt, endAt, now, input.recurrence);
+  try {
+    await appointments.insertOne(appointment);
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error("Já existe um evento deste tipo no horário escolhido.");
+    }
+    throw error;
+  }
+
+  return appointment;
+}
+
+function createAppointmentDocument(
+  input: PersistAppointmentInput,
+  settings: CalendarSettingsDocument,
+  startAt: DateTime,
+  endAt: DateTime,
+  now: Date,
+  recurrence?: AppointmentRecurrenceMetadata,
+): AppointmentDocument {
+  return {
     _id: new ObjectId(),
     providerId: input.resourceId ?? settings.eventTypes.find((item) => item.key === input.eventType)?.resourceId ?? settings.providerId,
     customerId: input.customerId,
@@ -939,20 +1167,11 @@ async function persistAppointment(
     allowOutsideAvailability: input.allowOutsideAvailability,
     confirmationStatus: input.confirmationStatus,
     visitGroupId: input.visitGroupId,
+    recurrence,
     source: input.source,
     createdAt: now,
     updatedAt: now,
   };
-  try {
-    await appointments.insertOne(appointment);
-  } catch (error) {
-    if (error instanceof MongoServerError && error.code === 11000) {
-      throw new Error("Já existe um evento deste tipo no horário escolhido.");
-    }
-    throw error;
-  }
-
-  return appointment;
 }
 
 export async function cancelAppointment(id: string) {
@@ -974,6 +1193,44 @@ export async function deleteAppointment(id: string) {
   const result = await (await getAppointmentsCollection()).findOneAndDelete({ _id: appointmentId });
   if (!result) throw new Error("Evento não encontrado.");
   return result;
+}
+
+export async function cancelAppointmentSeries(id: string) {
+  return changeAppointmentSeries(id, false);
+}
+
+export async function deleteAppointmentSeries(id: string) {
+  return changeAppointmentSeries(id, true);
+}
+
+async function changeAppointmentSeries(id: string, permanent: boolean) {
+  if (!ObjectId.isValid(id)) throw new Error("Evento inválido.");
+  const appointments = await getAppointmentsCollection();
+  const current = await appointments.findOne({ _id: new ObjectId(id) });
+  if (!current) throw new Error("Evento não encontrado.");
+  if (!current.recurrence) {
+    return permanent ? deleteAppointment(id) : cancelAppointment(id);
+  }
+  const now = new Date();
+  const filter = {
+    "recurrence.seriesId": current.recurrence.seriesId,
+    "recurrence.occurrenceIndex": { $gte: current.recurrence.occurrenceIndex },
+    startAt: { $gte: now },
+  };
+  if (permanent) {
+    const result = await appointments.deleteMany(filter);
+    if (result.deletedCount === 0) throw new Error("Não há ocorrências futuras para excluir.");
+    return { ...current, affectedCount: result.deletedCount };
+  }
+  const result = await appointments.updateMany(
+    { ...filter, status: { $in: ["held", "scheduled"] } },
+    {
+      $set: { status: "cancelled", updatedAt: now },
+      $unset: { holdExpiresAt: "", schedulingOptionId: "" },
+    },
+  );
+  if (result.modifiedCount === 0) throw new Error("Não há ocorrências futuras para cancelar.");
+  return { ...current, status: "cancelled" as const, affectedCount: result.modifiedCount };
 }
 
 export async function getCustomerCalendarOverview(customerId: ObjectId) {
@@ -1021,6 +1278,7 @@ export async function ensureCalendarIndexes() {
   await Promise.all([
     appointments.createIndex({ customerId: 1, startAt: -1 }),
     appointments.createIndex({ startAt: 1, status: 1 }),
+    appointments.createIndex({ "recurrence.seriesId": 1, "recurrence.occurrenceIndex": 1 }),
     appointments.createIndex({ holdExpiresAt: 1 }, { expireAfterSeconds: 0 }),
     accessEvents.createIndex({ startAt: 1, endAt: 1 }),
     accessEvents.createIndex({ resourceIds: 1, startAt: 1 }),
@@ -1133,6 +1391,7 @@ async function validateManualAppointmentSlot(input: {
   durationMinutes?: number;
   allowOutsideAvailability?: boolean;
   excludeAppointmentId?: ObjectId;
+  excludeAppointmentIds?: ObjectId[];
 }) {
   await releaseExpiredAppointmentHolds();
   const requested = DateTime.fromISO(input.startAt, { zone: input.settings.timezone, setZone: true });
@@ -1179,7 +1438,11 @@ async function validateManualAppointmentSlot(input: {
       ? Promise.resolve([])
       : listCalendarAccessEvents(requestedStartUtc.toJSDate(), requestedEndUtc.toJSDate()),
     (await getAppointmentsCollection()).findOne({
-      ...(input.excludeAppointmentId ? { _id: { $ne: input.excludeAppointmentId } } : {}),
+      ...(input.excludeAppointmentIds?.length
+        ? { _id: { $nin: input.excludeAppointmentIds } }
+        : input.excludeAppointmentId
+          ? { _id: { $ne: input.excludeAppointmentId } }
+          : {}),
       providerId: resource.id,
       status: { $in: ["held", "scheduled"] },
       startAt: { $lt: requestedEndUtc.toJSDate() },

@@ -1,7 +1,15 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { cancelAppointment, deleteAppointment, updateAppointmentConfirmation, updateManualAppointment } from "@/lib/calendar";
+import {
+  cancelAppointment,
+  cancelAppointmentSeries,
+  deleteAppointment,
+  deleteAppointmentSeries,
+  updateAppointmentConfirmation,
+  updateManualAppointment,
+  updateManualAppointmentSeries,
+} from "@/lib/calendar";
 import { findCustomerById } from "@/lib/crm";
 
 export async function PATCH(
@@ -21,6 +29,7 @@ export async function PATCH(
     allowOutsideAvailability?: boolean;
     confirmationStatus?: "pending" | "confirmed";
     notes?: string;
+    scope?: "occurrence" | "series";
   };
   const { id } = await params;
   if (
@@ -52,7 +61,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Cliente inválido." }, { status: 400 });
   }
   try {
-    const appointment = await updateManualAppointment({
+    const updateInput = {
       appointmentId: id,
       customerId: customer?._id,
       customerName: customer?.name ?? "",
@@ -65,7 +74,10 @@ export async function PATCH(
       allowOutsideAvailability: input.allowOutsideAvailability,
       confirmationStatus: input.confirmationStatus,
       notes: input.notes,
-    });
+    };
+    const appointment = input.scope === "series"
+      ? await updateManualAppointmentSeries(updateInput)
+      : await updateManualAppointment(updateInput);
     return NextResponse.json({ appointment });
   } catch (error) {
     return NextResponse.json(
@@ -84,10 +96,12 @@ export async function DELETE(
   }
   try {
     const { id } = await params;
-    const permanent = new URL(request.url).searchParams.get("permanent") === "true";
+    const searchParams = new URL(request.url).searchParams;
+    const permanent = searchParams.get("permanent") === "true";
+    const series = searchParams.get("scope") === "series";
     const appointment = permanent
-      ? await deleteAppointment(id)
-      : await cancelAppointment(id);
+      ? series ? await deleteAppointmentSeries(id) : await deleteAppointment(id)
+      : series ? await cancelAppointmentSeries(id) : await cancelAppointment(id);
     return NextResponse.json({ appointment });
   } catch (error) {
     return NextResponse.json(

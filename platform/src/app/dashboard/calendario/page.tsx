@@ -2,7 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Ban, CalendarPlus, MessageCircle, Pencil, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
+import { Ban, CalendarPlus, Pencil, Plus, RefreshCw, Repeat2, Search, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import WeekCalendar from "./_components/week-calendar";
 import CustomerFormButton from "../clientes/_components/customer-form-button";
 
@@ -53,6 +53,15 @@ interface Appointment {
   notes?: string;
   contactPhone?: string;
   source: "assistant" | "manual";
+  recurrence?: {
+    seriesId: string;
+    frequency: "daily" | "weekly" | "monthly";
+    interval: number;
+    occurrenceIndex: number;
+    totalOccurrences: number;
+    originalStartAt: string;
+    isException?: boolean;
+  };
 }
 
 interface CalendarAccessEvent {
@@ -70,7 +79,6 @@ type CalendarEventType = string;
 const dayNames = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 export default function CalendarPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [accessEvents, setAccessEvents] = useState<CalendarAccessEvent[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [customerId, setCustomerId] = useState("");
@@ -87,12 +95,23 @@ export default function CalendarPage() {
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [notes, setNotes] = useState("");
   const [editingAppointmentId, setEditingAppointmentId] = useState("");
+  const [editScope, setEditScope] = useState<"occurrence" | "series">("occurrence");
+  const [repeatEnabled, setRepeatEnabled] = useState(false);
+  const [repeatFrequency, setRepeatFrequency] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [repeatInterval, setRepeatInterval] = useState(1);
+  const [repeatEndMode, setRepeatEndMode] = useState<"count" | "until">("count");
+  const [repeatCount, setRepeatCount] = useState(4);
+  const [repeatUntilDate, setRepeatUntilDate] = useState("");
   const [feedback, setFeedback] = useState("");
   const [busy, setBusy] = useState(false);
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
+  const [pendingSeriesAction, setPendingSeriesAction] = useState<{
+    appointment: Appointment;
+    mode: "cancel" | "delete";
+  } | null>(null);
   const [editingAccessEventId, setEditingAccessEventId] = useState("");
   const [accessType, setAccessType] = useState<"permission" | "blocker">("permission");
   const [accessTitle, setAccessTitle] = useState("");
@@ -102,24 +121,19 @@ export default function CalendarPage() {
   const [accessEndTime, setAccessEndTime] = useState("18:00");
   const [accessResourceIds, setAccessResourceIds] = useState<string[]>([]);
   const [activeResourceId, setActiveResourceId] = useState("doctor");
-  const [upcomingQuery, setUpcomingQuery] = useState("");
-  const [upcomingStatus, setUpcomingStatus] = useState("");
-  const [upcomingEventType, setUpcomingEventType] = useState("");
-  const [upcomingResourceId, setUpcomingResourceId] = useState("");
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerSort, setCustomerSort] = useState<"recent" | "alphabetical">("recent");
-  const deferredUpcomingQuery = useDeferredValue(upcomingQuery);
   const deferredCustomerQuery = useDeferredValue(customerQuery);
   const backgroundRefreshInFlight = useRef(false);
+  const whatsappWindowRef = useRef<Window | null>(null);
   const interactionBlocked = useRef(false);
-  interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen;
+  interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen || Boolean(pendingSeriesAction);
 
   async function refreshCalendar(successMessage?: string) {
     setBusy(true);
     try {
       const data = await requestCalendarData();
       setSettings(data.settings);
-      setAppointments(data.appointments ?? []);
       setAccessEvents(data.accessEvents ?? []);
       setCustomers(data.customers ?? []);
       setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
@@ -138,7 +152,6 @@ export default function CalendarPage() {
       .then((data) => {
         if (!active) return;
         setSettings(data.settings);
-        setAppointments(data.appointments ?? []);
         setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
         setEventType(data.settings.eventTypes[0]?.key ?? "");
@@ -165,7 +178,6 @@ export default function CalendarPage() {
         const data = await requestCalendarData();
         if (!active || document.visibilityState !== "visible" || interactionBlocked.current) return;
         setSettings(data.settings);
-        setAppointments(data.appointments ?? []);
         setAccessEvents(data.accessEvents ?? []);
         setCustomers(data.customers ?? []);
         setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
@@ -212,6 +224,13 @@ export default function CalendarPage() {
       settings?.timezone ?? "America/Sao_Paulo",
     );
     setEditingAppointmentId("");
+    setEditScope("occurrence");
+    setRepeatEnabled(false);
+    setRepeatFrequency("weekly");
+    setRepeatInterval(1);
+    setRepeatEndMode("count");
+    setRepeatCount(4);
+    setRepeatUntilDate("");
     setCustomerId("");
     setCustomerQuery("");
     setDate(nextDate);
@@ -231,6 +250,10 @@ export default function CalendarPage() {
   const openEditEvent = useCallback((appointment: Appointment) => {
     if (appointment.status === "cancelled" || appointment.status === "completed") return;
     setEditingAppointmentId(appointment._id);
+    setEditScope("occurrence");
+    setRepeatEnabled(Boolean(appointment.recurrence));
+    setRepeatFrequency(appointment.recurrence?.frequency ?? "weekly");
+    setRepeatInterval(appointment.recurrence?.interval ?? 1);
     setCustomerId(appointment.customerId ?? "");
     setCustomerQuery("");
     setEventType(appointment.eventType ?? settings?.eventTypes[0]?.key ?? "");
@@ -272,6 +295,15 @@ export default function CalendarPage() {
           resourceId: customResourceId,
         } : {}),
         allowOutsideAvailability,
+        ...(editingAppointmentId ? { scope: editScope } : {}),
+        ...(!editingAppointmentId && repeatEnabled ? {
+          recurrence: {
+            frequency: repeatFrequency,
+            interval: repeatInterval,
+            endMode: repeatEndMode,
+            ...(repeatEndMode === "count" ? { count: repeatCount } : { untilDate: repeatUntilDate }),
+          },
+        } : {}),
       }),
     });
     const data = await response.json() as { appointment?: Appointment; error?: string };
@@ -290,29 +322,44 @@ export default function CalendarPage() {
     setBusy(false);
   }
 
-  async function cancel(id: string) {
-    setBusy(true);
-    const response = await fetch(`/api/calendar/appointments/${id}`, { method: "DELETE" });
-    const data = await response.json() as { error?: string };
-    if (response.ok) {
-      await refreshCalendar("Evento cancelado.");
-    } else {
-      setFeedback(data.error ?? "Não foi possível cancelar.");
+  async function cancel(appointment: Appointment) {
+    if (appointment.recurrence) {
+      setPendingSeriesAction({ appointment, mode: "cancel" });
+      return;
     }
-    setBusy(false);
+    await changeAppointmentState(appointment, "occurrence", false);
   }
 
-  async function remove(id: string) {
-    if (!window.confirm("Excluir este evento permanentemente? Esta ação não pode ser desfeita.")) return;
-    setBusy(true);
-    const response = await fetch(`/api/calendar/appointments/${id}?permanent=true`, { method: "DELETE" });
-    const data = await response.json() as { error?: string };
-    if (response.ok) {
-      await refreshCalendar("Evento excluído permanentemente.");
-    } else {
-      setFeedback(data.error ?? "Não foi possível excluir.");
+  async function remove(appointment: Appointment) {
+    if (appointment.recurrence) {
+      setPendingSeriesAction({ appointment, mode: "delete" });
+      return;
     }
-    setBusy(false);
+    if (!window.confirm("Excluir este evento permanentemente? Esta ação não pode ser desfeita.")) return;
+    await changeAppointmentState(appointment, "occurrence", true);
+  }
+
+  async function changeAppointmentState(
+    appointment: Appointment,
+    scope: "occurrence" | "series",
+    permanent: boolean,
+  ) {
+    setBusy(true);
+    setPendingSeriesAction(null);
+    try {
+      const parameters = new URLSearchParams({ scope });
+      if (permanent) parameters.set("permanent", "true");
+      const response = await fetch(`/api/calendar/appointments/${appointment._id}?${parameters}`, { method: "DELETE" });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? (permanent ? "Não foi possível excluir." : "Não foi possível cancelar."));
+      await refreshCalendar(permanent
+        ? scope === "series" ? "Ocorrência atual e próximas excluídas permanentemente." : "Evento excluído permanentemente."
+        : scope === "series" ? "Ocorrência atual e próximas canceladas." : "Evento cancelado.");
+    } catch (changeError) {
+      setFeedback(changeError instanceof Error ? changeError.message : "Não foi possível alterar o evento.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openAccessEvent(type: "permission" | "blocker", accessEvent?: CalendarAccessEvent) {
@@ -432,12 +479,24 @@ export default function CalendarPage() {
       }
 
     async function openAppointmentWhatsApp(appointment: Appointment) {
-      const popup = window.open("", "_blank");
+      const currentPopup = whatsappWindowRef.current && !whatsappWindowRef.current.closed
+        ? whatsappWindowRef.current
+        : null;
+      const popup = currentPopup ?? window.open("", "oria-calendar-whatsapp");
       if (!popup) {
         setFeedback("O navegador bloqueou a nova aba. Permita pop-ups para abrir o WhatsApp Web.");
         return;
       }
-      popup.opener = null;
+      whatsappWindowRef.current = popup;
+      let openedBlankWindow = false;
+      if (!currentPopup) {
+        try {
+          openedBlankWindow = popup.location.href === "about:blank";
+          if (openedBlankWindow) popup.opener = null;
+        } catch {
+          // A named WhatsApp tab from an earlier page load is already cross-origin.
+        }
+      }
       setFeedback("");
       try {
         let phone = appointment.contactPhone ?? "";
@@ -457,8 +516,12 @@ export default function CalendarPage() {
           throw new Error("O cliente não possui um WhatsApp principal cadastrado.");
         }
         popup.location.href = buildWhatsAppUrl(appointment, settings!, normalizedPhone);
+        popup.focus();
       } catch (error) {
-        popup.close();
+        if (openedBlankWindow) {
+          popup.close();
+          whatsappWindowRef.current = null;
+        }
         setFeedback(error instanceof Error ? error.message : "Não foi possível abrir o WhatsApp Web.");
       }
     }
@@ -602,23 +665,6 @@ export default function CalendarPage() {
     setEventType((current) => current === key ? "" : current);
   }
 
-  const filteredUpcomingAppointments = useMemo(() => {
-    const normalizedQuery = normalizeSearch(deferredUpcomingQuery);
-    return appointments.filter((appointment) => {
-      if (upcomingStatus && !matchesAppointmentStatus(appointment, upcomingStatus)) return false;
-      if (upcomingEventType && appointment.eventType !== upcomingEventType) return false;
-      if (upcomingResourceId && appointment.providerId !== upcomingResourceId) return false;
-      if (!normalizedQuery) return true;
-      return normalizeSearch([
-        appointment.customerName,
-        appointment.contactPhone,
-        appointment.notes,
-        appointment.customTitle,
-        settings ? getEventTypeName(settings, appointment.eventType) : "",
-      ].filter(Boolean).join(" ")).includes(normalizedQuery);
-    });
-  }, [appointments, deferredUpcomingQuery, settings, upcomingEventType, upcomingResourceId, upcomingStatus]);
-
   const visibleCustomerOptions = useMemo(() => {
     const normalizedQuery = normalizeSearch(deferredCustomerQuery);
     const options = customers
@@ -700,7 +746,19 @@ export default function CalendarPage() {
       </section>
       </details>
 
-      <WeekCalendar timezone={settings.timezone} eventTypes={settings.eventTypes} resources={settings.resources} slotDurationMinutes={settings.slotDurationMinutes} refreshKey={calendarRefreshKey} onEditEvent={openEditEvent} />
+      <WeekCalendar
+        timezone={settings.timezone}
+        eventTypes={settings.eventTypes}
+        resources={settings.resources}
+        slotDurationMinutes={settings.slotDurationMinutes}
+        refreshKey={calendarRefreshKey}
+        onEditEvent={openEditEvent}
+        onOpenWhatsApp={openAppointmentWhatsApp}
+        onSetConfirmation={setAppointmentConfirmation}
+        onCancelEvent={cancel}
+        onDeleteEvent={remove}
+        busy={busy}
+      />
 
       {accessOpen && createPortal(<div className="fixed inset-0 z-50 flex justify-end bg-slate-ink/45" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAccessOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="access-event-title" className="h-full w-full max-w-lg overflow-y-auto bg-white p-5 shadow-xl sm:p-7">
@@ -797,6 +855,59 @@ export default function CalendarPage() {
             )}
           </div>
 
+          {editingAppointmentId && repeatEnabled ? (
+            <fieldset className="mt-4 rounded-lg border border-deep-teal/20 bg-deep-teal/5 p-4">
+              <legend className="px-1 text-xs font-semibold text-slate-ink">Alterar evento recorrente</legend>
+              <p className="mb-3 text-xs leading-5 text-stone">Ocorrências passadas sempre são preservadas.</p>
+              <div className="flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-ink">
+                  <input type="radio" name="edit-scope" value="occurrence" checked={editScope === "occurrence"} onChange={() => setEditScope("occurrence")} className="accent-deep-teal" />
+                  Somente esta ocorrência
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-ink">
+                  <input type="radio" name="edit-scope" value="series" checked={editScope === "series"} onChange={() => setEditScope("series")} className="accent-deep-teal" />
+                  Esta e as próximas da série
+                </label>
+              </div>
+            </fieldset>
+          ) : !editingAppointmentId && (
+            <section className="mt-4 rounded-lg border border-mist bg-soft-ivory/60 p-4" aria-labelledby="recurrence-title">
+              <h3 id="recurrence-title" className="sr-only">Recorrência</h3>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-ink">
+                <input type="checkbox" checked={repeatEnabled} onChange={(event) => setRepeatEnabled(event.target.checked)} className="h-4 w-4 accent-deep-teal" />
+                <Repeat2 className="h-4 w-4 text-deep-teal" />
+                Repetir este evento
+              </label>
+              {repeatEnabled && <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="text-xs font-semibold text-slate-ink">Frequência
+                  <select value={repeatFrequency} onChange={(event) => setRepeatFrequency(event.target.value as typeof repeatFrequency)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
+                    <option value="daily">Diária</option>
+                    <option value="weekly">Semanal</option>
+                    <option value="monthly">Mensal</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-ink">A cada
+                  <span className="mt-1.5 flex items-center gap-2">
+                    <input type="number" min={1} max={30} value={repeatInterval} onChange={(event) => setRepeatInterval(Number(event.target.value))} className="min-w-0 flex-1 rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                    <span className="text-xs font-normal text-stone">{repeatFrequency === "daily" ? "dia(s)" : repeatFrequency === "weekly" ? "semana(s)" : "mês(es)"}</span>
+                  </span>
+                </label>
+                <label className="text-xs font-semibold text-slate-ink">Termina por
+                  <select value={repeatEndMode} onChange={(event) => setRepeatEndMode(event.target.value as typeof repeatEndMode)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
+                    <option value="count">Quantidade</option>
+                    <option value="until">Data final</option>
+                  </select>
+                </label>
+                {repeatEndMode === "count" ? <label className="text-xs font-semibold text-slate-ink">Ocorrências
+                  <input type="number" min={2} max={366} value={repeatCount} onChange={(event) => setRepeatCount(Number(event.target.value))} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                </label> : <label className="text-xs font-semibold text-slate-ink">Última ocorrência
+                  <input type="date" min={date} value={repeatUntilDate} onChange={(event) => setRepeatUntilDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                </label>}
+              </div>}
+              {repeatEnabled && <p className="mt-3 text-xs leading-5 text-stone">Todos os horários da série serão validados individualmente contra expediente, permissões, bloqueios e outros eventos antes da criação.</p>}
+            </section>
+          )}
+
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-ink">
               <input type="checkbox" checked={allowOutsideAvailability} onChange={(event) => setAllowOutsideAvailability(event.target.checked)} className="h-4 w-4 accent-deep-teal" />
@@ -827,7 +938,7 @@ export default function CalendarPage() {
 
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" onClick={() => setEventOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Cancelar</button>
-            <button type="button" onClick={saveAppointment} disabled={busy || !eventType || !date || !time || (eventType === "custom" && (!customTitle.trim() || !customResourceId || customDurationMinutes < 5))} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">{busy ? "Salvando..." : editingAppointmentId ? "Salvar alterações" : "Criar evento"}</button>
+            <button type="button" onClick={saveAppointment} disabled={busy || !eventType || !date || !time || (eventType === "custom" && (!customTitle.trim() || !customResourceId || customDurationMinutes < 5)) || (!editingAppointmentId && repeatEnabled && (repeatInterval < 1 || (repeatEndMode === "count" ? repeatCount < 2 : !repeatUntilDate)))} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-40">{busy ? "Salvando..." : editingAppointmentId ? "Salvar alterações" : repeatEnabled ? "Criar série" : "Criar evento"}</button>
           </div>
         </section>
       </div>, document.body)}
@@ -970,70 +1081,31 @@ export default function CalendarPage() {
       </section>
       </div>, document.body)}
 
-      <details open className="rounded-lg border border-mist bg-white">
-        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-ink">
-          Próximos atendimentos <span className="ml-2 text-xs font-normal text-stone">({filteredUpcomingAppointments.length} de {appointments.length})</span>
-        </summary>
-      <section aria-labelledby="upcoming-title" className="border-t border-mist p-5">
-        <h2 id="upcoming-title" className="sr-only">Próximos atendimentos</h2>
-        <div className="mb-4 grid gap-2 lg:grid-cols-[minmax(240px,1fr)_180px_190px_190px]">
-          <label className="relative">
-            <span className="sr-only">Pesquisar próximos atendimentos</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" />
-            <input value={upcomingQuery} onChange={(event) => setUpcomingQuery(event.target.value)} placeholder="Cliente, telefone ou observação" className="w-full rounded-md border border-mist bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-deep-teal" />
-          </label>
-          <select value={upcomingStatus} onChange={(event) => setUpcomingStatus(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por situação">
-            <option value="">Todas as situações</option>
-            <option value="pending">Agendado · confirmar</option>
-            <option value="confirmed">Confirmados</option>
-            <option value="held">Aguardando sinal</option>
-            <option value="completed">Concluídos</option>
-            <option value="cancelled">Cancelados</option>
-          </select>
-          <select value={upcomingEventType} onChange={(event) => setUpcomingEventType(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por tipo">
-            <option value="">Todos os tipos</option>
-            {settings.eventTypes.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
-            <option value="custom">Personalizados</option>
-          </select>
-          <select value={upcomingResourceId} onChange={(event) => setUpcomingResourceId(event.target.value)} className="rounded-md border border-mist bg-white px-3 py-2.5 text-sm outline-none focus:border-deep-teal" aria-label="Filtrar próximos atendimentos por profissional">
-            <option value="">Todos os profissionais</option>
-            {settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}
-          </select>
-        </div>
-        <div className="overflow-x-auto rounded-lg border border-mist bg-white">
-          {filteredUpcomingAppointments.length === 0 ? <p className="px-5 py-12 text-center text-sm text-stone">{appointments.length === 0 ? "Nenhum atendimento nos próximos 60 dias." : "Nenhum atendimento corresponde aos filtros."}</p> : (
-            <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="bg-soft-ivory text-xs font-semibold uppercase text-stone"><tr><th className="px-4 py-3">Data</th><th className="px-4 py-3">Cliente</th><th className="px-4 py-3">Tipo</th><th className="px-4 py-3">Profissional</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Observação</th><th className="px-4 py-3 text-right">Ação</th></tr></thead>
-              <tbody className="divide-y divide-mist">{filteredUpcomingAppointments.map((appointment) => {
-                const pendingConfirmation = appointment.status === "scheduled"
-                  && (appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
-                return (
-                  <tr key={appointment._id}>
-                    <td className="px-4 py-3 font-semibold text-slate-ink">{formatAppointmentDateTime(appointment.startAt, settings.timezone)}</td>
-                    <td className="px-4 py-3 text-slate-ink">{appointment.customerName || "Sem cliente"}</td>
-                    <td className="px-4 py-3 text-stone">{appointment.customTitle || getEventTypeName(settings, appointment.eventType)}</td>
-                    <td className="px-4 py-3 text-stone">{getResourceName(settings, appointment.providerId)}</td>
-                    <td className="px-4 py-3 text-stone">{appointment.status === "held" ? "Aguardando sinal" : pendingConfirmation ? "Agendado · confirmar" : appointment.status === "scheduled" ? "Confirmado" : appointment.status === "cancelled" ? "Cancelado" : "Concluído"}</td>
-                    <td className="px-4 py-3 text-stone">{appointment.notes || "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        {(appointment.customerId || appointment.contactPhone) && <button type="button" onClick={() => void openAppointmentWhatsApp(appointment)} className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline" title="Consultar o telefone atual do cadastro e abrir o WhatsApp Web"><MessageCircle className="h-4 w-4" />WhatsApp</button>}
-                        {pendingConfirmation
-                          ? <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "confirmed")} disabled={busy} className="font-semibold text-deep-teal hover:underline disabled:opacity-50">Confirmar</button>
-                          : appointment.status === "scheduled" && <button type="button" onClick={() => void setAppointmentConfirmation(appointment._id, "pending")} disabled={busy} className="font-semibold text-amber-700 hover:underline disabled:opacity-50">Desconfirmar</button>}
-                        {(appointment.status === "scheduled" || appointment.status === "held") && <button type="button" onClick={() => openEditEvent(appointment)} disabled={busy} className="font-semibold text-deep-teal hover:underline disabled:opacity-50">Editar</button>}
-                        {appointment.status === "scheduled" && <button type="button" onClick={() => cancel(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Cancelar</button>}
-                        <button type="button" onClick={() => void remove(appointment._id)} disabled={busy} className="font-semibold text-burnt-coral hover:underline disabled:opacity-50">Excluir</button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}</tbody>
-            </table>
-          )}
-        </div>
-      </section>
-      </details>
+      {pendingSeriesAction && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-ink/50 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingSeriesAction(null); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="series-action-title" className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase text-deep-teal">Evento recorrente</p>
+                <h2 id="series-action-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">
+                  {pendingSeriesAction.mode === "delete" ? "O que deseja excluir?" : "O que deseja cancelar?"}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setPendingSeriesAction(null)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory" aria-label="Fechar"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-stone">
+              Ocorrências anteriores não serão alteradas.
+              {pendingSeriesAction.mode === "delete" && " A exclusão é permanente e não pode ser desfeita."}
+            </p>
+            <div className="mt-6 grid gap-2">
+              <button type="button" disabled={busy} onClick={() => void changeAppointmentState(pendingSeriesAction.appointment, "occurrence", pendingSeriesAction.mode === "delete")} className="rounded-lg border border-mist px-4 py-3 text-left text-sm font-semibold text-slate-ink hover:border-deep-teal/40 disabled:opacity-50">Somente esta ocorrência</button>
+              <button type="button" disabled={busy} onClick={() => void changeAppointmentState(pendingSeriesAction.appointment, "series", pendingSeriesAction.mode === "delete")} className={`rounded-lg px-4 py-3 text-left text-sm font-semibold text-white disabled:opacity-50 ${pendingSeriesAction.mode === "delete" ? "bg-burnt-coral hover:bg-burnt-coral/90" : "bg-deep-teal hover:bg-forest-teal"}`}>Esta e as próximas ocorrências</button>
+              <button type="button" onClick={() => setPendingSeriesAction(null)} className="mt-1 rounded-lg px-4 py-2 text-sm font-semibold text-stone hover:bg-soft-ivory">Voltar sem alterar</button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      )}
 
       <p className={`text-sm ${feedback.includes("não") || feedback.includes("Falha") ? "text-burnt-coral" : "text-deep-teal"}`} aria-live="polite">{feedback}</p>
     </div>
@@ -1042,18 +1114,6 @@ export default function CalendarPage() {
 
 function formatDateTime(value: string, timezone: string) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: timezone }).format(new Date(value));
-}
-
-function formatAppointmentDateTime(value: string, timezone: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone,
-  }).format(new Date(value));
 }
 
 function buildWhatsAppUrl(appointment: Appointment, settings: Settings, phone: string) {
@@ -1075,19 +1135,6 @@ function buildWhatsAppUrl(appointment: Appointment, settings: Settings, phone: s
     .replaceAll("{tipo}", tipo)
     .replaceAll("{evento}", evento);
   return `https://web.whatsapp.com/send?phone=${phone.replace(/\D/g, "")}&text=${encodeURIComponent(message)}`;
-}
-
-function matchesAppointmentStatus(appointment: Appointment, status: string) {
-  if (!status) return true;
-  if (status === "pending") {
-    return appointment.status === "scheduled"
-      && (appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
-  }
-  if (status === "confirmed") {
-    return appointment.status === "scheduled"
-      && !(appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
-  }
-  return appointment.status === status;
 }
 
 function normalizeSearch(value: string) {
@@ -1136,10 +1183,6 @@ async function requestCalendarData() {
 
 function getEventTypeName(settings: Settings, key?: string) {
   return settings.eventTypes.find((eventType) => eventType.key === key)?.name ?? "Tipo removido";
-}
-
-function getResourceName(settings: Settings, id: string) {
-  return settings.resources.find((resource) => resource.id === id)?.name ?? "Profissional removido";
 }
 
 const defaultResourceIds = new Set(["doctor", "technician"]);
