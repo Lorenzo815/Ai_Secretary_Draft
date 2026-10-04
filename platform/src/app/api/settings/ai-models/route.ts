@@ -12,12 +12,14 @@ import {
 import {
   listVercelLanguageModels,
   listVercelModelEndpoints,
+  listVercelTranscriptionModels,
 } from "@/lib/ai/vercel-models";
 import {
   clearStoredVercelGatewayApiKey,
   saveVercelGatewayApiKey,
 } from "@/lib/ai/provider-credentials";
 import { checkProviderHealth, probeProviderStructuredOutput } from "@/lib/ai/providers/registry";
+import { testVercelAudioTranscription } from "@/lib/whatsapp/audio";
 
 async function authenticate() {
   return getServerSession(authOptions);
@@ -28,15 +30,17 @@ export async function GET(request: Request) {
   try {
     const model = new URL(request.url).searchParams.get("model");
     if (model) return NextResponse.json({ endpoints: await listVercelModelEndpoints(model) });
-    const [configuration, status, models] = await Promise.all([
+    const [configuration, status, models, transcriptionModels] = await Promise.all([
       getAiProviderConfiguration(),
       getAiProviderStatus(),
       listVercelLanguageModels(),
+      listVercelTranscriptionModels(),
     ]);
     return NextResponse.json({
       configuration,
       status,
       models,
+      transcriptionModels,
     });
   } catch (error) {
     return NextResponse.json(
@@ -54,6 +58,7 @@ export async function PUT(request: Request) {
     activeProvider?: AiProvider;
     azurePassword?: string;
     tasks?: Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>;
+    audioTranscription?: { vercelModel?: string };
   };
   try {
     if (input.activeProvider === "azure" && !verifyAzureAccessPassword(input.azurePassword)) {
@@ -64,6 +69,7 @@ export async function PUT(request: Request) {
       activeProvider: input.activeProvider as AiProvider,
       azureAccessAuthorized: input.activeProvider === "azure",
       tasks: input.tasks as Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>,
+      audioTranscription: input.audioTranscription,
       updatedBy: session.user?.email ?? "dashboard",
     });
     return NextResponse.json({ configuration, status: await getAiProviderStatus() });
@@ -94,7 +100,7 @@ export async function POST(request: Request) {
   const input = await request.json() as {
     provider?: AiProvider;
     model?: string;
-    mode?: "connection" | "model" | "capability";
+    mode?: "connection" | "model" | "capability" | "transcription";
     inferenceProvider?: string;
     azurePassword?: string;
   };
@@ -107,8 +113,11 @@ export async function POST(request: Request) {
   const model = input.model?.trim();
   if (!model || model.length > 200) return NextResponse.json({ error: "Modelo inválido." }, { status: 400 });
   const mode = input.mode ?? "connection";
-  if (mode !== "connection" && mode !== "model" && mode !== "capability") {
+  if (mode !== "connection" && mode !== "model" && mode !== "capability" && mode !== "transcription") {
     return NextResponse.json({ error: "Tipo de teste inválido." }, { status: 400 });
+  }
+  if (mode === "transcription" && input.provider !== "vercel") {
+    return NextResponse.json({ error: "A transcrição está configurada para o Vercel AI Gateway." }, { status: 400 });
   }
   const inferenceProvider = input.inferenceProvider?.trim();
   if (inferenceProvider && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(inferenceProvider)) {
@@ -118,6 +127,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Fixe um provedor de inferência para executar um teste determinístico." }, { status: 400 });
   }
   try {
+    if (mode === "transcription") {
+      return NextResponse.json({
+        transcriptionHealth: await testVercelAudioTranscription(model),
+      });
+    }
     if (mode === "capability") {
       return NextResponse.json({
         capability: await probeProviderStructuredOutput(input.provider, model, inferenceProvider),
@@ -141,7 +155,9 @@ export async function POST(request: Request) {
           ? "O provedor recusou o teste por limite de uso ou orçamento. Verifique o budget da chave."
           : status === 404 || code === "model_not_found"
             ? "O modelo selecionado não está disponível para esta conta."
-            : "O provedor não respondeu corretamente ao teste.";
+            : mode === "transcription" && error instanceof Error
+              ? error.message
+              : "O provedor não respondeu corretamente ao teste.";
     return NextResponse.json({
       error: message,
       diagnostic: {

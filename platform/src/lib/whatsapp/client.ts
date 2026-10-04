@@ -5,7 +5,9 @@ import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
 const DEFAULT_GRAPH_VERSION = "v25.0";
 const MAX_ASSISTANT_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_ASSISTANT_AUDIO_BYTES = 25 * 1024 * 1024;
 const ASSISTANT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ASSISTANT_AUDIO_TYPES = new Set(["audio/aac", "audio/amr", "audio/mpeg", "audio/mp4", "audio/ogg", "audio/webm"]);
 
 export interface WhatsAppConfig {
   accessToken: string;
@@ -223,6 +225,11 @@ async function sendPayload(config: WhatsAppConfig, payload: object) {
 }
 
 export async function fetchWhatsAppImageDataUrl(mediaId: string) {
+  const media = await fetchWhatsAppMediaFile(mediaId, "image");
+  return `data:${media.mimeType};base64,${media.bytes.toString("base64")}`;
+}
+
+export async function fetchWhatsAppMediaFile(mediaId: string, type: "image" | "audio") {
   const config = await requireWhatsAppConfig();
   const metadataResponse = await fetch(
     `https://graph.facebook.com/${config.graphVersion}/${encodeURIComponent(mediaId)}`,
@@ -240,11 +247,14 @@ export async function fetchWhatsAppImageDataUrl(mediaId: string) {
   if (!metadataResponse.ok || !metadata.url) {
     throw new Error(`Não foi possível obter a mídia do WhatsApp (HTTP ${metadataResponse.status}).`);
   }
-  if (!metadata.mime_type || !ASSISTANT_IMAGE_TYPES.has(metadata.mime_type)) {
-    throw new Error("O formato da imagem recebida não é suportado pela IA.");
+  const mimeType = metadata.mime_type?.split(";")[0].trim().toLowerCase();
+  const allowedTypes = type === "image" ? ASSISTANT_IMAGE_TYPES : ASSISTANT_AUDIO_TYPES;
+  const maxBytes = type === "image" ? MAX_ASSISTANT_IMAGE_BYTES : MAX_ASSISTANT_AUDIO_BYTES;
+  if (!mimeType || !allowedTypes.has(mimeType)) {
+    throw new Error(`O formato do ${type === "image" ? "arquivo de imagem" : "áudio"} recebido não é suportado.`);
   }
-  if (Number(metadata.file_size) > MAX_ASSISTANT_IMAGE_BYTES) {
-    throw new Error("A imagem recebida excede o limite de 5 MB para processamento.");
+  if (Number(metadata.file_size) > maxBytes) {
+    throw new Error(`O ${type === "image" ? "arquivo de imagem" : "áudio"} recebido excede o limite para processamento.`);
   }
   const mediaResponse = await fetch(metadata.url, {
     headers: { Authorization: `Bearer ${config.accessToken}` },
@@ -255,8 +265,8 @@ export async function fetchWhatsAppImageDataUrl(mediaId: string) {
     throw new Error(`Não foi possível baixar a mídia do WhatsApp (HTTP ${mediaResponse.status}).`);
   }
   const bytes = Buffer.from(await mediaResponse.arrayBuffer());
-  if (bytes.byteLength > MAX_ASSISTANT_IMAGE_BYTES) {
-    throw new Error("A imagem recebida excede o limite de 5 MB para processamento.");
+  if (bytes.byteLength > maxBytes) {
+    throw new Error(`O ${type === "image" ? "arquivo de imagem" : "áudio"} recebido excede o limite para processamento.`);
   }
-  return `data:${metadata.mime_type};base64,${bytes.toString("base64")}`;
+  return { bytes, mimeType };
 }

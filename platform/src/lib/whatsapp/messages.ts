@@ -13,6 +13,7 @@ export interface WhatsAppMediaReference {
   caption?: string;
   filename?: string;
   dataUrl?: string;
+  transcription?: string;
 }
 
 export interface WhatsAppReplyReference {
@@ -70,6 +71,18 @@ export async function updateWhatsAppMessageStatus(metaMessageId: string, status:
   await messages.updateOne(
     { metaMessageId },
     { $set: { status, updatedAt: new Date() } },
+  );
+}
+
+export async function updateWhatsAppMediaTranscription(metaMessageId: string, transcription: string) {
+  await (await getMessagesCollection()).updateOne(
+    { metaMessageId, "media.id": { $exists: true } },
+    {
+      $set: {
+        "media.transcription": transcription.slice(0, 20_000),
+        updatedAt: new Date(),
+      },
+    },
   );
 }
 

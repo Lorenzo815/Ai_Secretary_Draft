@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Pencil, Plus, X } from "lucide-react";
 
 interface EditableCustomer {
   id: string;
   name: string;
+  fullName?: string;
   whatsapp: string;
   relationshipStatus?: "new" | "returning" | "unknown";
   birthDate?: string;
@@ -36,6 +38,7 @@ export default function CustomerFormButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(customer?.name ?? "");
+  const [fullName, setFullName] = useState(customer?.fullName ?? customer?.name ?? "");
   const [whatsapp, setWhatsapp] = useState(customer?.whatsapp ?? "");
   const [relationshipStatus, setRelationshipStatus] = useState(customer?.relationshipStatus ?? "unknown");
   const [birthDate, setBirthDate] = useState(customer?.birthDate ?? "");
@@ -50,18 +53,38 @@ export default function CustomerFormButton({
   const [addressNumber, setAddressNumber] = useState(customer?.address?.number ?? "");
   const [addressComplement, setAddressComplement] = useState(customer?.address?.complement ?? "");
   const [busy, setBusy] = useState(false);
+  const [postalCodeBusy, setPostalCodeBusy] = useState(false);
   const [error, setError] = useState("");
 
   function changePostalCode(value: string) {
     setPostalCode(value);
-    const initialPostalCode = customer?.address?.postalCode.replace(/\D/g, "") ?? "";
-    if (value.replace(/\D/g, "") !== initialPostalCode) {
-      setStreet("");
-      setNeighborhood("");
-      setCity("");
-      setState("");
-      setAddressNumber("");
-      setAddressComplement("");
+  }
+
+  async function lookupPostalCode() {
+    const normalizedPostalCode = postalCode.replace(/\D/g, "");
+    if (normalizedPostalCode.length !== 8) {
+      setError("Informe um CEP com 8 dígitos.");
+      return;
+    }
+    setPostalCodeBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/postal-code/${normalizedPostalCode}`, { cache: "no-store" });
+      const data = await response.json() as {
+        address?: { postalCode: string; street: string; neighborhood: string; city: string; state: string };
+        error?: string;
+      };
+      if (!response.ok || !data.address) throw new Error(data.error ?? "Não foi possível consultar o CEP.");
+      const changedPostalCode = normalizedPostalCode !== (customer?.address?.postalCode.replace(/\D/g, "") ?? "");
+      setPostalCode(data.address.postalCode);
+      setStreet((current) => changedPostalCode || !current.trim() ? data.address!.street : current);
+      setNeighborhood((current) => changedPostalCode || !current.trim() ? data.address!.neighborhood : current);
+      setCity((current) => changedPostalCode || !current.trim() ? data.address!.city : current);
+      setState((current) => changedPostalCode || !current.trim() ? data.address!.state : current);
+    } catch (lookupError) {
+      setError(lookupError instanceof Error ? lookupError.message : "Não foi possível consultar o CEP.");
+    } finally {
+      setPostalCodeBusy(false);
     }
   }
 
@@ -74,6 +97,7 @@ export default function CustomerFormButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
+          ...(customer ? { fullName } : {}),
           whatsapp,
           ...(customer ? {
             relationshipStatus,
@@ -119,9 +143,9 @@ export default function CustomerFormButton({
         {customer ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
         {customer ? "Editar cadastro" : compact ? "Criar cliente" : "Novo cliente"}
       </button>
-      {open && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-slate-ink/45 p-4 py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="customer-form-title" className="w-full max-w-3xl rounded-lg bg-white p-6 shadow-xl">
+      {open && createPortal(
+        <div className="fixed inset-0 z-[60] bg-slate-ink/45 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="customer-form-title" className="h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-lg bg-white p-5 shadow-xl sm:p-7">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 id="customer-form-title" className="font-heading text-lg font-semibold text-slate-ink">{customer ? "Editar cadastro completo" : "Cadastrar cliente"}</h2>
@@ -129,11 +153,12 @@ export default function CustomerFormButton({
               </div>
               <button type="button" onClick={() => setOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-md text-stone hover:bg-soft-ivory" aria-label="Fechar"><X className="h-4 w-4" /></button>
             </div>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div className={`mt-5 grid gap-4 sm:grid-cols-2 ${customer ? "lg:grid-cols-3" : ""}`}>
               <Field label="Nome"><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} className={inputClass} /></Field>
               <Field label="WhatsApp"><input value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} inputMode="tel" placeholder="5511999999999" className={inputClass} /></Field>
               {customer && (
                 <>
+                  <Field label="Nome completo" wide><input value={fullName} onChange={(event) => setFullName(event.target.value)} maxLength={160} className={inputClass} /></Field>
                   <Field label="Tipo de paciente">
                     <select value={relationshipStatus} onChange={(event) => setRelationshipStatus(event.target.value as typeof relationshipStatus)} className={inputClass}>
                       <option value="unknown">Não classificado</option>
@@ -147,10 +172,15 @@ export default function CustomerFormButton({
                   </Field>
                   <Field label="Profissão"><input value={profession} onChange={(event) => setProfession(event.target.value)} maxLength={120} className={inputClass} /></Field>
                   <Field label="Telefones secundários" wide><textarea value={secondaryPhones} onChange={(event) => setSecondaryPhones(event.target.value)} rows={2} placeholder="Separe por vírgula" className={inputClass} /></Field>
-                  <div className="sm:col-span-2 mt-2 border-t border-mist pt-4">
+                  <div className="mt-2 border-t border-mist pt-4 sm:col-span-2 lg:col-span-3">
                     <p className="text-xs font-semibold uppercase text-deep-teal">Endereço</p>
                   </div>
-                  <Field label="CEP"><input value={postalCode} onChange={(event) => changePostalCode(event.target.value)} inputMode="numeric" className={inputClass} /></Field>
+                  <Field label="CEP">
+                    <div className="flex gap-2">
+                      <input value={postalCode} onChange={(event) => changePostalCode(event.target.value)} inputMode="numeric" className={`${inputClass} min-w-0 flex-1`} />
+                      <button type="button" onClick={() => void lookupPostalCode()} disabled={postalCodeBusy || postalCode.replace(/\D/g, "").length !== 8} className="mt-1.5 rounded-lg border border-deep-teal/30 px-3 text-xs font-semibold text-deep-teal disabled:opacity-40">{postalCodeBusy ? "Buscando..." : "Buscar CEP"}</button>
+                    </div>
+                  </Field>
                   <Field label="Número"><input value={addressNumber} onChange={(event) => setAddressNumber(event.target.value)} className={inputClass} /></Field>
                   <Field label="Logradouro"><input value={street} onChange={(event) => setStreet(event.target.value)} className={inputClass} /></Field>
                   <Field label="Bairro"><input value={neighborhood} onChange={(event) => setNeighborhood(event.target.value)} className={inputClass} /></Field>
@@ -166,7 +196,8 @@ export default function CustomerFormButton({
               <button type="button" onClick={() => void save()} disabled={busy || !name.trim() || !whatsapp.trim()} className="rounded-md bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Salvando..." : "Salvar cliente"}</button>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
@@ -175,5 +206,5 @@ export default function CustomerFormButton({
 const inputClass = "mt-1.5 w-full rounded-lg border border-mist px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal";
 
 function Field({ label, wide, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
-  return <label className={`block text-xs font-semibold text-slate-ink ${wide ? "sm:col-span-2" : ""}`}>{label}{children}</label>;
+  return <label className={`block text-xs font-semibold text-slate-ink ${wide ? "sm:col-span-2 lg:col-span-3" : ""}`}>{label}{children}</label>;
 }

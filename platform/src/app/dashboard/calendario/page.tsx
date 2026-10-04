@@ -64,7 +64,7 @@ interface CalendarAccessEvent {
   resourceIds: string[];
 }
 
-interface CustomerOption { id: string; name: string; phone: string }
+interface CustomerOption { id: string; name: string; phone: string; createdAt?: string }
 type CalendarEventType = string;
 
 const dayNames = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
@@ -106,7 +106,10 @@ export default function CalendarPage() {
   const [upcomingStatus, setUpcomingStatus] = useState("");
   const [upcomingEventType, setUpcomingEventType] = useState("");
   const [upcomingResourceId, setUpcomingResourceId] = useState("");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerSort, setCustomerSort] = useState<"recent" | "alphabetical">("recent");
   const deferredUpcomingQuery = useDeferredValue(upcomingQuery);
+  const deferredCustomerQuery = useDeferredValue(customerQuery);
   const backgroundRefreshInFlight = useRef(false);
   const interactionBlocked = useRef(false);
   interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen;
@@ -210,6 +213,7 @@ export default function CalendarPage() {
     );
     setEditingAppointmentId("");
     setCustomerId("");
+    setCustomerQuery("");
     setDate(nextDate);
     setTime(targetTime ?? "");
     setCustomTitle("");
@@ -228,6 +232,7 @@ export default function CalendarPage() {
     if (appointment.status === "cancelled" || appointment.status === "completed") return;
     setEditingAppointmentId(appointment._id);
     setCustomerId(appointment.customerId ?? "");
+    setCustomerQuery("");
     setEventType(appointment.eventType ?? settings?.eventTypes[0]?.key ?? "");
     setCustomTitle(appointment.customTitle ?? "");
     setCustomDurationMinutes(appointment.durationMinutes ?? 30);
@@ -241,9 +246,12 @@ export default function CalendarPage() {
   }, [settings]);
 
   function selectCreatedCustomer(customer: CustomerOption) {
-    setCustomers((current) => [...current.filter((item) => item.id !== customer.id), customer]
-      .sort((first, second) => first.name.localeCompare(second.name, "pt-BR")));
+    setCustomers((current) => [
+      ...current.filter((item) => item.id !== customer.id),
+      { ...customer, createdAt: new Date().toISOString() },
+    ]);
     setCustomerId(customer.id);
+    setCustomerQuery("");
   }
 
   async function saveAppointment() {
@@ -611,6 +619,25 @@ export default function CalendarPage() {
     });
   }, [appointments, deferredUpcomingQuery, settings, upcomingEventType, upcomingResourceId, upcomingStatus]);
 
+  const visibleCustomerOptions = useMemo(() => {
+    const normalizedQuery = normalizeSearch(deferredCustomerQuery);
+    const options = customers
+      .filter((customer) => !normalizedQuery || normalizeSearch(customer.name).includes(normalizedQuery))
+      .sort((first, second) => {
+        if (customerSort === "recent") {
+          const dateDifference = (Date.parse(second.createdAt ?? "") || 0) - (Date.parse(first.createdAt ?? "") || 0);
+          if (dateDifference) return dateDifference;
+        }
+        return first.name.localeCompare(second.name, "pt-BR", { sensitivity: "base" })
+          || first.phone.localeCompare(second.phone);
+      });
+    const selectedCustomer = customerId ? customers.find((customer) => customer.id === customerId) : undefined;
+    if (selectedCustomer && !options.some((customer) => customer.id === selectedCustomer.id)) {
+      options.unshift(selectedCustomer);
+    }
+    return options;
+  }, [customerId, customerSort, customers, deferredCustomerQuery]);
+
   if (!settings) {
     return <p className="py-20 text-center text-sm text-stone">{feedback || "Carregando agenda..."}</p>;
   }
@@ -727,12 +754,24 @@ export default function CalendarPage() {
               {selectedEventResource && <span className="mt-1.5 block font-normal text-stone">{selectedEventResource.name}</span>}
             </label>
             <div>
-              <label className="text-xs font-semibold text-slate-ink">Cliente
-                <select value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
-                  <option value="">Sem cliente</option>
-                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · +{customer.phone}</option>)}
+              <span className="text-xs font-semibold text-slate-ink">Cliente</span>
+              <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <label className="relative">
+                  <span className="sr-only">Pesquisar cliente por nome</span>
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" />
+                  <input value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Pesquisar por nome" className="w-full rounded-lg border border-mist bg-white py-2.5 pl-9 pr-3 text-sm font-normal outline-none focus:border-deep-teal" />
+                </label>
+                <select value={customerSort} onChange={(event) => setCustomerSort(event.target.value as typeof customerSort)} aria-label="Ordenar clientes" className="rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal">
+                  <option value="recent">Recentes</option>
+                  <option value="alphabetical">A–Z</option>
                 </select>
-              </label>
+              </div>
+              <label className="sr-only" htmlFor="calendar-customer">Selecionar cliente</label>
+              <select id="calendar-customer" value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-2 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
+                  <option value="">Sem cliente</option>
+                  {visibleCustomerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · +{customer.phone}</option>)}
+              </select>
+              {customerQuery.trim() && visibleCustomerOptions.length === 0 && <p className="mt-1.5 text-xs text-stone">Nenhum cliente encontrado.</p>}
               <div className="mt-2"><CustomerFormButton compact onCreated={selectCreatedCustomer} /></div>
             </div>
             <label className="text-xs font-semibold text-slate-ink">Data

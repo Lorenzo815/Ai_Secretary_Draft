@@ -238,7 +238,7 @@ export async function listCustomerOptions() {
   const customers = await getCustomersCollection();
   return customers.find(
     {},
-    { projection: { name: 1, phones: 1 } },
+    { projection: { name: 1, phones: 1, createdAt: 1 } },
   ).sort({ name: 1 }).toArray();
 }
 
@@ -288,6 +288,7 @@ export async function createCustomer(input: { name: string; whatsapp: string }) 
 
 export interface AdminCustomerUpdateInput {
   name: string;
+  fullName?: string;
   whatsapp: string;
   relationshipStatus?: CustomerRelationshipStatus | null;
   birthDate?: string;
@@ -328,7 +329,10 @@ export async function updateCustomer(id: string, input: AdminCustomerUpdateInput
     { kind: "whatsapp_phone", value: phone, provider: "whatsapp" },
   ];
   const now = new Date();
-  const profile = { ...current.profile, fullName: name, updatedAt: now };
+  const profile = { ...current.profile, updatedAt: now };
+  const fullName = input.fullName === undefined ? name : input.fullName.trim().slice(0, 160);
+  if (fullName) profile.fullName = fullName;
+  else delete profile.fullName;
   if (input.birthDate !== undefined) {
     if (input.birthDate && !isValidBirthDate(input.birthDate)) {
       throw new CustomerProfileValidationError("A data de nascimento deve ser válida e usar AAAA-MM-DD.");
@@ -590,7 +594,7 @@ export async function ensureCustomerIndexes() {
   ]);
 }
 
-async function resolvePostalCode(value: string): Promise<CustomerAddress> {
+export async function resolvePostalCode(value: string): Promise<CustomerAddress> {
   const postalCode = normalizePostalCode(value);
   if (postalCode.length !== 8) throw new CustomerProfileValidationError("O CEP deve conter 8 dígitos.");
   let response: Response;

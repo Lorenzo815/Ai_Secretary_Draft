@@ -49,6 +49,7 @@ export function buildAgentMessages(input: {
         mimeType: message.media.mimeType,
         caption: message.media.caption,
         filename: message.media.filename,
+        transcription: message.media.transcription,
         attachedToPrompt: Boolean(message.media.dataUrl),
       },
     } : {}),
@@ -129,6 +130,7 @@ ${toolInstructions || "Nenhuma ferramenta habilitada."}
 
 REGRAS DE EXECUÇÃO:
 - recentMessages é a fonte autoritativa do diálogo. previousSummary é somente apoio.
+- Em mensagens de áudio, use media.transcription como o conteúdo falado. Se a transcrição não estiver disponível, não invente o conteúdo: peça brevemente ao cliente para enviar em texto ou reenviar o áudio.
 - runtime contém fontes autoritativas carregadas pelo servidor e o estado atual deste job.
 - Responda primeiro à intenção da mensagem mais recente. Uma pergunta pendente ou proposta anterior não autoriza ignorar uma nova pergunta nem repetir opções que o cliente não pediu novamente.
 - Antes de perguntar, verifique recentMessages, runtime e toolHistory. Nunca peça novamente algo que o cliente já informou explicitamente; se faltar apenas persistência, use a ferramenta adequada.

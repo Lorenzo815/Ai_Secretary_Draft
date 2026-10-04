@@ -3,7 +3,8 @@ import "server-only";
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { fetchWhatsAppImageDataUrl } from "../whatsapp/client";
-import { listWhatsAppMessagesForAssistant } from "../whatsapp/messages";
+import { fetchAndTranscribeWhatsAppAudio } from "../whatsapp/audio";
+import { listWhatsAppMessagesForAssistant, updateWhatsAppMediaTranscription } from "../whatsapp/messages";
 
 interface ConversationStateDocument {
   _id: ObjectId;
@@ -38,6 +39,26 @@ export async function loadAssistantContext(customerId: ObjectId, messageLimit: n
       message.media!.dataUrl = await fetchWhatsAppImageDataUrl(message.media!.id);
     } catch (error) {
       console.error("WhatsApp image could not be loaded for the assistant", {
+        mediaId: message.media!.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }));
+  const recentAudios = messages
+    .filter((message) => (
+      message.direction === "inbound"
+      && message.type === "audio"
+      && message.media?.id
+      && !message.media.transcription
+    ))
+    .slice(-3);
+  await Promise.all(recentAudios.map(async (message) => {
+    try {
+      const transcription = await fetchAndTranscribeWhatsAppAudio(message.media!.id);
+      message.media!.transcription = transcription;
+      await updateWhatsAppMediaTranscription(message.metaMessageId, transcription);
+    } catch (error) {
+      console.error("WhatsApp audio could not be transcribed for the assistant", {
         mediaId: message.media!.id,
         error: error instanceof Error ? error.message : String(error),
       });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listVercelLanguageModels, listVercelModelEndpoints } from "./vercel-models";
+import { listVercelLanguageModels, listVercelModelEndpoints, listVercelTranscriptionModels } from "./vercel-models";
 
 describe("Vercel model catalog", () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -75,6 +75,38 @@ describe("Vercel model catalog", () => {
         zeroDataRetention: true,
       }),
     ]);
+  });
+
+  it("lists only transcription models for audio jobs", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [
+        {
+          id: "openai/gpt-4o-mini-transcribe",
+          name: "GPT-4o mini Transcribe",
+          owned_by: "openai",
+          description: "Audio transcription",
+          type: "transcription",
+          supported_specifications: ["v3", "v4"],
+          modalities: { input: ["audio"], output: ["text"] },
+          pricing: { transcription_duration_cost_per_second: "0.00005" },
+        },
+        {
+          id: "openai/gpt-5.4-mini",
+          name: "GPT 5.4 Mini",
+          type: "language",
+          modalities: { input: ["text"], output: ["text"] },
+        },
+      ] }),
+    }));
+
+    await expect(listVercelTranscriptionModels()).resolves.toEqual([{
+      id: "openai/gpt-4o-mini-transcribe",
+      name: "GPT-4o mini Transcribe",
+      provider: "openai",
+      description: "Audio transcription",
+      pricePerMinute: 0.003,
+    }]);
   });
 
 });

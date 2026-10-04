@@ -25,6 +25,7 @@ interface WebhookMessage {
   interactive?: { button_reply?: { title?: string }; list_reply?: { title?: string } };
   context?: { id?: string; from?: string };
   image?: { id?: string; mime_type?: string; sha256?: string; caption?: string };
+  audio?: { id?: string; mime_type?: string; sha256?: string; voice?: boolean };
   video?: { id?: string; mime_type?: string; sha256?: string; caption?: string };
   document?: { id?: string; mime_type?: string; sha256?: string; caption?: string; filename?: string };
   reaction?: { emoji?: string };
@@ -168,13 +169,13 @@ function getMessageBody(message: WebhookMessage) {
 }
 
 function getMessageMedia(message: WebhookMessage) {
-  const media = message.image ?? message.video ?? message.document;
+  const media = message.image ?? message.audio ?? message.video ?? message.document;
   if (!media?.id) return null;
   return {
     id: media.id,
     ...(media.mime_type ? { mimeType: media.mime_type } : {}),
     ...(media.sha256 ? { sha256: media.sha256 } : {}),
-    ...(media.caption ? { caption: media.caption } : {}),
+    ...("caption" in media && media.caption ? { caption: media.caption } : {}),
     ...(message.document?.filename ? { filename: message.document.filename } : {}),
   };
 }

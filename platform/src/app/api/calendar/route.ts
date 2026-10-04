@@ -90,6 +90,7 @@ export async function GET(request: NextRequest) {
       id: customer._id.toString(),
       name: customer.name,
       phone: customer.phones[0] ?? "",
+      createdAt: customer.createdAt?.toISOString() ?? "",
     })),
   });
 }

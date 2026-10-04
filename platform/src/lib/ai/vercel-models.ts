@@ -32,6 +32,14 @@ export interface VercelLanguageModel {
   suitabilityIndex: number;
 }
 
+export interface VercelTranscriptionModel {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  pricePerMinute: number | null;
+}
+
 interface CatalogModel {
   id?: unknown;
   name?: unknown;
@@ -42,21 +50,19 @@ interface CatalogModel {
   max_tokens?: unknown;
   tags?: unknown;
   supported_parameters?: unknown;
+  supported_specifications?: unknown;
   modalities?: { input?: unknown; output?: unknown };
-  pricing?: { input?: unknown; output?: unknown; input_cache_read?: unknown; input_cache_write?: unknown };
+  pricing?: {
+    input?: unknown;
+    output?: unknown;
+    input_cache_read?: unknown;
+    input_cache_write?: unknown;
+    transcription_duration_cost_per_second?: unknown;
+  };
 }
 
 export async function listVercelLanguageModels(): Promise<VercelLanguageModel[]> {
-  const response = await fetch(MODELS_URL, {
-    cache: "force-cache",
-    next: { revalidate: 3_600 },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`O catálogo da Vercel respondeu HTTP ${response.status}.`);
-  const result = await response.json() as { data?: CatalogModel[] };
-  if (!Array.isArray(result.data)) throw new Error("O catálogo da Vercel retornou um formato inválido.");
-
-  return result.data
+  return (await fetchVercelCatalog())
     .filter((model) => model.type === "language" && typeof model.id === "string" && outputsText(model))
     .map((model) => {
       const tags = stringArray(model.tags);
@@ -96,9 +102,44 @@ export async function listVercelLanguageModels(): Promise<VercelLanguageModel[]>
     .sort((left, right) => left.provider.localeCompare(right.provider) || left.name.localeCompare(right.name));
 }
 
+export async function listVercelTranscriptionModels(): Promise<VercelTranscriptionModel[]> {
+  return (await fetchVercelCatalog())
+    .filter((model) => (
+      model.type === "transcription"
+      && typeof model.id === "string"
+      && inputsAudio(model)
+      && stringArray(model.modalities?.output).includes("text")
+      && stringArray(model.supported_specifications).includes("v4")
+    ))
+    .map((model) => ({
+      id: model.id as string,
+      name: typeof model.name === "string" && model.name.trim() ? model.name : model.id as string,
+      provider: typeof model.owned_by === "string" ? model.owned_by : (model.id as string).split("/")[0],
+      description: typeof model.description === "string" ? model.description.slice(0, 500) : "",
+      pricePerMinute: pricePerMinute(model.pricing?.transcription_duration_cost_per_second),
+    }))
+    .sort((left, right) => left.provider.localeCompare(right.provider) || left.name.localeCompare(right.name));
+}
+
+async function fetchVercelCatalog() {
+  const response = await fetch(MODELS_URL, {
+    cache: "force-cache",
+    next: { revalidate: 3_600 },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`O catálogo da Vercel respondeu HTTP ${response.status}.`);
+  const result = await response.json() as { data?: CatalogModel[] };
+  if (!Array.isArray(result.data)) throw new Error("O catálogo da Vercel retornou um formato inválido.");
+  return result.data;
+}
+
 function outputsText(model: CatalogModel) {
   const outputs = model.modalities?.output;
   return !Array.isArray(outputs) || outputs.includes("text");
+}
+
+function inputsAudio(model: CatalogModel) {
+  return stringArray(model.modalities?.input).includes("audio");
 }
 
 function stringArray(value: unknown) {
@@ -113,6 +154,11 @@ function finiteNumber(value: unknown) {
 function pricePerMillion(value: unknown) {
   const perToken = finiteNumber(value);
   return perToken === null ? null : Number((perToken * 1_000_000).toFixed(6));
+}
+
+function pricePerMinute(value: unknown) {
+  const perSecond = finiteNumber(value);
+  return perSecond === null ? null : Number((perSecond * 60).toFixed(8));
 }
 
 function calculateSuitabilityIndex(input: {

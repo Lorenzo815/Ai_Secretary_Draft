@@ -25,6 +25,7 @@ export interface AiProviderConfigurationDocument {
   preferredProvider?: AiProvider;
   azureAccessAuthorizedAt?: Date;
   tasks: Record<AiTaskKey, { vercelModel: string; vercelProvider: string; azureModel: AzureModel }>;
+  audioTranscription: { vercelModel: string };
   updatedAt: Date;
   updatedBy: string;
 }
@@ -37,6 +38,7 @@ const DEFAULT_CONFIGURATION: AiProviderConfigurationDocument = {
     customer_agent: { vercelModel: "openai/gpt-5.4-mini", vercelProvider: VERCEL_AUTO_PROVIDER, azureModel: "gpt-5.4-mini" },
     lead_qualification: { vercelModel: "openai/gpt-5.4-mini", vercelProvider: VERCEL_AUTO_PROVIDER, azureModel: "gpt-5.4-mini" },
   },
+  audioTranscription: { vercelModel: "openai/gpt-4o-mini-transcribe" },
   updatedAt: new Date(0),
   updatedBy: "system",
 };
@@ -59,6 +61,7 @@ export async function updateAiProviderConfiguration(input: {
   activeProvider: AiProvider;
   azureAccessAuthorized?: boolean;
   tasks: Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>;
+  audioTranscription?: { vercelModel?: string };
   updatedBy: string;
 }) {
   if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 1) {
@@ -85,12 +88,21 @@ export async function updateAiProviderConfiguration(input: {
     }
     return [taskKey, { vercelModel, vercelProvider, azureModel: task.azureModel }];
   })) as AiProviderConfigurationDocument["tasks"];
+  const current = await getAiProviderConfiguration();
+  const transcriptionModel = (
+    input.audioTranscription?.vercelModel
+    ?? current.audioTranscription.vercelModel
+  ).trim();
+  if (!transcriptionModel || transcriptionModel.length > 200 || !transcriptionModel.includes("/") || /\s/.test(transcriptionModel)) {
+    throw new Error("O modelo Vercel para transcrição de áudio é inválido.");
+  }
   const next: AiProviderConfigurationDocument = {
     _id: "active",
     revision: input.expectedRevision + 1,
     activeProvider: input.activeProvider,
     ...(input.activeProvider === "azure" ? { azureAccessAuthorizedAt: new Date() } : {}),
     tasks: nextTasks,
+    audioTranscription: { vercelModel: transcriptionModel },
     updatedAt: new Date(),
     updatedBy: input.updatedBy,
   };
@@ -131,6 +143,10 @@ function normalizeConfiguration(value: AiProviderConfigurationDocument): AiProvi
     tasks: {
       customer_agent: { ...DEFAULT_CONFIGURATION.tasks.customer_agent, ...value.tasks?.customer_agent },
       lead_qualification: { ...DEFAULT_CONFIGURATION.tasks.lead_qualification, ...value.tasks?.lead_qualification },
+    },
+    audioTranscription: {
+      ...DEFAULT_CONFIGURATION.audioTranscription,
+      ...value.audioTranscription,
     },
   };
 }

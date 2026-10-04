@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { Check, CheckCheck, CircleAlert, FileText, ImageIcon, MessageSquareText, SendHorizontal, Video } from "lucide-react";
+import { AudioLines, Check, CheckCheck, CircleAlert, FileText, ImageIcon, MessageSquareText, SendHorizontal, Video } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
 import WhatsAppTemplateComposer from "./whatsapp-template-composer";
@@ -18,6 +18,7 @@ interface ConversationMessage {
     mimeType?: string;
     caption?: string;
     filename?: string;
+    transcription?: string;
   };
   replyTo?: {
     body?: string;
@@ -147,7 +148,7 @@ export default function WhatsAppConversation({
             >
               {message.replyTo && <QuotedMessage replyTo={message.replyTo} outbound={message.direction === "outbound"} />}
               {message.media && <MessageMedia message={message} />}
-              {message.body && message.body !== message.media?.filename && (
+              {message.body && message.body !== message.media?.filename && message.body !== `[${message.type}]` && (
                 <p className={`${message.media || message.replyTo ? "mt-2" : ""} whitespace-pre-wrap break-words text-sm leading-5`}>{message.body}</p>
               )}
               {message.type === "template" && <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-white/70"><FileText className="size-3" />{message.templateName ?? "Modelo aprovado"}</p>}
@@ -228,6 +229,22 @@ function MessageMedia({ message }: { message: ConversationMessage }) {
   if (message.type === "image") {
     return <ConversationImage message={message} />;
   }
+  if (message.type === "audio") {
+    return (
+      <div className="min-w-56">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold"><AudioLines className="size-4" />Áudio</div>
+        <audio controls preload="metadata" className="h-10 w-full max-w-80" src={`/api/whatsapp/media/${encodeURIComponent(message.messageId)}`}>
+          Seu navegador não oferece suporte à reprodução de áudio.
+        </audio>
+        {message.media?.transcription && (
+          <details className="mt-2 text-xs">
+            <summary className="cursor-pointer font-semibold">Ver transcrição</summary>
+            <p className="mt-1 whitespace-pre-wrap leading-5 opacity-80">{message.media.transcription}</p>
+          </details>
+        )}
+      </div>
+    );
+  }
   const Icon = message.type === "video" ? Video : message.type === "image" ? ImageIcon : FileText;
   return (
     <div className="flex min-w-52 items-center gap-2.5 rounded-md bg-black/5 px-3 py-2.5">
@@ -267,6 +284,7 @@ function ConversationImage({ message }: { message: ConversationMessage }) {
 
 function getMessageTypeLabel(type?: string) {
   if (type === "image") return "Imagem";
+  if (type === "audio") return "Áudio";
   if (type === "video") return "Vídeo";
   if (type === "document") return "Documento";
   return "Conteúdo não disponível";

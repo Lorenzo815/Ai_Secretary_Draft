@@ -42,6 +42,7 @@ export async function PATCH(
     const { id } = await params;
     const customer = await updateCustomer(id, {
       name: input.name,
+      fullName: optionalString(input.fullName),
       whatsapp: input.whatsapp,
       relationshipStatus: input.relationshipStatus === "new" || input.relationshipStatus === "returning"
         ? input.relationshipStatus

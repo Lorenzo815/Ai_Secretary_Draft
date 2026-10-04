@@ -164,6 +164,40 @@ describe("assistant commercial conduct", () => {
     expect(text).not.toContain("data:image/jpeg");
   });
 
+  it("includes an audio transcription in the trusted conversation payload", () => {
+    const messages = buildAgentMessages({
+      configuration: createDefaultAgentConfiguration(),
+      runtime: {} as Parameters<typeof buildAgentMessages>[0]["runtime"],
+      previousSummary: "Sem contexto anterior.",
+      toolHistory: [],
+      finalIteration: false,
+      messages: [{
+        _id: new ObjectId(),
+        metaMessageId: "wamid.audio",
+        customerId: new ObjectId(),
+        contactPhone: "5511999999999",
+        direction: "inbound",
+        type: "audio",
+        body: "[audio]",
+        status: "received",
+        timestamp: new Date("2026-10-04T12:00:00Z"),
+        updatedAt: new Date("2026-10-04T12:00:00Z"),
+        media: {
+          id: "audio-123",
+          mimeType: "audio/ogg",
+          transcription: "Gostaria de marcar uma consulta.",
+        },
+      }],
+    });
+
+    const userMessage = messages[2];
+    const text = Array.isArray(userMessage.content)
+      ? userMessage.content.find((part) => part.type === "text")?.text
+      : "";
+    expect(text).toContain("Gostaria de marcar uma consulta.");
+    expect(text).toContain("\"type\":\"audio\"");
+  });
+
   it("instructs the model to answer event catalog questions from live runtime data", () => {
     const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
 

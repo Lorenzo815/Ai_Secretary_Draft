@@ -80,3 +80,14 @@ npm run lint
 npm exec tsc -- --noEmit
 npm run build
 ```
+# Transcrição de áudio do WhatsApp
+
+Para que áudios recebidos pelo WhatsApp sejam transcritos para a IA, selecione um
+modelo em **Configurações do sistema → Modelos de IA → Transcrição de áudios**.
+A lista é carregada do catálogo do Vercel AI Gateway e usa a mesma credencial
+Vercel configurada nessa página. O modelo padrão é
+`openai/gpt-4o-mini-transcribe`.
+
+O áudio permanece salvo e reproduzível no histórico quando a transcrição não
+está disponível; nesse caso, a IA não infere o conteúdo e solicita uma mensagem
+em texto.

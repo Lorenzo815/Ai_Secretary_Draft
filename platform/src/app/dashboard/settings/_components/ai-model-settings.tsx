@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useDeferredValue, useEffect, useState } from "react";
-import { Bot, BrainCircuit, Check, CheckCircle2, ChevronDown, CircleAlert, KeyRound, LoaderCircle, RefreshCw, Save, Search, Trash2 } from "lucide-react";
+import { AudioLines, Bot, BrainCircuit, Check, CheckCircle2, ChevronDown, CircleAlert, KeyRound, LoaderCircle, RefreshCw, Save, Search, Trash2 } from "lucide-react";
 
 type Provider = "vercel" | "azure";
 type TaskKey = "customer_agent" | "lead_qualification";
@@ -11,6 +11,7 @@ interface Configuration {
   revision: number;
   activeProvider: Provider;
   tasks: Record<TaskKey, { vercelModel: string; vercelProvider: string; azureModel: AzureModel }>;
+  audioTranscription: { vercelModel: string };
 }
 
 interface ModelEndpoint {
@@ -39,6 +40,14 @@ interface CatalogModel {
   suitabilityIndex: number;
 }
 
+interface TranscriptionModel {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  pricePerMinute: number | null;
+}
+
 interface ApiResult {
   configuration?: Configuration;
   status?: {
@@ -51,9 +60,11 @@ interface ApiResult {
     credentialKind: "api_key" | "oidc" | "unknown" | null;
   };
   models?: CatalogModel[];
+  transcriptionModels?: TranscriptionModel[];
   endpoints?: ModelEndpoint[];
   health?: { provider: Provider; model: string; mode: "connection" | "model"; inferenceProvider: string | null; durationMs: number; checkedAt: string };
   capability?: { provider: Provider; model: string; inferenceProvider: string | null; mode: "json_schema" | "tool_call" | "unsupported"; durationMs: number; checkedAt: string };
+  transcriptionHealth?: { model: string; durationMs: number; audioDurationSeconds: number; checkedAt: string };
   diagnostic?: { upstreamStatus: number | null; code: string | null; type: string | null; requestId: string | null };
   error?: string;
 }
@@ -69,12 +80,14 @@ export default function AiModelSettings() {
   const [baseline, setBaseline] = useState("");
   const [status, setStatus] = useState<ApiResult["status"]>();
   const [models, setModels] = useState<CatalogModel[]>([]);
+  const [transcriptionModels, setTranscriptionModels] = useState<TranscriptionModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [azurePassword, setAzurePassword] = useState("");
   const [savingCredential, setSavingCredential] = useState(false);
   const [health, setHealth] = useState<{ state: "idle" | "checking" | "working" | "failed"; text: string }>({ state: "idle", text: "Ainda não testado." });
+  const [transcriptionHealth, setTranscriptionHealth] = useState<{ state: "idle" | "checking" | "working" | "failed"; text: string }>({ state: "idle", text: "Ainda não testado." });
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const dirty = Boolean(configuration && JSON.stringify(configuration) !== baseline);
   const healthProvider = configuration?.activeProvider;
@@ -91,6 +104,7 @@ export default function AiModelSettings() {
         setBaseline(JSON.stringify(result.configuration));
         setStatus(result.status);
         setModels(result.models ?? []);
+        setTranscriptionModels(result.transcriptionModels ?? []);
       })
       .catch((error) => active && setMessage({ tone: "error", text: error instanceof Error ? error.message : "Não foi possível carregar os modelos." }))
       .finally(() => active && setLoading(false));
@@ -129,6 +143,7 @@ export default function AiModelSettings() {
           activeProvider: configuration.activeProvider,
           azurePassword: configuration.activeProvider === "azure" ? azurePassword : undefined,
           tasks: configuration.tasks,
+          audioTranscription: configuration.audioTranscription,
         }),
       });
       const result = await response.json() as ApiResult;
@@ -216,12 +231,51 @@ export default function AiModelSettings() {
     setMessage(null);
   }
 
+  function setAudioTranscriptionModel(value: string) {
+    setConfiguration((current) => current ? {
+      ...current,
+      audioTranscription: { vercelModel: value },
+    } : current);
+    setMessage(null);
+    setTranscriptionHealth({ state: "idle", text: "Ainda não testado." });
+  }
+
+  async function testAudioTranscription() {
+    if (!configuration) return;
+    setTranscriptionHealth({ state: "checking", text: "Enviando áudio de teste..." });
+    try {
+      const response = await fetch("/api/settings/ai-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "vercel",
+          model: configuration.audioTranscription.vercelModel,
+          mode: "transcription",
+        }),
+      });
+      const result = await response.json() as ApiResult;
+      if (!response.ok || !result.transcriptionHealth) {
+        throw new Error(result.error ?? "O teste de transcrição falhou.");
+      }
+      setTranscriptionHealth({
+        state: "working",
+        text: `Áudio processado · ${result.transcriptionHealth.durationMs} ms · ${result.transcriptionHealth.audioDurationSeconds.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} s`,
+      });
+    } catch (error) {
+      setTranscriptionHealth({
+        state: "failed",
+        text: error instanceof Error ? error.message : "O teste de transcrição falhou.",
+      });
+    }
+  }
+
   if (loading) return <div className="flex min-h-44 items-center justify-center rounded-lg border border-mist bg-white text-sm font-medium text-stone"><LoaderCircle className="mr-2 h-4 w-4 animate-spin" />Consultando catálogo de modelos...</div>;
   if (!configuration || !status) return <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-4 text-sm font-medium text-red-700">{message?.text ?? "Configuração de modelos indisponível."}</div>;
 
   const selectedProvider = configuration.activeProvider;
   const selectedModel = selectedProvider === "vercel" ? configuration.tasks.customer_agent.vercelModel : configuration.tasks.customer_agent.azureModel;
   const selectedInferenceProvider = configuration.tasks.customer_agent.vercelProvider;
+  const selectedTranscriptionModel = transcriptionModels.find((model) => model.id === configuration.audioTranscription.vercelModel);
 
   return <form onSubmit={save} className="overflow-hidden rounded-lg border border-mist bg-white shadow-sm" data-auto-refresh-dirty={dirty || saving ? "true" : undefined}>
     <div className="grid gap-5 border-b border-mist p-5 sm:p-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
@@ -265,6 +319,25 @@ export default function AiModelSettings() {
 
     <div className="divide-y divide-mist">
       {TASKS.map((task) => <TaskModelRow key={task.key} task={task} values={configuration.tasks[task.key]} models={models} onChange={(field, value) => setTaskModel(task.key, field, value)} />)}
+      <section aria-labelledby="audio-transcription-title" className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(190px,0.7fr)_minmax(0,1.3fr)]">
+        <div className="flex items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warm-sand text-deep-teal"><AudioLines className="h-4 w-4" /></span><div><h4 id="audio-transcription-title" className="font-heading text-sm font-semibold text-slate-ink">Transcrição de áudios</h4><p className="mt-1 text-xs leading-5 text-stone">Converte mensagens de voz do WhatsApp em texto antes do atendimento da IA.</p></div></div>
+        <div>
+          <label className="text-xs font-semibold text-slate-ink">Modelo no Vercel AI Gateway
+            <select value={configuration.audioTranscription.vercelModel} onChange={(event) => setAudioTranscriptionModel(event.target.value)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
+              {!transcriptionModels.some((model) => model.id === configuration.audioTranscription.vercelModel) && <option value={configuration.audioTranscription.vercelModel}>{configuration.audioTranscription.vercelModel}</option>}
+              {transcriptionModels.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.provider} · {formatAudioPrice(model.pricePerMinute)}/min</option>)}
+            </select>
+          </label>
+          {selectedTranscriptionModel
+            ? <div className="mt-2 rounded-md bg-pearl px-3 py-2.5 text-[11px] font-normal leading-4 text-stone"><div className="flex flex-wrap justify-between gap-2"><strong className="text-slate-ink">{selectedTranscriptionModel.id}</strong><span><strong className="text-slate-ink">Preço:</strong> {formatAudioPrice(selectedTranscriptionModel.pricePerMinute)} por minuto</span></div>{selectedTranscriptionModel.description && <p className="mt-1">{selectedTranscriptionModel.description}</p>}</div>
+            : <p className="mt-2 text-[11px] text-stone">Metadados e preços indisponíveis para o modelo salvo.</p>}
+          <div className={`mt-3 flex flex-col gap-2 rounded-md px-3 py-2.5 text-xs font-medium sm:flex-row sm:items-center sm:justify-between ${transcriptionHealth.state === "working" ? "bg-emerald-50 text-emerald-700" : transcriptionHealth.state === "failed" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>
+            <span className="flex items-start gap-2">{transcriptionHealth.state === "checking" ? <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin" /> : transcriptionHealth.state === "working" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />}{transcriptionHealth.text}</span>
+            <button type="button" onClick={() => void testAudioTranscription()} disabled={transcriptionHealth.state === "checking"} className="inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-current px-3 font-semibold disabled:opacity-50"><RefreshCw className="h-3.5 w-3.5" />Testar áudio</button>
+          </div>
+          <p className="mt-2 text-[11px] font-normal leading-4 text-stone">O teste envia um WAV válido de 1 segundo, sem fala, para validar credencial, upload, roteamento e processamento no endpoint selecionado.</p>
+        </div>
+      </section>
     </div>
 
     <div className="flex flex-col gap-3 border-t border-mist bg-pearl/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -439,4 +512,8 @@ function formatPercent(value: number | null) {
 
 function formatPrice(value: number | null) {
   return value === null ? "Não informado" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(value);
+}
+
+function formatAudioPrice(value: number | null) {
+  return value === null ? "Não informado" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", maximumFractionDigits: 6 }).format(value);
 }

@@ -171,4 +171,49 @@ describe("WhatsApp webhook isolation", () => {
     }));
     expect(result.processingRequests).toBe(1);
   });
+
+  it("preserves WhatsApp voice-message metadata and triggers the agent", async () => {
+    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    const customerId = { toString: () => "customer-1" };
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+
+    const result = await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{
+        changes: [{
+          field: "messages",
+          value: {
+            metadata: { phone_number_id: "1111111111" },
+            messages: [{
+              id: "wamid.audio",
+              from: "5511999999999",
+              type: "audio",
+              audio: {
+                id: "audio-123",
+                mime_type: "audio/ogg; codecs=opus",
+                sha256: "audio-hash",
+                voice: true,
+              },
+            }],
+          },
+        }],
+      }],
+    }));
+
+    expect(saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "audio",
+      body: "[audio]",
+      media: {
+        id: "audio-123",
+        mimeType: "audio/ogg; codecs=opus",
+        sha256: "audio-hash",
+      },
+    }));
+    expect(emitAutomationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message.received", customerId }),
+      { immediate: true },
+    );
+    expect(result.processingRequests).toBe(1);
+  });
 });

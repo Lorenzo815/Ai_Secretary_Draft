@@ -18,7 +18,7 @@ vi.mock("./provider-credentials", () => ({
   getVercelGatewayCredentialStatus: vi.fn(),
 }));
 
-import { updateAiProviderConfiguration } from "./provider-config";
+import { getAiProviderConfiguration, updateAiProviderConfiguration } from "./provider-config";
 import { resolveAiModel } from "./routing";
 
 const stored = {
@@ -62,6 +62,30 @@ describe("AI provider configuration", () => {
       selectedProvider: "vercel",
       credential: null,
     });
+  });
+
+  it("normalizes legacy documents with the default Vercel transcription model", async () => {
+    await expect(getAiProviderConfiguration()).resolves.toMatchObject({
+      audioTranscription: { vercelModel: "openai/gpt-4o-mini-transcribe" },
+    });
+  });
+
+  it("stores the Vercel transcription model with the model configuration", async () => {
+    await updateAiProviderConfiguration({
+      expectedRevision: 2,
+      activeProvider: "vercel",
+      tasks: stored.tasks,
+      audioTranscription: { vercelModel: "google/gemini-3.5-transcribe" },
+      updatedBy: "admin@example.com",
+    });
+
+    expect(replaceOne).toHaveBeenCalledWith(
+      { _id: "active", revision: 2 },
+      expect.objectContaining({
+        revision: 3,
+        audioTranscription: { vercelModel: "google/gemini-3.5-transcribe" },
+      }),
+    );
   });
 
   it("rejects Azure deployments outside the allowlist", async () => {

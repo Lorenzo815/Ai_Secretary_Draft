@@ -286,6 +286,7 @@ describe("updateCustomerProfile address updates", () => {
 
     await updateCustomer(customerId.toString(), {
       name: "Nome atualizado",
+      fullName: "Nome Completo Atualizado",
       whatsapp: "(11) 97777-7777",
       relationshipStatus: null,
       birthDate: "",
@@ -299,6 +300,7 @@ describe("updateCustomerProfile address updates", () => {
       { $set: { name: string; phones: string[]; profile: Record<string, unknown> }; $unset: { relationship: string } },
     ];
     expect(update.$set.name).toBe("Nome atualizado");
+    expect(update.$set.profile).toMatchObject({ fullName: "Nome Completo Atualizado" });
     expect(update.$set.phones).toEqual(["5511977777777", "5511966666666"]);
     expect(update.$set.profile).not.toHaveProperty("birthDate");
     expect(update.$set.profile).not.toHaveProperty("profession");

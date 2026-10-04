@@ -65,6 +65,7 @@ export default async function CustomerPage({
             <CustomerFormButton customer={{
               id: customer._id.toString(),
               name: customer.name,
+              fullName: profile.fullName ?? customer.name,
               whatsapp: customer.phones[0] ?? "",
               relationshipStatus: profile.relationshipStatus,
               birthDate: profile.birthDate ?? "",
@@ -193,6 +194,7 @@ export default async function CustomerPage({
                 mimeType: message.media.mimeType,
                 caption: message.media.caption,
                 filename: message.media.filename,
+                transcription: message.media.transcription,
               } : undefined,
               replyTo: message.replyTo ? {
                 body: message.replyTo.body,
