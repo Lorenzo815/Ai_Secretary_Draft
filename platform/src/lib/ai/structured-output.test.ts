@@ -89,6 +89,64 @@ describe("generateStructuredOutput transport", () => {
     expect(create.mock.calls[1][0]).toHaveProperty("tool_choice");
     expect(create.mock.calls[2][0]).not.toHaveProperty("tool_choice");
   });
+
+  it("falls back to a forced function call when native output fails semantic validation", async () => {
+    create
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":"invalid"}' } }],
+        usage: null,
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: "tool_calls",
+          message: {
+            content: null,
+            tool_calls: [{
+              type: "function",
+              function: { name: "qualification", arguments: '{"score":8}' },
+            }],
+          },
+        }],
+        usage: null,
+      });
+
+    const result = await generateValidatedRequest();
+
+    expect(result.value).toEqual({ score: 8 });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[1][0]).toHaveProperty("tool_choice");
+  });
+
+  it("retries the structured generation once after invalid native and tool outputs", async () => {
+    create
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":"invalid"}' } }],
+        usage: null,
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: "tool_calls",
+          message: {
+            content: null,
+            tool_calls: [{
+              type: "function",
+              function: { name: "qualification", arguments: '{"score":"invalid"}' },
+            }],
+          },
+        }],
+        usage: null,
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":9}' } }],
+        usage: null,
+      });
+
+    const result = await generateValidatedRequest();
+
+    expect(result.value).toEqual({ score: 9 });
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(create.mock.calls[2][0].messages.at(-1)?.content).toContain("resposta estruturada anterior");
+  });
 });
 
 function generateRequest() {
@@ -103,5 +161,24 @@ function generateRequest() {
       properties: { score: { type: "number" } },
     },
     parse: JSON.parse,
+  });
+}
+
+function generateValidatedRequest() {
+  return generateStructuredOutput({
+    taskKey: "lead_qualification",
+    messages: [{ role: "user", content: "Analyze" }],
+    schemaName: "qualification",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["score"],
+      properties: { score: { type: "number" } },
+    },
+    parse: (content) => {
+      const value = JSON.parse(content) as { score?: unknown };
+      if (typeof value.score !== "number") throw new Error("Invalid score.");
+      return { score: value.score };
+    },
   });
 }

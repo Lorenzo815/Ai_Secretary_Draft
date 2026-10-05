@@ -14,6 +14,7 @@ type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
 const TRACE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+const MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
 let indexesPromise: Promise<unknown> | undefined;
 
 export interface StructuredModelRequest<T> {
@@ -62,7 +63,7 @@ export async function generateStructuredOutput<T>(
   });
 
   try {
-    const generated = await requestStructuredContent(client, {
+    const generated = await requestValidatedStructuredContent(client, {
       model: resolved.model,
       messages: request.messages,
       schemaName: request.schemaName,
@@ -71,7 +72,7 @@ export async function generateStructuredOutput<T>(
       inferenceProvider: resolved.provider === "vercel" ? resolved.inferenceProvider : null,
       parse: request.parse,
     });
-    const { response, retried, outputMode, content, value } = generated;
+    const { response, retried, outputMode, content, value, validationAttempts } = generated;
     const choice = response.choices[0];
     if (!content) {
       throw new EmptyStructuredOutputError(`A tarefa ${request.taskKey} retornou uma resposta vazia.`, {
@@ -80,6 +81,7 @@ export async function generateStructuredOutput<T>(
         usage: response.usage,
         normalizedUsage: normalizeModelUsage(response.usage),
         attempts: retried.attempts,
+        validationAttempts,
         outputMode,
         hasToolCalls: Boolean(choice?.message.tool_calls?.length),
       });
@@ -92,6 +94,7 @@ export async function generateStructuredOutput<T>(
       usage: response.usage,
       normalizedUsage: normalizeModelUsage(response.usage),
       attempts: retried.attempts,
+      validationAttempts,
     });
     return {
       value,
@@ -140,7 +143,7 @@ async function startTrace(input: {
 
 async function completeTrace(
   traceId: ObjectId | null,
-  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null; attempts?: number },
+  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null; attempts?: number; validationAttempts?: number },
 ) {
   if (!traceId) return;
   await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
@@ -177,12 +180,76 @@ class EmptyStructuredOutputError extends Error {
       usage?: object | null;
       normalizedUsage?: NormalizedModelUsage | null;
       attempts: number;
+      validationAttempts: number;
       outputMode: StructuredOutputMode;
       hasToolCalls: boolean;
     },
   ) {
     super(message);
   }
+}
+
+async function requestValidatedStructuredContent<T>(
+  client: ReturnType<typeof getProviderClient>,
+  input: {
+    model: string;
+    messages: ChatCompletionMessageParam[];
+    schemaName: string;
+    schema: Record<string, unknown>;
+    maxCompletionTokens: number;
+    inferenceProvider: string | null;
+    parse: (content: string) => T;
+  },
+) {
+  let messages = input.messages;
+  for (let attempt = 1; attempt <= MAX_STRUCTURED_OUTPUT_ATTEMPTS; attempt += 1) {
+    try {
+      const generated = await requestStructuredContent(client, {
+        ...input,
+        messages,
+        parse: (content) => parseStructuredContent(content, input.parse),
+      });
+      if (generated.content || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
+        return { ...generated, validationAttempts: attempt };
+      }
+    } catch (error) {
+      if (!isStructuredOutputValidationFailure(error) || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
+        throw unwrapStructuredOutputValidationError(error);
+      }
+    }
+    messages = [
+      ...input.messages,
+      {
+        role: "system",
+        content: `A resposta estruturada anterior foi vazia ou inválida. Gere novamente e siga estritamente o schema ${input.schemaName}, sem texto fora do objeto estruturado.`,
+      },
+    ];
+  }
+  throw new Error("Não foi possível gerar uma resposta estruturada válida.");
+}
+
+class StructuredOutputValidationError extends Error {
+  name = "StructuredOutputValidationError";
+
+  constructor(readonly originalError: unknown) {
+    super(originalError instanceof Error ? originalError.message : "A resposta estruturada é inválida.");
+  }
+}
+
+function parseStructuredContent<T>(content: string, parse: (content: string) => T) {
+  try {
+    return parse(content);
+  } catch (error) {
+    throw new StructuredOutputValidationError(error);
+  }
+}
+
+function isStructuredOutputValidationFailure(error: unknown) {
+  return error instanceof StructuredOutputValidationError;
+}
+
+function unwrapStructuredOutputValidationError(error: unknown) {
+  return error instanceof StructuredOutputValidationError ? error.originalError : error;
 }
 
 async function requestStructuredContent<T>(
@@ -274,7 +341,11 @@ async function requestToolContent<T>(
 }
 
 function isStructuredTransportFailure(error: unknown) {
-  if (error instanceof SyntaxError || error instanceof EmptyStructuredOutputError) return true;
+  if (
+    error instanceof SyntaxError ||
+    error instanceof EmptyStructuredOutputError ||
+    error instanceof StructuredOutputValidationError
+  ) return true;
   return Boolean(error && typeof error === "object" && "status" in error && (error.status === 400 || error.status === 422));
 }
 
