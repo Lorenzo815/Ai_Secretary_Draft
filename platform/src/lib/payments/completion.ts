@@ -27,8 +27,8 @@ export async function completePaymentTransition(
   const contactPhone = customer.phones[0];
   if (!contactPhone) return {};
   const paymentConfirmation = payment.provider === "mercado_pago"
-    ? "Pagamento confirmado pelo Mercado Pago."
-    : "Pagamento confirmado pela equipe.";
+    ? "Sinal confirmado pelo Mercado Pago."
+    : "Sinal confirmado pela equipe.";
   const body = confirmedAppointments.length > 0
     ? `${paymentConfirmation} ${confirmedAppointments.length === 1
       ? "A reserva temporária foi confirmada e o horário escolhido está agendado."

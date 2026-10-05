@@ -51,7 +51,7 @@ export default function PaymentReviewPanel({
   const labels = {
     awaiting_human_confirmation: "Aguardando confirmação humana",
     awaiting_provider_confirmation: "Aguardando Mercado Pago",
-    paid: "Pagamento confirmado",
+    paid: "Sinal confirmado",
     rejected: "Pagamento recusado",
     provider_error: "Falha no provedor",
   } as const;
