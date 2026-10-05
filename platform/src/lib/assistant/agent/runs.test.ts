@@ -2,12 +2,26 @@ import { ObjectId } from "mongodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAction, AgentRunDocument, AgentRunStepDocument } from "./contracts";
 
-const { collection, runFind, runsToArray, stepFind, stepsToArray } = vi.hoisted(() => ({
+const {
+  collection,
+  createIndex,
+  insertOne,
+  runFind,
+  runFindForReconciliation,
+  runsToArray,
+  stepFind,
+  stepsToArray,
+  updateMany,
+} = vi.hoisted(() => ({
   collection: vi.fn(),
+  createIndex: vi.fn(),
+  insertOne: vi.fn(),
   runFind: vi.fn(),
+  runFindForReconciliation: vi.fn(),
   runsToArray: vi.fn(),
   stepFind: vi.fn(),
   stepsToArray: vi.fn(),
+  updateMany: vi.fn(),
 }));
 
 vi.mock("../../mongodb", () => ({
@@ -18,15 +32,19 @@ import {
   buildAgentRunCheckpoint,
   fingerprintAgentToolRequest,
   loadAgentRunCheckpoint,
+  reconcileResumedAgentRuns,
+  startAgentRun,
 } from "./runs";
+import { createDefaultAgentConfiguration } from "./defaults";
 
 describe("agent run checkpoints", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runFind.mockReturnValue({ sort: () => ({ toArray: runsToArray }) });
     stepFind.mockReturnValue({ sort: () => ({ toArray: stepsToArray }) });
+    updateMany.mockResolvedValue({ modifiedCount: 0 });
     collection.mockImplementation((name: string) => name === "assistant_runs"
-      ? { find: runFind }
+      ? { createIndex, find: runFind, insertOne, updateMany }
       : { find: stepFind });
   });
 
@@ -97,6 +115,49 @@ function failedResult(tool: string) {
     });
     expect(stepFind).not.toHaveBeenCalled();
     expect(checkpoint.toolHistory).toEqual([]);
+  });
+
+  it("supersedes interrupted runs before starting a resumed run", async () => {
+    const interruptedRunId = new ObjectId();
+    const customerId = new ObjectId();
+    const configuration = createDefaultAgentConfiguration();
+
+    await startAgentRun({
+      customerId,
+      jobRevision: 8,
+      configuration,
+      checkpoint: {
+        runIds: [interruptedRunId],
+        toolHistory: [],
+        toolResultsByFingerprint: new Map(),
+        modelIterations: 1,
+        toolExecutions: 1,
+        mutationsExecuted: 0,
+      },
+    });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      { _id: { $in: [interruptedRunId] }, status: "running" },
+      { $set: { status: "superseded", completedAt: expect.any(Date) } },
+    );
+    expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({
+      status: "running",
+      resumedFromRunIds: [interruptedRunId],
+    }));
+  });
+
+  it("reconciles already orphaned runs referenced by resumed executions", async () => {
+    const interruptedRunId = new ObjectId();
+    runFindForReconciliation.mockResolvedValue([{ resumedFromRunIds: [interruptedRunId] }]);
+    runFind.mockReturnValueOnce({ toArray: runFindForReconciliation });
+    updateMany.mockResolvedValueOnce({ modifiedCount: 1 });
+
+    await expect(reconcileResumedAgentRuns()).resolves.toBe(1);
+
+    expect(updateMany).toHaveBeenCalledWith(
+      { _id: { $in: [interruptedRunId] }, status: "running" },
+      { $set: { status: "superseded", completedAt: expect.any(Date) } },
+    );
   });
 });
 

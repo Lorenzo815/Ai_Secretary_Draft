@@ -11,6 +11,7 @@ import {
 import { normalizeModelUsage, type NormalizedModelUsage } from "../ai/model-usage";
 import { listVercelLanguageModels, listVercelModelEndpoints, listVercelTranscriptionModels } from "../ai/vercel-models";
 import { getUsdBrlRate, type UsdBrlRate } from "../currency/usd-brl";
+import { reconcileResumedAgentRuns } from "../assistant/agent/runs";
 
 const DB_NAME = "ai_secretary";
 
@@ -56,11 +57,14 @@ interface ModelCallRecord {
   errorMessage?: string;
   usage?: unknown;
   normalizedUsage?: NormalizedModelUsage | null;
+  providerCallCount?: number;
+  providerCallsWithUsage?: number;
   startedAt: Date;
 }
 
 export async function getOperationsDashboard() {
   const database = (await clientPromise).db(DB_NAME);
+  await reconcileResumedAgentRuns();
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
   const lastSevenDays = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1_000);
@@ -81,11 +85,11 @@ export async function getOperationsDashboard() {
       projection: { customerId: 1, status: 1, configRevision: 1, modelIterations: 1, toolExecutions: 1, mutationsExecuted: 1, finalDecision: 1, error: 1, startedAt: 1, completedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
     database.collection<ModelCallRecord>("ai_task_calls").find({}, {
-      projection: { customerId: 1, taskKey: 1, provider: 1, model: 1, inferenceProvider: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, usage: 1, normalizedUsage: 1, startedAt: 1 },
+      projection: { customerId: 1, taskKey: 1, provider: 1, model: 1, inferenceProvider: 1, status: 1, durationMs: 1, finishReason: 1, errorName: 1, errorMessage: 1, usage: 1, normalizedUsage: 1, providerCallCount: 1, providerCallsWithUsage: 1, startedAt: 1 },
     }).sort({ startedAt: -1 }).limit(30).toArray(),
     database.collection<ModelCallRecord>("ai_task_calls").find(
       { status: "completed", startedAt: { $gte: last30Days } },
-      { projection: { _id: 0, provider: 1, model: 1, inferenceProvider: 1, usage: 1, normalizedUsage: 1, startedAt: 1 } },
+      { projection: { _id: 0, provider: 1, model: 1, inferenceProvider: 1, usage: 1, normalizedUsage: 1, providerCallCount: 1, providerCallsWithUsage: 1, startedAt: 1 } },
     ).sort({ startedAt: 1 }).toArray(),
     database.collection("whatsapp_messages").countDocuments({ status: "failed", timestamp: { $gte: last24Hours } }),
     database.collection("assistant_runs").aggregate<{ _id: string; count: number }>([
@@ -186,6 +190,8 @@ function buildUsageSummary(
       providerId: providerIdForCall(call),
       usage,
       estimatedCostUsd: estimateCallCost(call, usage, vercelPricing, transcriptionPricing),
+      providerCallCount: call.providerCallCount ?? 1,
+      providerCallsWithUsage: call.providerCallsWithUsage ?? 1,
     }] : [];
   });
   const usages = normalizedCalls.map((call) => call.usage);
@@ -208,9 +214,17 @@ function buildUsageSummary(
 
   return {
     periodDays: 30,
-    calls: calls.length,
-    callsWithUsage: normalizedCalls.length,
-    callsWithEstimatedCost: estimatedCosts.filter((cost) => cost !== undefined).length,
+    calls: calls.reduce((count, call) => count + (call.providerCallCount ?? 1), 0),
+    callsWithUsage: normalizedCalls.reduce(
+      (count, call) => count + call.providerCallsWithUsage,
+      0,
+    ),
+    callsWithEstimatedCost: normalizedCalls.reduce(
+      (count, call) => count + (call.estimatedCostUsd !== undefined
+        ? call.providerCallsWithUsage ?? (call.usage ? 1 : 0)
+        : 0),
+      0,
+    ),
     estimatedCostUsd,
     estimatedCostBrl: convertUsdToBrl(estimatedCostUsd, usdBrlRate),
     usdBrlRate,
@@ -230,8 +244,13 @@ function buildUsageSummary(
       return {
         model: group[0].model,
         providerId: group[0].providerId,
-        calls: group.length,
-        callsWithEstimatedCost: groupCosts.filter((cost) => cost !== undefined).length,
+        calls: group.reduce((count, call) => count + (call.providerCallCount ?? 1), 0),
+        callsWithEstimatedCost: group.reduce(
+          (count, call) => count + (call.estimatedCostUsd !== undefined
+            ? call.providerCallsWithUsage ?? 1
+            : 0),
+          0,
+        ),
         inputTokens: sumKnown(group.map((call) => call.usage.inputTokens)),
         cachedInputTokens: sumKnown(group.map((call) => call.usage.cachedInputTokens)),
         outputTokens: sumKnown(group.map((call) => call.usage.outputTokens)),

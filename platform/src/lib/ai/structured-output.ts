@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import type { ChatCompletion, ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
@@ -10,6 +10,48 @@ import type { AiProvider } from "./providers/types";
 import { resolveAiModel } from "./routing";
 
 type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
+
+interface ProviderCallTrace {
+  sequence: number;
+  outputMode: StructuredOutputMode;
+  requestId?: string;
+  finishReason?: string | null;
+  usage?: object | null;
+  normalizedUsage?: NormalizedModelUsage | null;
+  transportAttempts: number;
+  durationMs: number;
+  completedAt: Date;
+}
+
+interface AiTaskCallDocument {
+  _id: ObjectId;
+  taskKey: string;
+  customerId?: ObjectId;
+  provider: AiProvider;
+  selectedProvider: AiProvider;
+  credentialSource?: string;
+  model: string;
+  inferenceProvider?: string | null;
+  messageCount: number;
+  context?: Record<string, unknown>;
+  status: "started" | "completed" | "failed";
+  startedAt: Date;
+  completedAt?: Date;
+  durationMs?: number;
+  requestId?: string;
+  finishReason?: string | null;
+  usage?: object | null;
+  normalizedUsage?: NormalizedModelUsage | null;
+  attempts?: number;
+  validationAttempts?: number;
+  providerCallCount?: number;
+  providerCallsWithUsage?: number;
+  providerCalls?: ProviderCallTrace[];
+  errorName?: string;
+  errorMessage?: string;
+  outputMode?: StructuredOutputMode;
+  hasToolCalls?: boolean;
+}
 
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
@@ -49,6 +91,7 @@ export async function generateStructuredOutput<T>(
   }
   const client = getProviderClient(resolved.provider, resolved.model, resolved.credential);
   const startedAt = new Date();
+  const providerCalls: ProviderCallTrace[] = [];
   const traceId = await startTrace({
     taskKey: request.taskKey,
     customerId: request.customerId,
@@ -71,16 +114,23 @@ export async function generateStructuredOutput<T>(
       maxCompletionTokens: request.maxCompletionTokens ?? 4_096,
       inferenceProvider: resolved.provider === "vercel" ? resolved.inferenceProvider : null,
       parse: request.parse,
+      onProviderResponse: async (call) => {
+        const tracedCall = { ...call, sequence: providerCalls.length + 1 };
+        providerCalls.push(tracedCall);
+        await appendProviderCall(traceId, tracedCall);
+      },
     });
-    const { response, retried, outputMode, content, value, validationAttempts } = generated;
+    const { response, outputMode, content, value, validationAttempts } = generated;
+    const normalizedUsage = sumModelUsage(providerCalls.map((call) => call.normalizedUsage));
+    const transportAttempts = providerCalls.reduce((sum, call) => sum + call.transportAttempts, 0);
     const choice = response.choices[0];
     if (!content) {
       throw new EmptyStructuredOutputError(`A tarefa ${request.taskKey} retornou uma resposta vazia.`, {
         requestId: response._request_id ?? undefined,
         finishReason: choice?.finish_reason,
         usage: response.usage,
-        normalizedUsage: normalizeModelUsage(response.usage),
-        attempts: retried.attempts,
+        normalizedUsage,
+        attempts: transportAttempts,
         validationAttempts,
         outputMode,
         hasToolCalls: Boolean(choice?.message.tool_calls?.length),
@@ -92,9 +142,11 @@ export async function generateStructuredOutput<T>(
       requestId: response._request_id ?? undefined,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
-      normalizedUsage: normalizeModelUsage(response.usage),
-      attempts: retried.attempts,
+      normalizedUsage,
+      attempts: transportAttempts,
       validationAttempts,
+      providerCallCount: providerCalls.length,
+      providerCallsWithUsage: providerCalls.filter((call) => call.normalizedUsage).length,
     });
     return {
       value,
@@ -103,12 +155,12 @@ export async function generateStructuredOutput<T>(
       requestId: response._request_id ?? undefined,
       finishReason: response.choices[0]?.finish_reason,
       usage: response.usage,
-      normalizedUsage: normalizeModelUsage(response.usage),
-      attempts: retried.attempts,
+      normalizedUsage,
+      attempts: transportAttempts,
       durationMs,
     };
   } catch (error) {
-    await failTrace(traceId, Date.now() - startedAt.getTime(), error);
+    await failTrace(traceId, Date.now() - startedAt.getTime(), error, providerCalls);
     throw error;
   }
 }
@@ -126,7 +178,7 @@ async function startTrace(input: {
   startedAt: Date;
 }) {
   try {
-    const collection = (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION);
+    const collection = (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION);
     indexesPromise ??= Promise.all([
       collection.createIndex({ startedAt: 1 }, { expireAfterSeconds: TRACE_RETENTION_SECONDS }),
       collection.createIndex({ taskKey: 1, customerId: 1, startedAt: -1 }),
@@ -143,18 +195,42 @@ async function startTrace(input: {
 
 async function completeTrace(
   traceId: ObjectId | null,
-  result: { durationMs: number; requestId?: string; finishReason?: string | null; usage?: object | null; normalizedUsage?: NormalizedModelUsage | null; attempts?: number; validationAttempts?: number },
+  result: {
+    durationMs: number;
+    requestId?: string;
+    finishReason?: string | null;
+    usage?: object | null;
+    normalizedUsage?: NormalizedModelUsage | null;
+    attempts?: number;
+    validationAttempts?: number;
+    providerCallCount?: number;
+    providerCallsWithUsage?: number;
+  },
 ) {
   if (!traceId) return;
-  await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
+  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     { $set: { ...result, status: "completed", completedAt: new Date() } },
   ).catch((error) => console.error("AI task trace could not be completed", error));
 }
 
-async function failTrace(traceId: ObjectId | null, durationMs: number, error: unknown) {
+async function appendProviderCall(traceId: ObjectId | null, call: ProviderCallTrace) {
   if (!traceId) return;
-  await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
+  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
+    { _id: traceId },
+    { $push: { providerCalls: call } },
+  ).catch((error) => console.error("AI provider call could not be traced", error));
+}
+
+async function failTrace(
+  traceId: ObjectId | null,
+  durationMs: number,
+  error: unknown,
+  providerCalls: ProviderCallTrace[],
+) {
+  if (!traceId) return;
+  const normalizedUsage = sumModelUsage(providerCalls.map((call) => call.normalizedUsage));
+  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     {
       $set: {
@@ -164,6 +240,10 @@ async function failTrace(traceId: ObjectId | null, durationMs: number, error: un
         errorName: error instanceof Error ? error.name : "UnknownError",
         errorMessage: error instanceof Error ? error.message.slice(0, 1_000) : String(error).slice(0, 1_000),
         ...(error instanceof EmptyStructuredOutputError ? error.diagnostic : {}),
+        normalizedUsage,
+        attempts: providerCalls.reduce((sum, call) => sum + call.transportAttempts, 0),
+        providerCallCount: providerCalls.length,
+        providerCallsWithUsage: providerCalls.filter((call) => call.normalizedUsage).length,
       },
     },
   ).catch((traceError) => console.error("AI task trace failure could not be recorded", traceError));
@@ -199,6 +279,7 @@ async function requestValidatedStructuredContent<T>(
     maxCompletionTokens: number;
     inferenceProvider: string | null;
     parse: (content: string) => T;
+    onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
   },
 ) {
   let messages = input.messages;
@@ -262,12 +343,14 @@ async function requestStructuredContent<T>(
     maxCompletionTokens: number;
     inferenceProvider: string | null;
     parse: (content: string) => T;
+    onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
   },
 ) {
   const providerOptions = input.inferenceProvider
     ? { providerOptions: { gateway: { only: [input.inferenceProvider] } } }
     : {};
   try {
+    const callStartedAt = Date.now();
     const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
       model: input.model,
       messages: input.messages,
@@ -278,6 +361,12 @@ async function requestStructuredContent<T>(
       },
       ...providerOptions,
     }));
+    await input.onProviderResponse(toProviderCallTrace(
+      retried.value,
+      "json_schema",
+      retried.attempts,
+      Date.now() - callStartedAt,
+    ));
     const content = retried.value.choices[0]?.message.content;
     if (content) return { response: retried.value, retried, outputMode: "json_schema" as const, content, value: input.parse(content) };
   } catch (error) {
@@ -309,11 +398,13 @@ async function requestToolContent<T>(
     schemaName: string;
     maxCompletionTokens: number;
     parse: (content: string) => T;
+    onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
   },
   tool: { type: "function"; function: { name: string; description: string; strict: boolean; parameters: Record<string, unknown> } },
   providerOptions: object,
   forceTool: boolean,
 ) {
+  const callStartedAt = Date.now();
   const retried = await withModelRateLimitRetry(() => client.chat.completions.create({
     model: input.model,
     messages: forceTool ? input.messages : [
@@ -327,6 +418,13 @@ async function requestToolContent<T>(
     ...providerOptions,
   }));
   const response = retried.value;
+  const outputMode = forceTool ? "tool_call" as const : "tool_call_auto" as const;
+  await input.onProviderResponse(toProviderCallTrace(
+    response,
+    outputMode,
+    retried.attempts,
+    Date.now() - callStartedAt,
+  ));
   const toolCall = response.choices[0]?.message.tool_calls?.find((call) => (
     "function" in call && call.function.name === input.schemaName
   ));
@@ -334,10 +432,46 @@ async function requestToolContent<T>(
   return {
     response,
     retried,
-    outputMode: forceTool ? "tool_call" as const : "tool_call_auto" as const,
+    outputMode,
     content,
     value: content ? input.parse(content) : undefined as T,
   };
+}
+
+function toProviderCallTrace(
+  response: ChatCompletion & { _request_id?: string | null },
+  outputMode: StructuredOutputMode,
+  transportAttempts: number,
+  durationMs: number,
+): Omit<ProviderCallTrace, "sequence"> {
+  return {
+    outputMode,
+    requestId: response._request_id ?? undefined,
+    finishReason: response.choices[0]?.finish_reason,
+    usage: response.usage,
+    normalizedUsage: normalizeModelUsage(response.usage),
+    transportAttempts,
+    durationMs,
+    completedAt: new Date(),
+  };
+}
+
+function sumModelUsage(usages: Array<NormalizedModelUsage | null | undefined>) {
+  const known = usages.filter((usage): usage is NormalizedModelUsage => Boolean(usage));
+  if (known.length === 0) return null;
+  const fields: Array<keyof NormalizedModelUsage> = [
+    "inputTokens",
+    "outputTokens",
+    "totalTokens",
+    "cachedInputTokens",
+    "cacheWriteInputTokens",
+    "reasoningTokens",
+    "audioDurationSeconds",
+  ];
+  return Object.fromEntries(fields.flatMap((field) => {
+    const values = known.map((usage) => usage[field]).filter((value): value is number => value !== undefined);
+    return values.length > 0 ? [[field, values.reduce((sum, value) => sum + value, 0)]] : [];
+  })) as NormalizedModelUsage;
 }
 
 function isStructuredTransportFailure(error: unknown) {

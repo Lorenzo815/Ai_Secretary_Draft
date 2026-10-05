@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { create, resolveAiModel } = vi.hoisted(() => ({
+const { create, resolveAiModel, updateOne } = vi.hoisted(() => ({
   create: vi.fn(),
   resolveAiModel: vi.fn(),
+  updateOne: vi.fn().mockResolvedValue({ matchedCount: 1 }),
 }));
 
 vi.mock("../mongodb", () => ({
@@ -11,7 +12,7 @@ vi.mock("../mongodb", () => ({
       collection: () => ({
         createIndex: vi.fn(),
         insertOne: vi.fn().mockResolvedValue({ insertedId: "trace" }),
-        updateOne: vi.fn().mockResolvedValue({ matchedCount: 1 }),
+        updateOne,
       }),
     }),
   }),
@@ -146,6 +147,54 @@ describe("generateStructuredOutput transport", () => {
     expect(result.value).toEqual({ score: 9 });
     expect(create).toHaveBeenCalledTimes(3);
     expect(create.mock.calls[2][0].messages.at(-1)?.content).toContain("resposta estruturada anterior");
+  });
+
+  it("aggregates usage and traces every provider response, including invalid attempts", async () => {
+    create
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":"invalid"}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{
+          finish_reason: "tool_calls",
+          message: {
+            content: null,
+            tool_calls: [{
+              type: "function",
+              function: { name: "qualification", arguments: '{"score":"invalid"}' },
+            }],
+          },
+        }],
+        usage: { prompt_tokens: 120, completion_tokens: 12, total_tokens: 132 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":9}' } }],
+        usage: { prompt_tokens: 130, completion_tokens: 13, total_tokens: 143 },
+      });
+
+    const result = await generateValidatedRequest();
+
+    expect(result.normalizedUsage).toEqual({
+      inputTokens: 350,
+      outputTokens: 35,
+      totalTokens: 385,
+    });
+    expect(updateOne.mock.calls.filter(([, update]) => "$push" in update)).toHaveLength(3);
+    expect(updateOne).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          providerCallCount: 3,
+          providerCallsWithUsage: 3,
+          normalizedUsage: {
+            inputTokens: 350,
+            outputTokens: 35,
+            totalTokens: 385,
+          },
+        }),
+      }),
+    );
   });
 });
 

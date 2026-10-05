@@ -44,6 +44,12 @@ export async function startAgentRun(input: {
     startedAt: new Date(),
   };
   const collection = (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs");
+  if (input.checkpoint?.runIds.length) {
+    await collection.updateMany(
+      { _id: { $in: input.checkpoint.runIds }, status: "running" },
+      { $set: { status: "superseded", completedAt: run.startedAt } },
+    );
+  }
   await collection.insertOne(run);
   await collection.createIndex({ customerId: 1, startedAt: -1 });
   return run;
@@ -77,7 +83,7 @@ export async function finishAgentRun(input: {
   error?: unknown;
 }) {
   await (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs").updateOne(
-    { _id: input.runId },
+    { _id: input.runId, status: "running" },
     {
       $set: {
         status: input.status,
@@ -90,6 +96,27 @@ export async function finishAgentRun(input: {
       },
     },
   );
+}
+
+export async function reconcileResumedAgentRuns() {
+  const collection = (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs");
+  const resumptions = await collection.find(
+    { resumedFromRunIds: { $exists: true, $ne: [] } },
+    { projection: { resumedFromRunIds: 1 } },
+  ).toArray();
+  const resumedRunIds = [
+    ...new Map(
+      resumptions
+        .flatMap((run) => run.resumedFromRunIds ?? [])
+        .map((runId) => [runId.toHexString(), runId]),
+    ).values(),
+  ];
+  if (resumedRunIds.length === 0) return 0;
+  const result = await collection.updateMany(
+    { _id: { $in: resumedRunIds }, status: "running" },
+    { $set: { status: "superseded", completedAt: new Date() } },
+  );
+  return result.modifiedCount;
 }
 
 function createConfigurationSnapshot(configuration: AgentConfigurationDocument): AgentConfigurationSnapshot {
