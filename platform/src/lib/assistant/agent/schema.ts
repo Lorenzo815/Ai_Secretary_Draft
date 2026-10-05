@@ -1,5 +1,5 @@
 import { ASSISTANT_DECISIONS } from "../tools/contracts";
-import { getToolDefinition, isAssistantToolKey } from "../tools/registry";
+import { isAssistantToolKey } from "../tools/registry";
 import type { AgentConfigurationDocument } from "./contracts";
 
 export function buildAgentActionSchema(
@@ -29,15 +29,7 @@ export function buildAgentActionSchema(
   };
   if (!allowToolRequest) return wrapActionSchema(finalAction);
 
-  const toolSchemas = configuration.enabledTools.filter(isAssistantToolKey).map((key) => ({
-    type: "object",
-    additionalProperties: false,
-    required: ["name", "arguments"],
-    properties: {
-      name: { type: "string", enum: [key] },
-      arguments: getToolDefinition(key).argumentsSchema,
-    },
-  }));
+  const toolNames = configuration.enabledTools.filter(isAssistantToolKey);
   const toolRequest = {
     type: "object",
     additionalProperties: false,
@@ -49,17 +41,16 @@ export function buildAgentActionSchema(
         enum: ["need_authoritative_data", "persist_customer_data", "perform_confirmed_action"],
       },
       toolCall: {
-        anyOf: toolSchemas.length > 0
-          ? toolSchemas
-          : [{
-              type: "object",
-              additionalProperties: false,
-              required: ["name", "arguments"],
-              properties: {
-                name: { type: "string", enum: ["no_tools_enabled"] },
-                arguments: { type: "object", additionalProperties: false, required: [], properties: {} },
-              },
-            }],
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "argumentsJson"],
+        properties: {
+          name: { type: "string", enum: toolNames.length > 0 ? toolNames : ["no_tools_enabled"] },
+          argumentsJson: {
+            type: "string",
+            description: "Objeto JSON serializado com os argumentos da ferramenta escolhida.",
+          },
+        },
       },
     },
   };

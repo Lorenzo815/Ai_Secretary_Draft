@@ -35,54 +35,89 @@ export async function generateAgentAction(input: {
 
 type AgentRunCustomerId = import("mongodb").ObjectId;
 
-function parseAgentAction(content: string): AgentAction {
-  const envelope = JSON.parse(content) as { action?: Partial<AgentAction> };
+const TOOL_REASON_CODES = [
+  "need_authoritative_data",
+  "persist_customer_data",
+  "perform_confirmed_action",
+] as const;
+
+export function parseAgentAction(content: string): AgentAction {
+  const envelope = JSON.parse(content) as { action?: Record<string, unknown> };
   const value = envelope.action;
   if (!value || typeof value !== "object") {
     throw new Error("O agente retornou um envelope de ação inválido.");
   }
   if (value.type === "tool_request") {
-    const call = value.toolCall as { name?: unknown; arguments?: unknown } | undefined;
+    const call = value.toolCall as {
+      name?: unknown;
+      argumentsJson?: unknown;
+      arguments?: unknown;
+    } | undefined;
+    const reasonCode = value.reasonCode;
+    const toolArguments = parseToolArguments(call?.argumentsJson ?? call?.arguments);
     if (
       !call || typeof call.name !== "string" || !isAssistantToolKey(call.name) ||
-      !call.arguments || typeof call.arguments !== "object" || Array.isArray(call.arguments)
+      typeof reasonCode !== "string" ||
+      !TOOL_REASON_CODES.includes(reasonCode as typeof TOOL_REASON_CODES[number]) ||
+      !toolArguments
     ) {
       throw new Error("O agente retornou uma solicitação de ferramenta inválida.");
     }
     return {
       type: "tool_request",
-      reasonCode: value.reasonCode!,
+      reasonCode: reasonCode as typeof TOOL_REASON_CODES[number],
       toolCall: {
         tool: call.name,
-        arguments: sanitizeObject(call.arguments as Record<string, unknown>, 0),
+        arguments: sanitizeObject(toolArguments, 0),
       },
     };
   }
+  const decision = value.decision;
+  const memory = value.memory as {
+    summary?: unknown;
+    pendingQuestion?: unknown;
+    nonSensitiveFacts?: unknown;
+  } | undefined;
   if (
-    value.type !== "final" || !value.decision || !ASSISTANT_DECISIONS.includes(value.decision) ||
+    value.type !== "final" || typeof decision !== "string" ||
+    !ASSISTANT_DECISIONS.includes(decision as typeof ASSISTANT_DECISIONS[number]) ||
     typeof value.message !== "string" || !Array.isArray(value.groundingResultIds) ||
-    !value.memory || typeof value.memory.summary !== "string" ||
-    (value.memory.pendingQuestion !== null && typeof value.memory.pendingQuestion !== "string") ||
-    !Array.isArray(value.memory.nonSensitiveFacts)
+    !memory || typeof memory.summary !== "string" ||
+    (memory.pendingQuestion !== null && typeof memory.pendingQuestion !== "string") ||
+    !Array.isArray(memory.nonSensitiveFacts)
   ) {
     throw new Error("O agente retornou uma resposta final inválida.");
   }
   return {
     type: "final",
-    decision: value.decision,
+    decision: decision as typeof ASSISTANT_DECISIONS[number],
     message: redactSensitiveText(value.message.trim()).slice(0, 4_096),
     groundingResultIds: value.groundingResultIds.filter((id): id is string => typeof id === "string").slice(0, 10),
     memory: {
-      summary: redactSensitiveText(value.memory.summary.trim()).slice(0, 8_000),
-      pendingQuestion: value.memory.pendingQuestion
-        ? redactSensitiveText(value.memory.pendingQuestion.trim()).slice(0, 500)
+      summary: redactSensitiveText(memory.summary.trim()).slice(0, 8_000),
+      pendingQuestion: memory.pendingQuestion
+        ? redactSensitiveText(memory.pendingQuestion.trim()).slice(0, 500)
         : null,
-      nonSensitiveFacts: value.memory.nonSensitiveFacts
+      nonSensitiveFacts: memory.nonSensitiveFacts
         .filter((fact): fact is string => typeof fact === "string")
         .map((fact) => redactSensitiveText(fact).slice(0, 500))
         .slice(0, 30),
     },
   };
+}
+
+function parseToolArguments(value: unknown): Record<string, unknown> | null {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
 }
 
 function sanitizeObject(value: Record<string, unknown>, depth: number): Record<string, unknown> {

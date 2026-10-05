@@ -217,6 +217,43 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("não autoriza ignorar uma nova pergunta");
   });
 
+  it("presents tool history as results rather than a conflicting output action shape", () => {
+    const messages = buildAgentMessages({
+      configuration: createDefaultAgentConfiguration(),
+      runtime: {} as Parameters<typeof buildAgentMessages>[0]["runtime"],
+      previousSummary: "Sem contexto anterior.",
+      messages: [],
+      toolHistory: [{
+        resultId: "result-1",
+        request: {
+          type: "tool_request",
+          reasonCode: "need_authoritative_data",
+          toolCall: {
+            tool: "calendar.find_slots",
+            arguments: { purpose: "book", eventType: "doctor_consultation" },
+          },
+        },
+        result: { ok: true },
+      }],
+      finalIteration: false,
+    });
+    const userMessage = messages[2];
+    const text = Array.isArray(userMessage.content)
+      ? userMessage.content.find((part) => part.type === "text")?.text ?? ""
+      : "";
+    const payload = JSON.parse(text) as {
+      toolHistory: Array<Record<string, unknown>>;
+    };
+
+    expect(payload.toolHistory).toEqual([{
+      resultId: "result-1",
+      tool: "calendar.find_slots",
+      arguments: { purpose: "book", eventType: "doctor_consultation" },
+      result: { ok: true },
+    }]);
+    expect(payload.toolHistory[0]).not.toHaveProperty("request");
+  });
+
   it("omits active plans that depend on hidden event types", () => {
     const configuration = createDefaultAgentConfiguration();
     configuration.bookableEventTypeKeys = ["doctor_consultation"];

@@ -10,4 +10,13 @@ describe("buildAgentActionSchema", () => {
     expect(schema.required).toEqual(["action"]);
     expect(schema.properties.action).toBeDefined();
   });
+
+  it("uses a compact tool envelope instead of embedding every argument schema", () => {
+    const schema = buildAgentActionSchema(createDefaultAgentConfiguration(), true);
+    const serialized = JSON.stringify(schema);
+
+    expect(serialized).toContain('"argumentsJson"');
+    expect(serialized).not.toContain('"stepCriteria"');
+    expect(serialized.length).toBeLessThan(3_000);
+  });
 });

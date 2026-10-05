@@ -118,6 +118,26 @@ describe("generateStructuredOutput transport", () => {
     expect(create.mock.calls[1][0]).toHaveProperty("tool_choice");
   });
 
+  it("doubles the completion budget after a length-truncated response without trying the same fallback", async () => {
+    create
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "length", message: { content: null } }],
+        usage: { prompt_tokens: 100, completion_tokens: 4_096, total_tokens: 4_196 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":9}' } }],
+        usage: { prompt_tokens: 110, completion_tokens: 20, total_tokens: 130 },
+      });
+
+    const result = await generateRequest();
+
+    expect(result.value).toEqual({ score: 9 });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[0][0].max_completion_tokens).toBe(4_096);
+    expect(create.mock.calls[1][0].max_completion_tokens).toBe(8_192);
+    expect(create.mock.calls[1][0]).not.toHaveProperty("tools");
+  });
+
   it("retries the structured generation once after invalid native and tool outputs", async () => {
     create
       .mockResolvedValueOnce({

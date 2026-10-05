@@ -56,7 +56,8 @@ interface AiTaskCallDocument {
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
 const TRACE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
-const MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3;
+const MAX_STRUCTURED_OUTPUT_ATTEMPTS = 2;
+const MAX_ADAPTIVE_COMPLETION_TOKENS = 16_384;
 let indexesPromise: Promise<unknown> | undefined;
 
 export interface StructuredModelRequest<T> {
@@ -283,18 +284,23 @@ async function requestValidatedStructuredContent<T>(
   },
 ) {
   let messages = input.messages;
+  let maxCompletionTokens = input.maxCompletionTokens;
   for (let attempt = 1; attempt <= MAX_STRUCTURED_OUTPUT_ATTEMPTS; attempt += 1) {
     try {
       const generated = await requestStructuredContent(client, {
         ...input,
         messages,
+        maxCompletionTokens,
         parse: (content) => parseStructuredContent(content, input.parse),
       });
       if (generated.content || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
         return { ...generated, validationAttempts: attempt };
       }
     } catch (error) {
-      if (!isStructuredOutputValidationFailure(error) || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
+      if (error instanceof StructuredOutputTokenLimitError) {
+        if (attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) throw error;
+        maxCompletionTokens = Math.min(maxCompletionTokens * 2, MAX_ADAPTIVE_COMPLETION_TOKENS);
+      } else if (!isStructuredOutputValidationFailure(error) || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
         throw unwrapStructuredOutputValidationError(error);
       }
     }
@@ -314,6 +320,14 @@ class StructuredOutputValidationError extends Error {
 
   constructor(readonly originalError: unknown) {
     super(originalError instanceof Error ? originalError.message : "A resposta estruturada é inválida.");
+  }
+}
+
+class StructuredOutputTokenLimitError extends Error {
+  name = "StructuredOutputTokenLimitError";
+
+  constructor(maxCompletionTokens: number) {
+    super(`O modelo atingiu o limite de ${maxCompletionTokens} tokens antes de produzir a resposta estruturada.`);
   }
 }
 
@@ -367,9 +381,14 @@ async function requestStructuredContent<T>(
       retried.attempts,
       Date.now() - callStartedAt,
     ));
-    const content = retried.value.choices[0]?.message.content;
+    const choice = retried.value.choices[0];
+    const content = choice?.message.content;
     if (content) return { response: retried.value, retried, outputMode: "json_schema" as const, content, value: input.parse(content) };
+    if (choice?.finish_reason === "length") {
+      throw new StructuredOutputTokenLimitError(input.maxCompletionTokens);
+    }
   } catch (error) {
+    if (error instanceof StructuredOutputTokenLimitError) throw error;
     if (!isStructuredTransportFailure(error)) throw error;
   }
 
@@ -429,6 +448,9 @@ async function requestToolContent<T>(
     "function" in call && call.function.name === input.schemaName
   ));
   const content = toolCall && "function" in toolCall ? toolCall.function.arguments : undefined;
+  if (!content && response.choices[0]?.finish_reason === "length") {
+    throw new StructuredOutputTokenLimitError(input.maxCompletionTokens);
+  }
   return {
     response,
     retried,
