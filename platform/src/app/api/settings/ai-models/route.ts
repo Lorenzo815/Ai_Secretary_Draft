@@ -8,6 +8,7 @@ import {
   updateAiProviderConfiguration,
   type AiProvider,
   type AiTaskKey,
+  type ReasoningEffort,
 } from "@/lib/ai/provider-config";
 import {
   listVercelLanguageModels,
@@ -57,7 +58,13 @@ export async function PUT(request: Request) {
     expectedRevision?: number;
     activeProvider?: AiProvider;
     azurePassword?: string;
-    tasks?: Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>;
+    tasks?: Record<AiTaskKey, {
+      vercelModel: string;
+      vercelProvider?: string;
+      azureModel: string;
+      maxCompletionTokens?: number;
+      reasoningEffort?: ReasoningEffort;
+    }>;
     audioTranscription?: { vercelModel?: string };
   };
   try {
@@ -68,7 +75,13 @@ export async function PUT(request: Request) {
       expectedRevision: Number(input.expectedRevision),
       activeProvider: input.activeProvider as AiProvider,
       azureAccessAuthorized: input.activeProvider === "azure",
-      tasks: input.tasks as Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>,
+      tasks: input.tasks as Record<AiTaskKey, {
+        vercelModel: string;
+        vercelProvider?: string;
+        azureModel: string;
+        maxCompletionTokens?: number;
+        reasoningEffort?: ReasoningEffort;
+      }>,
       audioTranscription: input.audioTranscription,
       updatedBy: session.user?.email ?? "dashboard",
     });

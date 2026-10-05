@@ -30,6 +30,8 @@ describe("generateStructuredOutput transport", () => {
       selectedProvider: "vercel",
       model: "deepseek/deepseek-v4-pro",
       inferenceProvider: "deepseek",
+      maxCompletionTokens: 8_192,
+      reasoningEffort: "high",
       credential: { secret: "secret", source: "test" },
     });
   });
@@ -134,8 +136,35 @@ describe("generateStructuredOutput transport", () => {
     expect(result.value).toEqual({ score: 9 });
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[0][0].max_completion_tokens).toBe(4_096);
+    expect(create.mock.calls[0][0].reasoning).toEqual({ effort: "high" });
     expect(create.mock.calls[1][0].max_completion_tokens).toBe(8_192);
     expect(create.mock.calls[1][0]).not.toHaveProperty("tools");
+  });
+
+  it("uses half of a larger configured ceiling before retrying at the full ceiling", async () => {
+    resolveAiModel.mockResolvedValue({
+      provider: "vercel",
+      selectedProvider: "vercel",
+      model: "deepseek/deepseek-v4.1-flash",
+      inferenceProvider: "deepseek",
+      maxCompletionTokens: 32_768,
+      reasoningEffort: "high",
+      credential: { secret: "secret", source: "test" },
+    });
+    create
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "length", message: { content: null } }],
+        usage: { prompt_tokens: 100, completion_tokens: 16_384, total_tokens: 16_484 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ finish_reason: "stop", message: { content: '{"score":9}' } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+      });
+
+    await generateRequest();
+
+    expect(create.mock.calls[0][0].max_completion_tokens).toBe(16_384);
+    expect(create.mock.calls[1][0].max_completion_tokens).toBe(32_768);
   });
 
   it("retries the structured generation once after invalid native and tool outputs", async () => {

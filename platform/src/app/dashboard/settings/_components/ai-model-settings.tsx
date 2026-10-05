@@ -6,11 +6,19 @@ import { AudioLines, Bot, BrainCircuit, Check, CheckCircle2, ChevronDown, Circle
 type Provider = "vercel" | "azure";
 type TaskKey = "customer_agent" | "lead_qualification";
 type AzureModel = "gpt-5.4" | "gpt-5.4-mini";
+type ReasoningEffort = "default" | "low" | "medium" | "high";
+type TaskConfiguration = {
+  vercelModel: string;
+  vercelProvider: string;
+  azureModel: AzureModel;
+  maxCompletionTokens: number;
+  reasoningEffort: ReasoningEffort;
+};
 
 interface Configuration {
   revision: number;
   activeProvider: Provider;
-  tasks: Record<TaskKey, { vercelModel: string; vercelProvider: string; azureModel: AzureModel }>;
+  tasks: Record<TaskKey, TaskConfiguration>;
   audioTranscription: { vercelModel: string };
 }
 
@@ -74,6 +82,12 @@ const TASKS: Array<{ key: TaskKey; title: string; description: string; icon: typ
   { key: "lead_qualification", title: "Qualificação de leads", description: "Extração de estágio, intenção, perfil e próximo passo.", icon: BrainCircuit },
 ];
 const AZURE_MODELS: AzureModel[] = ["gpt-5.4-mini", "gpt-5.4"];
+const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
+  { value: "default", label: "Padrão do modelo" },
+  { value: "low", label: "Baixo" },
+  { value: "medium", label: "Médio" },
+  { value: "high", label: "Alto" },
+];
 
 export default function AiModelSettings() {
   const [configuration, setConfiguration] = useState<Configuration | null>(null);
@@ -216,7 +230,7 @@ export default function AiModelSettings() {
     }
   }
 
-  function setTaskModel(taskKey: TaskKey, field: "vercelModel" | "vercelProvider" | "azureModel", value: string) {
+  function setTaskModel<K extends keyof TaskConfiguration>(taskKey: TaskKey, field: K, value: TaskConfiguration[K]) {
     setConfiguration((current) => current ? {
       ...current,
       tasks: {
@@ -227,7 +241,7 @@ export default function AiModelSettings() {
           ...(field === "vercelModel" ? { vercelProvider: "auto" } : {}),
         },
       },
-    } as Configuration : current);
+    } : current);
     setMessage(null);
   }
 
@@ -351,7 +365,7 @@ function TaskModelRow({ task, values, models, onChange }: {
   task: typeof TASKS[number];
   values: Configuration["tasks"][TaskKey];
   models: CatalogModel[];
-  onChange: (field: "vercelModel" | "vercelProvider" | "azureModel", value: string) => void;
+  onChange: <K extends keyof TaskConfiguration>(field: K, value: TaskConfiguration[K]) => void;
 }) {
   const Icon = task.icon;
   const selected = models.find((model) => model.id === values.vercelModel);
@@ -368,6 +382,18 @@ function TaskModelRow({ task, values, models, onChange }: {
           {AZURE_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
         <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">Usado somente quando o Azure for selecionado e autorizado.</span>
+      </label>
+    </div>
+    <div className="mt-4 grid gap-4 border-t border-mist pt-4 sm:grid-cols-2">
+      <label className="text-xs font-semibold text-slate-ink">Nível de raciocínio
+        <select value={values.reasoningEffort} onChange={(event) => onChange("reasoningEffort", event.target.value as ReasoningEffort)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
+          {REASONING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">{selected?.supportsReasoning === false ? "O catálogo não indica suporte a raciocínio para este modelo; use o padrão para evitar rejeição." : "Níveis maiores podem melhorar decisões complexas, com mais latência e custo."}</span>
+      </label>
+      <label className="text-xs font-semibold text-slate-ink">Limite de tokens de saída
+        <input type="number" min={512} max={65536} step={512} value={values.maxCompletionTokens} onChange={(event) => onChange("maxCompletionTokens", Number(event.target.value))} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+        <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">A primeira tentativa usa metade do teto; se truncar, a segunda usa até {values.maxCompletionTokens.toLocaleString("pt-BR")} tokens.{selected?.maxTokens ? ` Limite informado pelo catálogo: ${selected.maxTokens.toLocaleString("pt-BR")}.` : ""}</span>
       </label>
     </div>
   </section>;

@@ -7,6 +7,7 @@ import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
 import { withModelRateLimitRetry } from "./retry";
 import { getProviderClient } from "./providers/registry";
 import type { AiProvider } from "./providers/types";
+import type { ReasoningEffort } from "./provider-config";
 import { resolveAiModel } from "./routing";
 
 type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
@@ -57,7 +58,6 @@ const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
 const TRACE_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 const MAX_STRUCTURED_OUTPUT_ATTEMPTS = 2;
-const MAX_ADAPTIVE_COMPLETION_TOKENS = 16_384;
 let indexesPromise: Promise<unknown> | undefined;
 
 export interface StructuredModelRequest<T> {
@@ -93,6 +93,10 @@ export async function generateStructuredOutput<T>(
   const client = getProviderClient(resolved.provider, resolved.model, resolved.credential);
   const startedAt = new Date();
   const providerCalls: ProviderCallTrace[] = [];
+  const maxCompletionTokens = request.maxCompletionTokens ?? resolved.maxCompletionTokens;
+  const initialCompletionTokens = request.maxCompletionTokens
+    ? maxCompletionTokens
+    : Math.max(512, Math.ceil(maxCompletionTokens / 2));
   const traceId = await startTrace({
     taskKey: request.taskKey,
     customerId: request.customerId,
@@ -102,7 +106,14 @@ export async function generateStructuredOutput<T>(
     model: resolved.model,
     inferenceProvider: resolved.inferenceProvider,
     messageCount: request.messages.length,
-    context: request.trace,
+    context: {
+      ...request.trace,
+      generation: {
+        reasoningEffort: resolved.reasoningEffort,
+        initialCompletionTokens,
+        maxCompletionTokens,
+      },
+    },
     startedAt,
   });
 
@@ -112,7 +123,10 @@ export async function generateStructuredOutput<T>(
       messages: request.messages,
       schemaName: request.schemaName,
       schema: request.schema,
-      maxCompletionTokens: request.maxCompletionTokens ?? 4_096,
+      maxCompletionTokens: initialCompletionTokens,
+      maxAdaptiveCompletionTokens: maxCompletionTokens,
+      provider: resolved.provider,
+      reasoningEffort: resolved.reasoningEffort,
       inferenceProvider: resolved.provider === "vercel" ? resolved.inferenceProvider : null,
       parse: request.parse,
       onProviderResponse: async (call) => {
@@ -278,6 +292,9 @@ async function requestValidatedStructuredContent<T>(
     schemaName: string;
     schema: Record<string, unknown>;
     maxCompletionTokens: number;
+    maxAdaptiveCompletionTokens: number;
+    provider: AiProvider;
+    reasoningEffort: ReasoningEffort;
     inferenceProvider: string | null;
     parse: (content: string) => T;
     onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
@@ -299,7 +316,7 @@ async function requestValidatedStructuredContent<T>(
     } catch (error) {
       if (error instanceof StructuredOutputTokenLimitError) {
         if (attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) throw error;
-        maxCompletionTokens = Math.min(maxCompletionTokens * 2, MAX_ADAPTIVE_COMPLETION_TOKENS);
+        maxCompletionTokens = Math.min(maxCompletionTokens * 2, input.maxAdaptiveCompletionTokens);
       } else if (!isStructuredOutputValidationFailure(error) || attempt === MAX_STRUCTURED_OUTPUT_ATTEMPTS) {
         throw unwrapStructuredOutputValidationError(error);
       }
@@ -355,6 +372,8 @@ async function requestStructuredContent<T>(
     schemaName: string;
     schema: Record<string, unknown>;
     maxCompletionTokens: number;
+    provider: AiProvider;
+    reasoningEffort: ReasoningEffort;
     inferenceProvider: string | null;
     parse: (content: string) => T;
     onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
@@ -373,6 +392,7 @@ async function requestStructuredContent<T>(
         type: "json_schema",
         json_schema: { name: input.schemaName, strict: true, schema: input.schema },
       },
+      ...reasoningOptions(input.provider, input.reasoningEffort),
       ...providerOptions,
     }));
     await input.onProviderResponse(toProviderCallTrace(
@@ -416,6 +436,8 @@ async function requestToolContent<T>(
     messages: ChatCompletionMessageParam[];
     schemaName: string;
     maxCompletionTokens: number;
+    provider: AiProvider;
+    reasoningEffort: ReasoningEffort;
     parse: (content: string) => T;
     onProviderResponse: (call: Omit<ProviderCallTrace, "sequence">) => Promise<void>;
   },
@@ -434,6 +456,7 @@ async function requestToolContent<T>(
     tools: [tool],
     ...(forceTool ? { tool_choice: { type: "function" as const, function: { name: input.schemaName } } } : {}),
     parallel_tool_calls: false,
+    ...reasoningOptions(input.provider, input.reasoningEffort),
     ...providerOptions,
   }));
   const response = retried.value;
@@ -450,6 +473,13 @@ async function requestToolContent<T>(
   const content = toolCall && "function" in toolCall ? toolCall.function.arguments : undefined;
   if (!content && response.choices[0]?.finish_reason === "length") {
     throw new StructuredOutputTokenLimitError(input.maxCompletionTokens);
+  }
+
+  function reasoningOptions(provider: AiProvider, effort: ReasoningEffort) {
+    if (effort === "default") return {};
+    return provider === "vercel"
+      ? { reasoning: { effort } }
+      : { reasoning_effort: effort };
   }
   return {
     response,

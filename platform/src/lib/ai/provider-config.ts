@@ -17,6 +17,18 @@ export type AiTaskKey = typeof AI_TASK_KEYS[number];
 export const AZURE_MODELS = ["gpt-5.4", "gpt-5.4-mini"] as const;
 export type AzureModel = typeof AZURE_MODELS[number];
 export const VERCEL_AUTO_PROVIDER = "auto";
+export const REASONING_EFFORTS = ["default", "low", "medium", "high"] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
+export const MIN_COMPLETION_TOKENS = 512;
+export const MAX_COMPLETION_TOKENS = 65_536;
+
+export interface AiTaskModelConfiguration {
+  vercelModel: string;
+  vercelProvider: string;
+  azureModel: AzureModel;
+  maxCompletionTokens: number;
+  reasoningEffort: ReasoningEffort;
+}
 
 export interface AiProviderConfigurationDocument {
   _id: "active";
@@ -24,7 +36,7 @@ export interface AiProviderConfigurationDocument {
   activeProvider: AiProvider;
   preferredProvider?: AiProvider;
   azureAccessAuthorizedAt?: Date;
-  tasks: Record<AiTaskKey, { vercelModel: string; vercelProvider: string; azureModel: AzureModel }>;
+  tasks: Record<AiTaskKey, AiTaskModelConfiguration>;
   audioTranscription: { vercelModel: string };
   updatedAt: Date;
   updatedBy: string;
@@ -35,8 +47,20 @@ const DEFAULT_CONFIGURATION: AiProviderConfigurationDocument = {
   revision: 1,
   activeProvider: "vercel",
   tasks: {
-    customer_agent: { vercelModel: "openai/gpt-5.4-mini", vercelProvider: VERCEL_AUTO_PROVIDER, azureModel: "gpt-5.4-mini" },
-    lead_qualification: { vercelModel: "openai/gpt-5.4-mini", vercelProvider: VERCEL_AUTO_PROVIDER, azureModel: "gpt-5.4-mini" },
+    customer_agent: {
+      vercelModel: "openai/gpt-5.4-mini",
+      vercelProvider: VERCEL_AUTO_PROVIDER,
+      azureModel: "gpt-5.4-mini",
+      maxCompletionTokens: 32_768,
+      reasoningEffort: "high",
+    },
+    lead_qualification: {
+      vercelModel: "openai/gpt-5.4-mini",
+      vercelProvider: VERCEL_AUTO_PROVIDER,
+      azureModel: "gpt-5.4-mini",
+      maxCompletionTokens: 8_192,
+      reasoningEffort: "default",
+    },
   },
   audioTranscription: { vercelModel: "openai/gpt-4o-mini-transcribe" },
   updatedAt: new Date(0),
@@ -60,7 +84,13 @@ export async function updateAiProviderConfiguration(input: {
   expectedRevision: number;
   activeProvider: AiProvider;
   azureAccessAuthorized?: boolean;
-  tasks: Record<AiTaskKey, { vercelModel: string; vercelProvider?: string; azureModel: string }>;
+  tasks: Record<AiTaskKey, {
+    vercelModel: string;
+    vercelProvider?: string;
+    azureModel: string;
+    maxCompletionTokens?: number;
+    reasoningEffort?: string;
+  }>;
   audioTranscription?: { vercelModel?: string };
   updatedBy: string;
 }) {
@@ -86,7 +116,25 @@ export async function updateAiProviderConfiguration(input: {
     if (!isAzureModel(task?.azureModel)) {
       throw new Error(`O modelo Azure de ${taskKey} deve ser gpt-5.4 ou gpt-5.4-mini.`);
     }
-    return [taskKey, { vercelModel, vercelProvider, azureModel: task.azureModel }];
+    const maxCompletionTokens = task.maxCompletionTokens ?? DEFAULT_CONFIGURATION.tasks[taskKey].maxCompletionTokens;
+    if (
+      !Number.isInteger(maxCompletionTokens) ||
+      maxCompletionTokens < MIN_COMPLETION_TOKENS ||
+      maxCompletionTokens > MAX_COMPLETION_TOKENS
+    ) {
+      throw new Error(`O limite de saída de ${taskKey} deve ficar entre ${MIN_COMPLETION_TOKENS} e ${MAX_COMPLETION_TOKENS} tokens.`);
+    }
+    const reasoningEffort = task.reasoningEffort ?? DEFAULT_CONFIGURATION.tasks[taskKey].reasoningEffort;
+    if (!isReasoningEffort(reasoningEffort)) {
+      throw new Error(`O nível de raciocínio de ${taskKey} é inválido.`);
+    }
+    return [taskKey, {
+      vercelModel,
+      vercelProvider,
+      azureModel: task.azureModel,
+      maxCompletionTokens,
+      reasoningEffort,
+    }];
   })) as AiProviderConfigurationDocument["tasks"];
   const current = await getAiProviderConfiguration();
   const transcriptionModel = (
@@ -153,4 +201,8 @@ function normalizeConfiguration(value: AiProviderConfigurationDocument): AiProvi
 
 function isAzureModel(value: unknown): value is AzureModel {
   return typeof value === "string" && AZURE_MODELS.includes(value as AzureModel);
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === "string" && REASONING_EFFORTS.includes(value as ReasoningEffort);
 }

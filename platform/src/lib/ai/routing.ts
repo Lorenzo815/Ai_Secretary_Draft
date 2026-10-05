@@ -1,6 +1,12 @@
 import "server-only";
 
-import { AI_TASK_KEYS, getAiProviderConfiguration, VERCEL_AUTO_PROVIDER, type AiTaskKey } from "./provider-config";
+import {
+  AI_TASK_KEYS,
+  getAiProviderConfiguration,
+  VERCEL_AUTO_PROVIDER,
+  type AiTaskKey,
+  type ReasoningEffort,
+} from "./provider-config";
 import { getProviderCredential } from "./providers/registry";
 import type { AiProvider, ProviderCredential } from "./providers/types";
 
@@ -8,6 +14,8 @@ export interface ResolvedAiModel {
   provider: AiProvider;
   model: string;
   inferenceProvider: string | null;
+  maxCompletionTokens: number;
+  reasoningEffort: ReasoningEffort;
   selectedProvider: AiProvider;
   credential: ProviderCredential | null;
 }
@@ -24,6 +32,8 @@ export async function resolveAiModel(taskKey: string): Promise<ResolvedAiModel> 
     inferenceProvider: selectedProvider === "vercel" && task.vercelProvider !== VERCEL_AUTO_PROVIDER
       ? task.vercelProvider
       : null,
+    maxCompletionTokens: task.maxCompletionTokens,
+    reasoningEffort: task.reasoningEffort,
     selectedProvider,
     credential: await getProviderCredential(selectedProvider),
   };
