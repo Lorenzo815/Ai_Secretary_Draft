@@ -87,6 +87,11 @@ describe("calendar plan prerequisites", () => {
     expect(JSON.parse(execution!.output)).toMatchObject({
       ok: true,
       tool: "calendar.find_slots",
+      candidates: [],
+      unavailability: {
+        cause: "undetermined",
+        scope: "complete_criteria",
+      },
     });
     expect(findSchedulingPlanOptions).toHaveBeenCalledOnce();
     expect(findCustomerById).not.toHaveBeenCalled();

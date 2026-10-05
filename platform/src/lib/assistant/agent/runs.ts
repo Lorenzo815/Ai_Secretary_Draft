@@ -24,6 +24,7 @@ export async function listCustomerAgentRuns(customerId: ObjectId, limit = 20) {
 }
 
 export async function startAgentRun(input: {
+  jobId: ObjectId;
   customerId: ObjectId;
   jobRevision: number;
   configuration: AgentConfigurationDocument;
@@ -31,6 +32,7 @@ export async function startAgentRun(input: {
 }) {
   const run: AgentRunDocument = {
     _id: new ObjectId(),
+    jobId: input.jobId,
     customerId: input.customerId,
     jobRevision: input.jobRevision,
     configRevision: input.configuration.revision,
@@ -168,6 +170,7 @@ export interface AgentRunCheckpoint {
 }
 
 export async function loadAgentRunCheckpoint(input: {
+  jobId: ObjectId;
   customerId: ObjectId;
   jobRevision: number;
   configHash: string;
@@ -175,6 +178,7 @@ export async function loadAgentRunCheckpoint(input: {
   const database = (await clientPromise).db(DB_NAME);
   const runs = await database.collection<AgentRunDocument>("assistant_runs")
     .find({
+      jobId: input.jobId,
       customerId: input.customerId,
       jobRevision: input.jobRevision,
       configHash: input.configHash,

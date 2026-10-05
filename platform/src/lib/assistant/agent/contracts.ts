@@ -170,6 +170,7 @@ export type AgentConfigurationSnapshot = Omit<
 
 export interface AgentRunDocument {
   _id: ObjectId;
+  jobId: ObjectId;
   customerId: ObjectId;
   jobRevision: number;
   configRevision: number;

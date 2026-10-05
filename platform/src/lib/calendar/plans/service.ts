@@ -10,7 +10,9 @@ import {
   findAvailableSlots,
   getCalendarSettings,
   holdAppointment,
+  listActiveAppointmentHoldIds,
   releaseAppointmentHolds,
+  replaceAppointmentHolds,
   updateCustomerAppointments,
 } from "../calendar";
 import {
@@ -78,6 +80,22 @@ export async function findSchedulingPlanOptions(input: {
   targetAppointmentIds?: ObjectId[];
 }) {
   const settings = await getCalendarSettings();
+  const options = await getOptionsCollection();
+  const activeHeldOption = input.purpose !== "reschedule"
+    ? await options.findOne({
+        customerId: input.customerId,
+        planKey: input.plan.key,
+        status: "held",
+        expiresAt: { $gt: new Date() },
+      })
+    : null;
+  const heldAppointmentIds = activeHeldOption
+    ? await listActiveAppointmentHoldIds(input.customerId, activeHeldOption._id)
+    : [];
+  const excludedAppointmentIds = [
+    ...(input.targetAppointmentIds ?? []),
+    ...heldAppointmentIds,
+  ];
   const criteriaByStep = new Map(input.criteria.map((criterion) => [criterion.stepKey, criterion]));
   const slotEntries = await Promise.all(input.plan.steps.map(async (step) => {
     const criterion = criteriaByStep.get(step.key);
@@ -89,11 +107,10 @@ export async function findSchedulingPlanOptions(input: {
       startTime: criterion.startTime,
       eventType: step.eventTypeKey,
       limit: 50,
-      excludeAppointmentIds: input.targetAppointmentIds,
+      excludeAppointmentIds: excludedAppointmentIds,
     });
     return [step.key, result.slots] as const;
   }));
-  const options = await getOptionsCollection();
   await options.updateMany(
     { customerId: input.customerId, planKey: input.plan.key, status: "proposed" },
     { $set: { status: "superseded", supersededAt: new Date() } },
@@ -209,6 +226,12 @@ export async function holdSchedulingPlanOption(input: {
   configRevision: number;
 }) {
   const options = await getOptionsCollection();
+  const activeHeldOption = await options.findOne({
+    customerId: input.customerId,
+    planKey: input.plan.key,
+    status: "held",
+    expiresAt: { $gt: new Date() },
+  });
   const option = await options.findOneAndUpdate({
     _id: input.optionId,
     customerId: input.customerId,
@@ -237,20 +260,36 @@ export async function holdSchedulingPlanOption(input: {
   const appointmentGroupId = new ObjectId();
   const createdIds: ObjectId[] = [];
   try {
-    for (const step of option.steps) {
-      const appointment = await holdAppointment({
+    if (activeHeldOption && !activeHeldOption._id.equals(option._id)) {
+      await replaceAppointmentHolds({
         customerId: input.customerId,
         customerName: input.customerName,
         contactPhone: input.contactPhone,
-        startAt: step.slot.startAt,
-        eventType: step.eventTypeKey,
-        source: "assistant",
-        visitGroupId: appointmentGroupId,
-        schedulingOptionId: option._id,
+        currentSchedulingOptionId: activeHeldOption._id,
+        nextSchedulingOptionId: option._id,
+        appointments: option.steps.map((step) => ({
+          startAt: step.slot.startAt,
+          eventType: step.eventTypeKey,
+        })),
+        appointmentGroupId,
         holdExpiresAt,
-        deferQualificationTrigger: true,
       });
-      createdIds.push(appointment._id);
+    } else {
+      for (const step of option.steps) {
+        const appointment = await holdAppointment({
+          customerId: input.customerId,
+          customerName: input.customerName,
+          contactPhone: input.contactPhone,
+          startAt: step.slot.startAt,
+          eventType: step.eventTypeKey,
+          source: "assistant",
+          visitGroupId: appointmentGroupId,
+          schedulingOptionId: option._id,
+          holdExpiresAt,
+          deferQualificationTrigger: true,
+        });
+        createdIds.push(appointment._id);
+      }
     }
   } catch (error) {
     if (createdIds.length > 0) {

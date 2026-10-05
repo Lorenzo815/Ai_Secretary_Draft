@@ -99,15 +99,18 @@ function failedResult(tool: string) {
 
   it("loads only the current job revision and configuration hash", async () => {
     runsToArray.mockResolvedValue([]);
+    const jobId = new ObjectId();
     const customerId = new ObjectId();
 
     const checkpoint = await loadAgentRunCheckpoint({
+      jobId,
       customerId,
       jobRevision: 8,
       configHash: "current-config",
     });
 
     expect(runFind).toHaveBeenCalledWith({
+      jobId,
       customerId,
       jobRevision: 8,
       configHash: "current-config",
@@ -119,10 +122,12 @@ function failedResult(tool: string) {
 
   it("supersedes interrupted runs before starting a resumed run", async () => {
     const interruptedRunId = new ObjectId();
+    const jobId = new ObjectId();
     const customerId = new ObjectId();
     const configuration = createDefaultAgentConfiguration();
 
     await startAgentRun({
+      jobId,
       customerId,
       jobRevision: 8,
       configuration,
@@ -141,6 +146,7 @@ function failedResult(tool: string) {
       { $set: { status: "superseded", completedAt: expect.any(Date) } },
     );
     expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({
+      jobId,
       status: "running",
       resumedFromRunIds: [interruptedRunId],
     }));
@@ -164,6 +170,7 @@ function failedResult(tool: string) {
 function createRun(counters: Pick<AgentRunDocument, "modelIterations" | "toolExecutions" | "mutationsExecuted">) {
   return {
     _id: new ObjectId(),
+    jobId: new ObjectId(),
     customerId: new ObjectId(),
     jobRevision: 7,
     configRevision: 3,

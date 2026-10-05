@@ -84,6 +84,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
     }
 
     const checkpoint = await loadAgentRunCheckpoint({
+      jobId: job._id,
       customerId: job.customerId,
       jobRevision: job.revision,
       configHash: configuration.contentHash,
@@ -91,7 +92,13 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
     modelIterations = checkpoint.modelIterations;
     toolExecutions = checkpoint.toolExecutions;
     mutationsExecuted = checkpoint.mutationsExecuted;
-    run = await startAgentRun({ customerId: job.customerId, jobRevision: job.revision, configuration, checkpoint });
+    run = await startAgentRun({
+      jobId: job._id,
+      customerId: job.customerId,
+      jobRevision: job.revision,
+      configuration,
+      checkpoint,
+    });
     const toolHistory: AgentToolHistoryEntry[] = [...checkpoint.toolHistory];
     const invalidFingerprints = new Map<string, number>();
     let requireFinalResponse = isEmptyAvailabilityResult(toolHistory.at(-1)?.result);

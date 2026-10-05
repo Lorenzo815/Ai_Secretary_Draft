@@ -113,6 +113,7 @@ async function executeCalendarAction(input: {
         targetAppointmentIds,
         criteria: appliedCriteria,
       });
+      const candidates = result.options.map((option) => serializeCandidate(option, plan));
       return {
         output: JSON.stringify({
           ok: true,
@@ -122,7 +123,14 @@ async function executeCalendarAction(input: {
           range: { fromDate: input.action.fromDate, toDate: globalToDate },
           appliedCriteria,
           configuredWindowsSource: "weekly_availability_intersected_with_permissions_minus_blockers_and_appointments",
-          candidates: result.options.map((option) => serializeCandidate(option, plan)),
+          candidates,
+          ...(candidates.length === 0 ? {
+            unavailability: {
+              cause: "undetermined",
+              scope: "complete_criteria",
+              message: "Nenhuma combinação completa foi encontrada; o resultado não identifica qual etapa impediu o encaixe.",
+            },
+          } : {}),
         }),
         retryable: false,
       };

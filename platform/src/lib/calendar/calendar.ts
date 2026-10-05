@@ -628,6 +628,106 @@ export async function holdAppointment(input: BookAppointmentInput & {
   );
 }
 
+export async function listActiveAppointmentHoldIds(
+  customerId: ObjectId,
+  schedulingOptionId: ObjectId,
+) {
+  return (await getAppointmentsCollection()).find({
+    customerId,
+    schedulingOptionId,
+    status: "held",
+    holdExpiresAt: { $gt: new Date() },
+  }, { projection: { _id: 1 } }).toArray().then((appointments) => (
+    appointments.map((appointment) => appointment._id)
+  ));
+}
+
+export async function replaceAppointmentHolds(input: {
+  customerId: ObjectId;
+  customerName: string;
+  contactPhone: string;
+  currentSchedulingOptionId: ObjectId;
+  nextSchedulingOptionId: ObjectId;
+  appointments: Array<{ startAt: string; eventType: string }>;
+  appointmentGroupId: ObjectId;
+  holdExpiresAt: Date;
+}) {
+  const settings = await getCalendarSettings();
+  const appointments = await getAppointmentsCollection();
+  const current = await appointments.find({
+    customerId: input.customerId,
+    schedulingOptionId: input.currentSchedulingOptionId,
+    status: "held",
+    holdExpiresAt: { $gt: new Date() },
+  }).sort({ startAt: 1 }).toArray();
+  if (current.length === 0 || current.length !== input.appointments.length) {
+    throw new Error("A reserva temporária atual não pôde ser identificada para substituição.");
+  }
+  const currentIds = current.map((appointment) => appointment._id);
+  const replacements: AppointmentDocument[] = [];
+  for (const replacement of input.appointments) {
+    const requested = DateTime.fromISO(replacement.startAt, { setZone: true }).setZone(settings.timezone);
+    if (!requested.isValid) throw new Error("Data da nova reserva temporária inválida.");
+    const date = requested.toISODate()!;
+    const available = await findAvailableSlots({
+      fromDate: date,
+      toDate: date,
+      eventType: replacement.eventType,
+      limit: 50,
+      excludeAppointmentIds: currentIds,
+    });
+    const slot = available.slots.find((candidate) => (
+      DateTime.fromISO(candidate.startAt).toUTC().toMillis() === requested.toUTC().toMillis()
+    ));
+    if (!slot) throw new Error("O novo horário escolhido não está mais disponível.");
+    replacements.push(createAppointmentDocument(
+      {
+        customerId: input.customerId,
+        customerName: input.customerName,
+        contactPhone: input.contactPhone,
+        startAt: slot.startAt,
+        eventType: replacement.eventType,
+        source: "assistant",
+        visitGroupId: input.appointmentGroupId,
+        schedulingOptionId: input.nextSchedulingOptionId,
+        holdExpiresAt: input.holdExpiresAt,
+        status: "held",
+        notes: "Reserva temporária aguardando confirmação do sinal.",
+      },
+      settings,
+      DateTime.fromISO(slot.startAt).toUTC(),
+      DateTime.fromISO(slot.endAt).toUTC(),
+      new Date(),
+    ));
+  }
+
+  await ensureCalendarIndexes();
+  const client = await clientPromise;
+  const session = client.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const removed = await appointments.deleteMany({
+        _id: { $in: currentIds },
+        customerId: input.customerId,
+        schedulingOptionId: input.currentSchedulingOptionId,
+        status: "held",
+      }, { session });
+      if (removed.deletedCount !== currentIds.length) {
+        throw new Error("A reserva temporária foi alterada por outra operação.");
+      }
+      await appointments.insertMany(replacements, { ordered: true, session });
+    });
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      throw new Error("Um dos novos horários não está mais disponível.");
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+  return replacements;
+}
+
 export async function confirmAppointmentHolds(customerId: ObjectId) {
   const appointments = await getAppointmentsCollection();
   await releaseExpiredAppointmentHolds();

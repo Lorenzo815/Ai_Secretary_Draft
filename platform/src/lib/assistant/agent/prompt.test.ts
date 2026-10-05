@@ -117,6 +117,8 @@ describe("assistant commercial conduct", () => {
     expect(prompt).toContain("zero candidatos não é falha técnica");
     expect(prompt).toContain("Não faça outra busca ampliando");
     expect(prompt).toContain("Nunca ofereça uma data anterior");
+    expect(prompt).toContain("unavailability.cause=undetermined");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("Nunca atribua a ausência a uma etapa");
   });
 
   it("grounds follow-ups in recent evidence without exposing internal analysis", () => {
