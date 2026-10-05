@@ -83,55 +83,6 @@ describe("AI provider configuration", () => {
       updatedBy: "admin@example.com",
     });
 
-    it("stores validated generation settings for each task", async () => {
-      await updateAiProviderConfiguration({
-        expectedRevision: 2,
-        activeProvider: "vercel",
-        tasks: {
-          customer_agent: {
-            ...stored.tasks.customer_agent,
-            maxCompletionTokens: 65_536,
-            reasoningEffort: "high",
-          },
-          lead_qualification: {
-            ...stored.tasks.lead_qualification,
-            maxCompletionTokens: 16_384,
-            reasoningEffort: "medium",
-          },
-        },
-        updatedBy: "admin@example.com",
-      });
-
-      expect(replaceOne).toHaveBeenCalledWith(
-        { _id: "active", revision: 2 },
-        expect.objectContaining({
-          tasks: {
-            customer_agent: expect.objectContaining({
-              maxCompletionTokens: 65_536,
-              reasoningEffort: "high",
-            }),
-            lead_qualification: expect.objectContaining({
-              maxCompletionTokens: 16_384,
-              reasoningEffort: "medium",
-            }),
-          },
-        }),
-      );
-    });
-
-    it("rejects generation settings outside the supported range", async () => {
-      await expect(updateAiProviderConfiguration({
-        expectedRevision: 2,
-        activeProvider: "vercel",
-        tasks: {
-          customer_agent: { ...stored.tasks.customer_agent, maxCompletionTokens: 65_537 },
-          lead_qualification: stored.tasks.lead_qualification,
-        },
-        updatedBy: "admin@example.com",
-      })).rejects.toThrow("deve ficar entre 512 e 65536 tokens");
-      expect(replaceOne).not.toHaveBeenCalled();
-    });
-
     expect(replaceOne).toHaveBeenCalledWith(
       { _id: "active", revision: 2 },
       expect.objectContaining({
@@ -139,6 +90,55 @@ describe("AI provider configuration", () => {
         audioTranscription: { vercelModel: "google/gemini-3.5-transcribe" },
       }),
     );
+  });
+
+  it("stores validated generation settings for each task", async () => {
+    await updateAiProviderConfiguration({
+      expectedRevision: 2,
+      activeProvider: "vercel",
+      tasks: {
+        customer_agent: {
+          ...stored.tasks.customer_agent,
+          maxCompletionTokens: 65_536,
+          reasoningEffort: "high",
+        },
+        lead_qualification: {
+          ...stored.tasks.lead_qualification,
+          maxCompletionTokens: 16_384,
+          reasoningEffort: "medium",
+        },
+      },
+      updatedBy: "admin@example.com",
+    });
+
+    expect(replaceOne).toHaveBeenCalledWith(
+      { _id: "active", revision: 2 },
+      expect.objectContaining({
+        tasks: {
+          customer_agent: expect.objectContaining({
+            maxCompletionTokens: 65_536,
+            reasoningEffort: "high",
+          }),
+          lead_qualification: expect.objectContaining({
+            maxCompletionTokens: 16_384,
+            reasoningEffort: "medium",
+          }),
+        },
+      }),
+    );
+  });
+
+  it("rejects generation settings outside the supported range", async () => {
+    await expect(updateAiProviderConfiguration({
+      expectedRevision: 2,
+      activeProvider: "vercel",
+      tasks: {
+        customer_agent: { ...stored.tasks.customer_agent, maxCompletionTokens: 65_537 },
+        lead_qualification: stored.tasks.lead_qualification,
+      },
+      updatedBy: "admin@example.com",
+    })).rejects.toThrow("deve ficar entre 512 e 65536 tokens");
+    expect(replaceOne).not.toHaveBeenCalled();
   });
 
   it("rejects Azure deployments outside the allowlist", async () => {

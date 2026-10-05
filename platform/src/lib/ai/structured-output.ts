@@ -93,9 +93,9 @@ export async function generateStructuredOutput<T>(
   const client = getProviderClient(resolved.provider, resolved.model, resolved.credential);
   const startedAt = new Date();
   const providerCalls: ProviderCallTrace[] = [];
-  const maxCompletionTokens = request.maxCompletionTokens ?? resolved.maxCompletionTokens;
+  const maxCompletionTokens = resolved.maxCompletionTokens;
   const initialCompletionTokens = request.maxCompletionTokens
-    ? maxCompletionTokens
+    ? Math.min(request.maxCompletionTokens, maxCompletionTokens)
     : Math.max(512, Math.ceil(maxCompletionTokens / 2));
   const traceId = await startTrace({
     taskKey: request.taskKey,
@@ -475,12 +475,6 @@ async function requestToolContent<T>(
     throw new StructuredOutputTokenLimitError(input.maxCompletionTokens);
   }
 
-  function reasoningOptions(provider: AiProvider, effort: ReasoningEffort) {
-    if (effort === "default") return {};
-    return provider === "vercel"
-      ? { reasoning: { effort } }
-      : { reasoning_effort: effort };
-  }
   return {
     response,
     retried,
@@ -488,6 +482,13 @@ async function requestToolContent<T>(
     content,
     value: content ? input.parse(content) : undefined as T,
   };
+}
+
+function reasoningOptions(provider: AiProvider, effort: ReasoningEffort) {
+  if (effort === "default") return {};
+  return provider === "vercel"
+    ? { reasoning: { effort } }
+    : { reasoning_effort: effort };
 }
 
 function toProviderCallTrace(

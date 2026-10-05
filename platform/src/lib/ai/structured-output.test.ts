@@ -167,6 +167,30 @@ describe("generateStructuredOutput transport", () => {
     expect(create.mock.calls[1][0].max_completion_tokens).toBe(32_768);
   });
 
+  it("uses the standard reasoning field for Azure requests", async () => {
+    resolveAiModel.mockResolvedValue({
+      provider: "azure",
+      selectedProvider: "azure",
+      model: "gpt-5.4",
+      inferenceProvider: null,
+      maxCompletionTokens: 8_192,
+      reasoningEffort: "high",
+      credential: { secret: "secret", source: "test" },
+    });
+    create.mockResolvedValue({
+      choices: [{ finish_reason: "stop", message: { content: '{"score":9}' } }],
+      usage: null,
+    });
+
+    await generateRequest();
+
+    expect(create.mock.calls[0][0]).toMatchObject({
+      max_completion_tokens: 4_096,
+      reasoning_effort: "high",
+    });
+    expect(create.mock.calls[0][0]).not.toHaveProperty("reasoning");
+  });
+
   it("retries the structured generation once after invalid native and tool outputs", async () => {
     create
       .mockResolvedValueOnce({

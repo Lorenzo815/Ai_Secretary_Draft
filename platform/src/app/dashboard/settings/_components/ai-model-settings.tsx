@@ -371,30 +371,32 @@ function TaskModelRow({ task, values, models, onChange }: {
   const selected = models.find((model) => model.id === values.vercelModel);
   return <section aria-labelledby={`${task.key}-title`} className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(190px,0.7fr)_minmax(0,1.3fr)]">
     <div className="flex items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warm-sand text-deep-teal"><Icon className="h-4 w-4" /></span><div><h4 id={`${task.key}-title`} className="font-heading text-sm font-semibold text-slate-ink">{task.title}</h4><p className="mt-1 text-xs leading-5 text-stone">{task.description}</p></div></div>
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(180px,0.65fr)]">
+    <div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(180px,0.65fr)]">
       <div className="min-w-0 text-xs font-semibold text-slate-ink">Modelo no Vercel AI Gateway
         <ModelPicker models={models} value={values.vercelModel} onChange={(value) => onChange("vercelModel", value)} />
         <ModelDetails model={selected} />
         <EndpointPicker key={values.vercelModel} model={values.vercelModel} value={values.vercelProvider} onChange={(value) => onChange("vercelProvider", value)} />
       </div>
       <label className="text-xs font-semibold text-slate-ink">Modelo no Azure
-        <select value={values.azureModel} onChange={(event) => onChange("azureModel", event.target.value)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
+        <select value={values.azureModel} onChange={(event) => onChange("azureModel", event.target.value as AzureModel)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
           {AZURE_MODELS.map((model) => <option key={model} value={model}>{model}</option>)}
         </select>
         <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">Usado somente quando o Azure for selecionado e autorizado.</span>
       </label>
-    </div>
-    <div className="mt-4 grid gap-4 border-t border-mist pt-4 sm:grid-cols-2">
-      <label className="text-xs font-semibold text-slate-ink">Nível de raciocínio
-        <select value={values.reasoningEffort} onChange={(event) => onChange("reasoningEffort", event.target.value as ReasoningEffort)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
-          {REASONING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">{selected?.supportsReasoning === false ? "O catálogo não indica suporte a raciocínio para este modelo; use o padrão para evitar rejeição." : "Níveis maiores podem melhorar decisões complexas, com mais latência e custo."}</span>
-      </label>
-      <label className="text-xs font-semibold text-slate-ink">Limite de tokens de saída
-        <input type="number" min={512} max={65536} step={512} value={values.maxCompletionTokens} onChange={(event) => onChange("maxCompletionTokens", Number(event.target.value))} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
-        <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">A primeira tentativa usa metade do teto; se truncar, a segunda usa até {values.maxCompletionTokens.toLocaleString("pt-BR")} tokens.{selected?.maxTokens ? ` Limite informado pelo catálogo: ${selected.maxTokens.toLocaleString("pt-BR")}.` : ""}</span>
-      </label>
+      </div>
+      <div className="mt-4 grid gap-4 border-t border-mist pt-4 sm:grid-cols-2">
+        <label className="text-xs font-semibold text-slate-ink">Nível de raciocínio
+          <select value={values.reasoningEffort} onChange={(event) => onChange("reasoningEffort", event.target.value as ReasoningEffort)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal">
+            {REASONING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">{selected?.supportsReasoning === false ? "O catálogo não indica suporte a raciocínio para este modelo; use o padrão para evitar rejeição." : "Níveis maiores podem melhorar decisões complexas, com mais latência e custo."}</span>
+        </label>
+        <label className="text-xs font-semibold text-slate-ink">Teto de tokens de saída
+          <input type="number" min={512} max={65536} step={512} value={values.maxCompletionTokens} onChange={(event) => onChange("maxCompletionTokens", Number(event.target.value))} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+          <span className="mt-2 block text-[11px] font-normal leading-4 text-stone">Por padrão, a primeira tentativa usa metade do teto; se truncar, a segunda usa até {values.maxCompletionTokens.toLocaleString("pt-BR")} tokens. Tarefas com limite inicial próprio continuam respeitando este teto.{selected?.maxTokens ? ` Limite informado pelo catálogo: ${selected.maxTokens.toLocaleString("pt-BR")}.` : ""}</span>
+        </label>
+      </div>
     </div>
   </section>;
 }
