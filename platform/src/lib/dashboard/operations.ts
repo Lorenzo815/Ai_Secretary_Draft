@@ -12,6 +12,7 @@ import { normalizeModelUsage, type NormalizedModelUsage } from "../ai/model-usag
 import { listVercelLanguageModels, listVercelModelEndpoints, listVercelTranscriptionModels } from "../ai/vercel-models";
 import { getUsdBrlRate, type UsdBrlRate } from "../currency/usd-brl";
 import { reconcileResumedAgentRuns } from "../assistant/agent/runs";
+import { collectAudioTranscriptionModelIds } from "./operations-usage";
 
 const DB_NAME = "ai_secretary";
 
@@ -340,18 +341,15 @@ async function loadVercelPricing(calls: ModelCallRecord[]) {
 }
 
 async function loadVercelTranscriptionPricing(calls: ModelCallRecord[]) {
-  const modelIds = new Set(
-    calls
-      .filter((call) => call.taskKey === "audio_transcription" || call.taskKey === "audio_transcription_test")
-      .map((call) => call.model),
-  );
+  const modelIds = collectAudioTranscriptionModelIds(calls);
   const pricing = new Map<string, AudioTranscriptionPricing>();
   if (modelIds.size === 0) return pricing;
   try {
     for (const model of await listVercelTranscriptionModels()) {
-      if (modelIds.has(model.id)) pricing.set(model.id.toLowerCase(), model);
+      if (modelIds.has(model.id.toLowerCase())) pricing.set(model.id.toLowerCase(), model);
     }
-  } catch {
+  } catch (error) {
+    console.error("Vercel transcription pricing could not be loaded", error);
     return pricing;
   }
   return pricing;
