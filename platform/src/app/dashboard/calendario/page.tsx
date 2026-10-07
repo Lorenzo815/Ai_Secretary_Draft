@@ -97,7 +97,7 @@ export default function CalendarPage() {
   const [editingAppointmentId, setEditingAppointmentId] = useState("");
   const [editScope, setEditScope] = useState<"occurrence" | "series">("occurrence");
   const [repeatEnabled, setRepeatEnabled] = useState(false);
-  const [repeatFrequency, setRepeatFrequency] = useState<"daily" | "weekly" | "monthly">("weekly");
+  const [repeatFrequency, setRepeatFrequency] = useState<"daily" | "weekly" | "biweekly" | "monthly">("weekly");
   const [repeatInterval, setRepeatInterval] = useState(1);
   const [repeatEndMode, setRepeatEndMode] = useState<"count" | "until">("count");
   const [repeatCount, setRepeatCount] = useState(4);
@@ -252,7 +252,11 @@ export default function CalendarPage() {
     setEditingAppointmentId(appointment._id);
     setEditScope("occurrence");
     setRepeatEnabled(Boolean(appointment.recurrence));
-    setRepeatFrequency(appointment.recurrence?.frequency ?? "weekly");
+    setRepeatFrequency(
+      appointment.recurrence?.frequency === "weekly" && appointment.recurrence.interval === 2
+        ? "biweekly"
+        : appointment.recurrence?.frequency ?? "weekly",
+    );
     setRepeatInterval(appointment.recurrence?.interval ?? 1);
     setCustomerId(appointment.customerId ?? "");
     setCustomerQuery("");
@@ -298,8 +302,8 @@ export default function CalendarPage() {
         ...(editingAppointmentId ? { scope: editScope } : {}),
         ...(!editingAppointmentId && repeatEnabled ? {
           recurrence: {
-            frequency: repeatFrequency,
-            interval: repeatInterval,
+            frequency: repeatFrequency === "biweekly" ? "weekly" : repeatFrequency,
+            interval: repeatFrequency === "biweekly" ? 2 : repeatInterval,
             endMode: repeatEndMode,
             ...(repeatEndMode === "count" ? { count: repeatCount } : { untilDate: repeatUntilDate }),
           },
@@ -883,14 +887,17 @@ export default function CalendarPage() {
                   <select value={repeatFrequency} onChange={(event) => setRepeatFrequency(event.target.value as typeof repeatFrequency)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
                     <option value="daily">Diária</option>
                     <option value="weekly">Semanal</option>
-                    <option value="monthly">Mensal</option>
+                    <option value="biweekly">Quinzenal · a cada 2 semanas</option>
+                    <option value="monthly">A cada 4 semanas</option>
                   </select>
                 </label>
                 <label className="text-xs font-semibold text-slate-ink">A cada
-                  <span className="mt-1.5 flex items-center gap-2">
-                    <input type="number" min={1} max={30} value={repeatInterval} onChange={(event) => setRepeatInterval(Number(event.target.value))} className="min-w-0 flex-1 rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
-                    <span className="text-xs font-normal text-stone">{repeatFrequency === "daily" ? "dia(s)" : repeatFrequency === "weekly" ? "semana(s)" : "mês(es)"}</span>
-                  </span>
+                  {repeatFrequency === "biweekly"
+                    ? <span className="mt-1.5 flex min-h-10 items-center rounded-lg border border-mist bg-pearl px-3 text-sm font-normal text-stone">2 semanas</span>
+                    : <span className="mt-1.5 flex items-center gap-2">
+                        <input type="number" min={1} max={30} value={repeatInterval} onChange={(event) => setRepeatInterval(Number(event.target.value))} className="min-w-0 flex-1 rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
+                        <span className="text-xs font-normal text-stone">{repeatFrequency === "daily" ? "dia(s)" : repeatFrequency === "weekly" ? "semana(s)" : "período(s) de 4 semanas"}</span>
+                      </span>}
                 </label>
                 <label className="text-xs font-semibold text-slate-ink">Termina por
                   <select value={repeatEndMode} onChange={(event) => setRepeatEndMode(event.target.value as typeof repeatEndMode)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">

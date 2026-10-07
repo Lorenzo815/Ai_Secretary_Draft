@@ -74,5 +74,5 @@ export function addAppointmentRecurrenceInterval(
 ) {
   if (frequency === "daily") return start.plus({ days: amount });
   if (frequency === "weekly") return start.plus({ weeks: amount });
-  return start.plus({ months: amount });
+  return start.plus({ weeks: amount * 4 });
 }

@@ -34,16 +34,16 @@ describe("calendar recurrence", () => {
     ]);
   });
 
-  it("calculates monthly occurrences from the original date instead of drifting", () => {
+  it("keeps the weekday for monthly occurrences using a four-week cadence", () => {
     const values = buildAppointmentRecurrenceStarts(
-      "2027-01-31T14:00:00-03:00",
+      "2026-10-15T14:00:00-03:00",
       { frequency: "monthly", interval: 1, endMode: "count", count: 3 },
       timezone,
     );
     expect(isoDates(values)).toEqual([
-      "2027-01-31 14:00",
-      "2027-02-28 14:00",
-      "2027-03-31 14:00",
+      "2026-10-15 14:00",
+      "2026-11-12 14:00",
+      "2026-12-10 14:00",
     ]);
   });
 

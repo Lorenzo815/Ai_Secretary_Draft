@@ -508,10 +508,18 @@ function normalize(value: string) {
 }
 
 function recurrenceLabel(recurrence: NonNullable<Appointment["recurrence"]>) {
-  const frequency = recurrence.frequency === "daily" ? "dia" : recurrence.frequency === "weekly" ? "semana" : "mês";
+  if (recurrence.frequency === "monthly") {
+    return recurrence.interval === 1
+      ? "Repete a cada 4 semanas"
+      : `Repete a cada ${recurrence.interval * 4} semanas`;
+  }
+  if (recurrence.frequency === "weekly" && recurrence.interval === 2) {
+    return "Repete quinzenalmente";
+  }
+  const frequency = recurrence.frequency === "daily" ? "dia" : "semana";
   return recurrence.interval === 1
     ? `Repete a cada ${frequency}`
-    : `Repete a cada ${recurrence.interval} ${frequency}${frequency === "mês" ? "es" : "s"}`;
+    : `Repete a cada ${recurrence.interval} ${frequency}s`;
 }
 
 function StatusBadge({ appointment }: { appointment: Appointment }) {
