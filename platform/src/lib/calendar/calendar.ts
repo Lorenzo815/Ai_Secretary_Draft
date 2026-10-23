@@ -420,17 +420,49 @@ export async function findCustomerAppointments(input: {
   if (eventTypes.some((eventType) => !validTypes.has(eventType))) {
     throw new Error("Tipo de evento inválido.");
   }
-  const appointments = await (await getAppointmentsCollection())
+  const appointments = await listScheduledCustomerAppointments({
+    customerId: input.customerId,
+    startAt: { $gte: from.toUTC().toJSDate(), $lte: to.toUTC().toJSDate() },
+    eventTypes: eventTypes.length > 0 ? eventTypes : undefined,
+    limit: Math.min(Math.max(input.limit ?? 20, 1), 50),
+  });
+  return { settings, appointments };
+}
+
+export async function findUpcomingCustomerAppointments(input: {
+  customerId: ObjectId;
+  eventTypes: string[];
+}) {
+  const queriedAt = new Date();
+  const limit = 50;
+  const appointments = await listScheduledCustomerAppointments({
+    customerId: input.customerId,
+    startAt: { $gte: queriedAt },
+    eventTypes: input.eventTypes,
+    limit: limit + 1,
+  });
+  return { appointments: appointments.slice(0, limit), hasMore: appointments.length > limit, queriedAt };
+}
+
+async function listScheduledCustomerAppointments(input: {
+  customerId: ObjectId;
+  startAt: { $gte: Date; $lte?: Date };
+  eventTypes?: string[];
+  limit: number;
+}) {
+  if (!(input.customerId instanceof ObjectId)) {
+    throw new Error("Cliente da consulta de agendamentos não identificado.");
+  }
+  return (await getAppointmentsCollection())
     .find({
       customerId: input.customerId,
       status: "scheduled",
-      startAt: { $gte: from.toUTC().toJSDate(), $lte: to.toUTC().toJSDate() },
-      ...(eventTypes.length > 0 ? { eventType: { $in: eventTypes } } : {}),
+      startAt: input.startAt,
+      ...(input.eventTypes ? { eventType: { $in: input.eventTypes } } : {}),
     })
     .sort({ startAt: 1 })
-    .limit(Math.min(Math.max(input.limit ?? 20, 1), 50))
+    .limit(input.limit)
     .toArray();
-  return { settings, appointments };
 }
 
 export async function findAvailableSlots(input: {

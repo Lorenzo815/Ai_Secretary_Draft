@@ -3,7 +3,7 @@ import "server-only";
 import { DateTime } from "luxon";
 import type { CustomerProfileSnapshot } from "../../crm";
 import { getActiveSchedulingPlanOption, getCalendarSettings } from "../../calendar";
-import { getLatestPaymentRequest } from "../../payments";
+import { getLatestPaymentRequest, getPaymentProviderConfiguration } from "../../payments";
 import type { CustomerDocument } from "../../crm";
 import { getCustomerProfileSnapshot } from "../../crm";
 import type { AgentConfigurationDocument, AgentRuntimeContext, DataCollectionRule } from "./contracts";
@@ -16,10 +16,11 @@ export async function buildAgentRuntimeContext(input: {
   followUpAttempt?: number;
   iteration: number;
 }): Promise<AgentRuntimeContext> {
-  const [calendarSettings, payment, activeSchedulingOption] = await Promise.all([
+  const [calendarSettings, payment, activeSchedulingOption, paymentProvider] = await Promise.all([
     getCalendarSettings(),
     getLatestPaymentRequest(input.customer._id),
     getActiveSchedulingPlanOption(input.customer._id),
+    getPaymentProviderConfiguration(),
   ]);
   const profile = getCustomerProfileSnapshot(input.customer);
   const configuredMissingFields = getConfiguredMissingFields(profile, input.configuration.dataCollectionRules);
@@ -51,6 +52,7 @@ export async function buildAgentRuntimeContext(input: {
     operations: {
       serviceStatus: input.customer.serviceStatus ?? "ai_active",
       paymentStatus: payment?.status ?? null,
+      paymentProvider: paymentProvider.activeProvider,
       activeSchedulingOption: visibleSchedulingOption,
     },
     clinic: {

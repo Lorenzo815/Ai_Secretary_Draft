@@ -289,7 +289,7 @@ function normalizeBookableEventTypeKeys(value: unknown, fallback: string[]) {
 function migrateLegacyToolKeys(keys: readonly string[]) {
   const migrated = new Set<AssistantToolKey>();
   for (const key of keys) {
-    if (["calendar.find_first_visit_option", "calendar.find_plan_option", "calendar.list_appointments", "calendar.check_availability"].includes(key)) {
+    if (["calendar.find_first_visit_option", "calendar.find_plan_option", "calendar.check_availability"].includes(key)) {
       migrated.add("calendar.find_slots");
     } else if (["calendar.book_first_visit", "calendar.book_plan_option", "calendar.book_appointment"].includes(key)) {
       migrated.add("calendar.book");

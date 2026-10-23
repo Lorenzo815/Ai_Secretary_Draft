@@ -13,7 +13,31 @@ describe("tool registry", () => {
     expect(metadata.find((tool) => tool.key === "calendar.book")?.mutates).toBe(true);
     expect(metadata.find((tool) => tool.key === "calendar.reschedule")?.mutates).toBe(true);
     expect(isAssistantToolKey("calendar.find_slots")).toBe(true);
+    expect(isAssistantToolKey("calendar.list_appointments")).toBe(true);
     expect(isAssistantToolKey("calendar.find_plan_option")).toBe(false);
+  });
+
+  it("exposes upcoming appointment lookup as an enabled, no-argument read-only tool", () => {
+    const definition = toolRegistry["calendar.list_appointments"];
+
+    expect(definition.mutates).toBe(false);
+    expect(definition.argumentsSchema).toEqual({
+      type: "object", additionalProperties: false, required: [], properties: {},
+    });
+    expect(createDefaultAgentConfiguration().enabledTools).toContain("calendar.list_appointments");
+    expect(listToolMetadata()).toContainEqual(expect.objectContaining({
+      key: "calendar.list_appointments", label: "Consultar meus agendamentos", mutates: false,
+    }));
+  });
+
+  it("keeps appointment lookup separate from the confirmed rescheduling flow", () => {
+    const instructions = toolRegistry["calendar.list_appointments"].promptInstructions;
+
+    expect(instructions).toContain("purpose=reschedule");
+    expect(instructions).toContain("calendar.reschedule uma única vez");
+    expect(instructions).toContain("calendar.hold, payment.request_deposit ou calendar.book");
+    expect(instructions).toContain("hasMore=true");
+    expect(toolRegistry["calendar.reschedule"].promptInstructions).toContain("não substitui a busca");
   });
 
   it("keeps operating windows and customer identity out of search arguments", () => {
@@ -53,7 +77,34 @@ describe("tool registry", () => {
 
     expect(searchInstructions).toContain("execute-a imediatamente");
     expect(searchInstructions).toContain("Confirmação explícita é exigida somente antes");
-    expect(searchInstructions).toContain("pré-requisitos são obrigatórios para reservar, não para visualizar");
+    expect(searchInstructions).toContain("não para visualizar disponibilidade");
+    expect(searchInstructions).toContain("reserva temporária antes do sinal");
+  });
+
+  it("offers complementary reads without requiring appointment lookup before rescheduling", () => {
+    const lookup = toolRegistry["calendar.list_appointments"].promptInstructions;
+    const search = toolRegistry["calendar.find_slots"].promptInstructions;
+
+    expect(lookup).toContain("Vários compromissos na listagem não são um erro");
+    expect(search).toContain("calendar.list_appointments é opcional");
+    expect(search).toContain("vincula esse alvo aos candidatos");
+    expect(search).toContain("currentAppointments");
+    expect(search).toContain("Não escolha eventos pela posição");
+  });
+
+  it("respects whole-plan policies when describing searches for mixed extremes", () => {
+    const instructions = toolRegistry["calendar.find_slots"].promptInstructions;
+
+    expect(instructions).toContain("Quando buscas avulsas forem permitidas");
+    expect(instructions).toContain("em vez de pesquisar etapas isoladas");
+  });
+
+  it("uses the server hold expiry and does not book an automatically promoted hold", () => {
+    expect(toolRegistry["calendar.hold"].promptInstructions).toContain("holdExpiresAt");
+    expect(toolRegistry["calendar.hold"].promptInstructions).toContain("não aceita candidatos de eventos avulsos");
+    expect(toolRegistry["calendar.hold"].promptInstructions).not.toContain("24 horas");
+    expect(toolRegistry["calendar.book"].promptInstructions).toContain("promove essa reserva automaticamente");
+    expect(toolRegistry["calendar.reschedule"].promptInstructions).toContain("não autoriza criar uma cobrança");
   });
 
   it("can persist an explicit relationship with the customer profile", () => {
@@ -73,6 +124,9 @@ describe("tool registry", () => {
     expect(instructions).toContain("campos relacionados");
     expect(instructions).toContain("dois ou três campos");
     expect(instructions).not.toContain("Pergunte um tópico por vez");
+    expect(instructions).toContain("runtime.customer.configuredMissingFields");
+    expect(instructions).toContain("[] em secondaryPhones");
+    expect(toolRegistry["customer.classify_relationship"].promptInstructions).toContain("não execute as duas ferramentas");
   });
 
   it("accepts payer email for automatic Pix creation", () => {
@@ -82,6 +136,8 @@ describe("tool registry", () => {
     };
     expect(schema.required).toEqual(["confirmedByCustomer", "payerEmail"]);
     expect(schema.properties).toHaveProperty("payerEmail");
+    expect(toolRegistry["payment.request_deposit"].promptInstructions).toContain("runtime.operations.paymentProvider");
+    expect(toolRegistry["payment.request_deposit"].promptInstructions).toContain("não é necessário já ter pago");
   });
 
   it.each(["calendar.book", "calendar.reschedule"] as const)("confirms %s from one server candidate", (key) => {
@@ -141,7 +197,6 @@ describe("tool registry", () => {
     "calendar.find_plan_option",
     "calendar.book_plan_option",
     "calendar.check_availability",
-    "calendar.list_appointments",
     "calendar.book_appointment",
     "calendar.update_appointment",
   ])("does not render a legacy grounded reply for %s", (tool) => {
@@ -165,6 +220,16 @@ describe("tool registry", () => {
 
     expect(reply).toContain("Não consegui consultar a agenda");
     expect(reply).not.toContain("equipe");
+  });
+
+  it("reports payment failures without claiming a handoff was already registered", () => {
+    const reply = getGroundedToolReply(JSON.stringify({
+      executedTools: ["payment.request_deposit"],
+      results: [{ ok: false, type: "operational_error" }],
+    }));
+
+    expect(reply).toContain("não consigo gerar os dados do sinal");
+    expect(reply).not.toContain("Encaminhei");
   });
 
   it("counts only a successful tool result as executed", () => {

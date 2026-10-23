@@ -19,4 +19,12 @@ describe("buildAgentActionSchema", () => {
     expect(serialized).not.toContain('"stepCriteria"');
     expect(serialized.length).toBeLessThan(3_000);
   });
+
+  it("includes appointment lookup only when authorized by the pinned configuration", () => {
+    const configuration = createDefaultAgentConfiguration();
+
+    expect(JSON.stringify(buildAgentActionSchema(configuration, true))).toContain("calendar.list_appointments");
+    configuration.enabledTools = configuration.enabledTools.filter((key) => key !== "calendar.list_appointments");
+    expect(JSON.stringify(buildAgentActionSchema(configuration, true))).not.toContain("calendar.list_appointments");
+  });
 });

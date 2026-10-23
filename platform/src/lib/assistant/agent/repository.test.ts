@@ -86,4 +86,22 @@ describe("partial agent payment settings", () => {
     await expect(updateAgentPaymentSettings({ signalAmountCents: 25_000 }))
       .rejects.toThrow("A configura\u00e7\u00e3o foi alterada por outra sess\u00e3o.");
   });
+
+  it("preserves the registered appointment lookup instead of migrating it to slot search", async () => {
+    current.enabledTools = ["calendar.list_appointments"];
+    current.toolGuidance = { "calendar.list_appointments": "Use for existing appointments." };
+
+    const loaded = await getAgentConfiguration();
+
+    expect(loaded.enabledTools).toEqual(["calendar.list_appointments"]);
+    expect(loaded.toolGuidance).toEqual(current.toolGuidance);
+    expect(mocks.replaceOne).not.toHaveBeenCalled();
+  });
+
+  it("does not silently grant the new tool to existing configurations", async () => {
+    current.enabledTools = [];
+
+    expect((await getAgentConfiguration()).enabledTools).toEqual([]);
+    expect(mocks.replaceOne).not.toHaveBeenCalled();
+  });
 });

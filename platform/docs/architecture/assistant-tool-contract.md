@@ -35,13 +35,37 @@ The TypeScript registry is the source of truth for keys, metadata, argument
 schemas, prompt instructions, mutation classification and execution. The active
 agent configuration persists only the tool keys it authorizes.
 
-Calendar behavior is exposed through three intent-level tools:
+Calendar behavior is exposed through five intent-level tools:
 
+- `calendar.list_appointments` accepts only `{}` and lists the runtime customer's
+  future confirmed appointments for authorized event types, ordered by start
+  time. It returns at most 50 results with `hasMore`, local dates/times, resource
+  names and the clinic timezone. Customer identity, current time and limit are
+  fixed by the server; model-supplied arguments are rejected. No arbitrary date
+  horizon is applied. Temporary holds, past/in-progress, cancelled and completed
+  appointments are excluded.
 - `calendar.find_slots` returns server-persisted candidates for one event or a
   configured multi-step plan.
+- `calendar.hold` temporarily reserves a confirmed candidate while awaiting
+  the deposit.
 - `calendar.book` consumes a confirmed booking candidate.
 - `calendar.reschedule` moves the existing event or group using a confirmed
   rescheduling candidate in one mutation.
+
+Listing existing appointments does not select a rescheduling target or generate
+a candidate, and is not a mandatory step before a search or reschedule.
+Multiple listed appointments are a valid read result, not an ambiguity error.
+The operational rescheduling flow starts with `calendar.find_slots` and
+`purpose=reschedule`; the server must identify a unique compatible appointment
+or group and binds it to the replacement candidates. If clarifying the event
+type or plan cannot resolve the target, the assistant hands off instead of
+guessing. The current API cannot select an appointment from the listing by ID
+or position. The flow
+does not use `calendar.hold`, `payment.request_deposit` or `calendar.book`.
+
+Agent Studio discovers listing metadata from the registry. New configurations
+enable it by default, while existing allowlists remain unchanged. The migration
+preserves `calendar.list_appointments` rather than aliasing it to slot search.
 
 The model cannot provide a customer ID, operating window, appointment ID or
 end date. The server derives customer ownership from execution context, the
@@ -65,6 +89,27 @@ business rules. Rankings such as `compact`, `earliest` and `latest` are soft
 selection strategies: consecutive steps are preferred by default, but explicit
 customer dates, periods and times take priority. A compact search may return a
 non-adjacent valid combination when no consecutive combination exists.
+Auxiliary single-event searches are used only when the configured journey
+permits them; a whole-plan-only policy must not be bypassed.
+
+The new-booking journey for a plan with a pending deposit is search, explicit
+candidate choice, temporary hold, required profile completion and accepted
+deposit request. The server returns `holdExpiresAt`; instructions must not
+hardcode a hold duration. Payment confirmation promotes the hold automatically,
+so the assistant must not also call `calendar.book`. Holds do not accept
+single-event candidates.
+
+Relationship-only answers use `customer.classify_relationship`. A message that
+also provides profile data uses `customer.update_profile` once, including the
+relationship. Follow-up collection uses the refreshed
+`runtime.customer.configuredMissingFields`, not every optional field in the
+general profile. Read-only calendar questions do not require profile completion.
+
+`runtime.operations.paymentProvider` exposes only the active payment mode, not
+credentials. Deposit instructions require a real payer email for Mercado Pago
+and no email for manual Pix. Charges require consent to pay, not proof of a
+payment that has not yet been requested. Operational payment failures must not
+claim a human handoff was registered.
 
 ## Why
 

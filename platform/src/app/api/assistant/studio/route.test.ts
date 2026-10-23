@@ -20,7 +20,10 @@ vi.mock("@/lib/assistant/agent", () => ({
   getAgentConfiguration: mocks.getAgentConfiguration,
   updateAgentConfiguration: mocks.updateAgentConfiguration,
 }));
-vi.mock("@/lib/assistant/tools", () => ({ listToolMetadata: vi.fn(() => []) }));
+vi.mock("@/lib/assistant/tools", async () => {
+  const { listToolMetadata } = await import("../../../../lib/assistant/tools/registry");
+  return { listToolMetadata };
+});
 vi.mock("@/lib/calendar", () => ({ getCalendarSettings: mocks.getCalendarSettings }));
 vi.mock("@/lib/automation", () => ({
   listAutomationRules: vi.fn(async () => []),
@@ -128,5 +131,17 @@ describe("Studio read-only payment configuration", () => {
 
     expect((await GET()).status).toBe(401);
     expect(mocks.getMercadoPagoCredentialStatus).not.toHaveBeenCalled();
+  });
+
+  it("exposes the registered read-only appointment tool and authorization in Studio", async () => {
+    const body = await (await GET()).json();
+
+    expect(body.availableTools).toContainEqual(expect.objectContaining({
+      key: "calendar.list_appointments",
+      label: "Consultar meus agendamentos",
+      mutates: false,
+      protectedInstructions: expect.stringContaining("recebe somente {}"),
+    }));
+    expect(body.configuration.enabledTools).toContain("calendar.list_appointments");
   });
 });

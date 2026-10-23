@@ -90,6 +90,7 @@ export interface AgentRuntimeContext {
   operations: {
     serviceStatus: string;
     paymentStatus: string | null;
+    paymentProvider: "manual" | "mercado_pago";
     activeSchedulingOption: unknown | null;
   };
   clinic: {

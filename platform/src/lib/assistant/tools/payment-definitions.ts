@@ -15,9 +15,10 @@ export const paymentToolDefinitions = {
       },
     },
     promptInstructions: `payment.request_deposit exige confirmedByCustomer=true.
-- Use somente depois de o cliente aceitar prosseguir com a primeira consulta e pagar o sinal.
+- Use somente depois de o cliente aceitar explicitamente a emissão da cobrança e o pagamento do sinal; não é necessário já ter pago para gerar a solicitação.
 - Chave, favorecido e valor vêm exclusivamente da configuração administrativa; nunca os invente.
-- Para Mercado Pago, colete o e-mail real do pagador antes de chamar e envie em payerEmail. No modo manual, envie null.
+- Consulte runtime.operations.paymentProvider: para mercado_pago, use o e-mail real do pagador já informado ou colete-o antes de chamar e envie em payerEmail; para manual, envie null e não peça e-mail. Não presuma um provedor fixo a partir de orientações antigas.
+- Respeite os dados obrigatórios e a reserva exigidos pela configuração do atendimento. Não emita cobrança para consultar horários ou dentro de um reagendamento.
 - Depois da solicitação, aguarde a confirmação automática do provedor ou a revisão humana configurada.`,
     execute: async (context, args) => (await import("./payment")).executePaymentRequestTool(context, args),
     getGroundedReply: (output: string) => {
@@ -41,7 +42,7 @@ export const paymentToolDefinitions = {
         return `Para garantir o horário, realize o sinal de ${amount} via Pix. Chave: ${result.pixKey}. Favorecido: ${result.recipientName}. Quando concluir o pagamento, pode me avisar por aqui para a equipe confirmar?`;
       }
       return result.type === "operational_error"
-        ? "Ainda não consigo gerar os dados do sinal. Encaminhei para a equipe da clínica conferir a configuração."
+        ? "Ainda não consigo gerar os dados do sinal. A equipe da clínica precisa conferir a configuração."
         : null;
     },
   },

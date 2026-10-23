@@ -2,7 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import { DateTime } from "luxon";
-import { bookAppointment, findAvailableSlots, findCustomerAppointments, getCalendarSettings, updateCustomerAppointments } from "../../calendar";
+import { bookAppointment, findAvailableSlots, findCustomerAppointments, findUpcomingCustomerAppointments, getCalendarSettings, updateCustomerAppointments } from "../../calendar";
 import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, holdSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
@@ -12,7 +12,7 @@ import { getConfiguredMissingFields } from "../agent/runtime-context";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 interface CalendarToolArguments {
-  action: "find_slots" | "hold" | "book" | "reschedule" | "find_plan_option" | "book_plan_option" | "list_appointments" | "check_availability" | "book_appointment" | "update_appointment";
+  action: "find_slots" | "hold" | "book" | "reschedule" | "find_plan_option" | "book_plan_option" | "check_availability" | "book_appointment" | "update_appointment";
   purpose: "book" | "reschedule" | null;
   dateIntent: "exact_date" | "date_range" | "next_available" | null;
   fromDate: string | null;
@@ -27,7 +27,6 @@ interface CalendarToolArguments {
   appointmentId: string | null;
   optionId: string | null;
   eventType: string | null;
-  eventTypes: string[];
   startAt: string | null;
   confirmedByCustomer: boolean;
   notes: string | null;
@@ -359,38 +358,6 @@ async function executeCalendarAction(input: {
       };
     } catch (error) {
       return operationalError("calendar.check_availability", error, "Falha na consulta.");
-    }
-  }
-
-  if (input.action.action === "list_appointments") {
-    const validation = await validateListInput(input.action);
-    if (validation) return validation;
-    try {
-      const result = await findCustomerAppointments({
-        customerId: input.customerId,
-        fromDate: input.action.fromDate!,
-        toDate: input.action.toDate!,
-        eventTypes: input.action.eventTypes,
-      });
-      return {
-        output: JSON.stringify({
-          ok: true,
-          tool: "calendar.list_appointments",
-          timezone: result.settings.timezone,
-          eventTypes: serializeEventTypes(result.settings.eventTypes),
-          appointments: result.appointments.map((appointment) => ({
-            appointmentId: appointment._id.toString(),
-            startAt: appointment.startAt.toISOString(),
-            endAt: appointment.endAt.toISOString(),
-            eventType: appointment.eventType,
-            eventTypeName: result.settings.eventTypes.find((item) => item.key === appointment.eventType)?.name ?? "Tipo removido",
-            notes: appointment.notes ?? null,
-          })),
-        }),
-        retryable: false,
-      };
-    } catch (error) {
-      return operationalError("calendar.list_appointments", error, "Falha na consulta de eventos.");
     }
   }
 
@@ -744,22 +711,6 @@ async function validateBookingInput(action: CalendarToolArguments) {
   return errors.length > 0 ? validationError("calendar.book_appointment", errors) : null;
 }
 
-async function validateListInput(action: CalendarToolArguments) {
-  const settings = await getCalendarSettings();
-  const errors: ToolValidationIssue[] = [];
-  const fromDate = parseDate(action.fromDate, settings.timezone);
-  const toDate = parseDate(action.toDate, settings.timezone);
-  if (!fromDate) errors.push(required("arguments.fromDate", "Informe a data inicial em YYYY-MM-DD."));
-  if (!toDate) errors.push(required("arguments.toDate", "Informe a data final em YYYY-MM-DD."));
-  if (fromDate && toDate && (toDate < fromDate || toDate.diff(fromDate, "days").days > 366)) {
-    errors.push(invalid("arguments.toDate", "A consulta deve cobrir um período válido de até 366 dias."));
-  }
-  for (const eventType of action.eventTypes) {
-    validateEventType(eventType, settings, errors, "arguments.eventTypes");
-  }
-  return errors.length > 0 ? validationError("calendar.list_appointments", errors) : null;
-}
-
 async function validateUpdateInput(action: CalendarToolArguments) {
   const settings = await getCalendarSettings();
   const errors: ToolValidationIssue[] = [];
@@ -859,6 +810,56 @@ function serializeEventTypes(eventTypes: Awaited<ReturnType<typeof getCalendarSe
   }));
 }
 
+export async function executeUpcomingAppointmentsTool(
+  context: ToolExecutionContext,
+  args: Record<string, unknown>,
+): Promise<ToolExecution> {
+  const tool = "calendar.list_appointments";
+  try {
+    if (Object.keys(args).length > 0) {
+      return await validationError(tool, [invalid("arguments", "Esta consulta recebe somente {}. A identidade e os filtros são definidos pelo servidor.")]);
+    }
+    if (!(context.customerId instanceof ObjectId)) {
+      throw new Error("Cliente desta execução não identificado. Não foi possível consultar agendamentos.");
+    }
+    const settings = await getCalendarSettings();
+    const authorizedTypes = settings.eventTypes.filter((eventType) => context.configuration.bookableEventTypeKeys.includes(eventType.key));
+    const result = await findUpcomingCustomerAppointments({
+      customerId: context.customerId,
+      eventTypes: authorizedTypes.map((eventType) => eventType.key),
+    });
+    return {
+      output: JSON.stringify({
+        ok: true,
+        tool,
+        timezone: settings.timezone,
+        queriedAt: result.queriedAt.toISOString(),
+        hasMore: result.hasMore,
+        appointments: result.appointments.map((appointment) => {
+          const start = DateTime.fromJSDate(appointment.startAt, { zone: settings.timezone });
+          const end = DateTime.fromJSDate(appointment.endAt, { zone: settings.timezone });
+          return {
+            eventType: appointment.eventType,
+            eventTypeName: authorizedTypes.find((eventType) => eventType.key === appointment.eventType)?.name ?? "Tipo de evento não identificado",
+            resourceName: settings.resources.find((resource) => resource.id === appointment.providerId)?.name ?? "Profissional não identificado",
+            status: appointment.status,
+            startAt: appointment.startAt.toISOString(),
+            endAt: appointment.endAt.toISOString(),
+            localDate: start.toISODate(),
+            localTime: start.toFormat("HH:mm"),
+            localEndDate: end.toISODate(),
+            localEndTime: end.toFormat("HH:mm"),
+            weekdayLabel: start.setLocale("pt-BR").toFormat("cccc"),
+          };
+        }),
+      }),
+      retryable: false,
+    };
+  } catch (error) {
+    return operationalError(tool, error, "Falha ao consultar os agendamentos futuros.");
+  }
+}
+
 export function executeRegisteredCalendarTool(
   action: CalendarToolArguments["action"],
   context: ToolExecutionContext,
@@ -882,7 +883,6 @@ export function executeRegisteredCalendarTool(
       appointmentId: asString(args.appointmentId),
       optionId: asString(args.optionId),
       eventType: asString(args.eventType),
-      eventTypes: Array.isArray(args.eventTypes) ? args.eventTypes.filter((item): item is string => typeof item === "string") : [],
       startAt: asString(args.startAt),
       confirmedByCustomer: args.confirmedByCustomer === true,
       notes: asString(args.notes),

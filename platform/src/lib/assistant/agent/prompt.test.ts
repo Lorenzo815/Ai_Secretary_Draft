@@ -4,6 +4,30 @@ import { createDefaultAgentConfiguration } from "./defaults";
 import { AGENT_STRUCTURAL_POLICY, buildAgentDeveloperPrompt, buildAgentMessages } from "./prompt";
 
 describe("assistant commercial conduct", () => {
+  it("distinguishes existing appointments from available rescheduling candidates", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(prompt).toContain("calendar.list_appointments");
+    expect(prompt).toContain("recebe somente {}");
+    expect(prompt).toContain("não substitui calendar.find_slots com purpose=reschedule");
+    expect(prompt).toContain("Nunca use calendar.hold, payment.request_deposit ou calendar.book no mesmo reagendamento");
+    configuration.enabledTools = configuration.enabledTools.filter((key) => key !== "calendar.list_appointments");
+    expect(buildAgentDeveloperPrompt(configuration, false)).not.toContain("calendar.list_appointments:");
+  });
+
+  it("keeps tool choice autonomous and the hold-first journey consistent", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(configuration.journeyPolicy).toContain("não uma sequência obrigatória");
+    expect(configuration.journeyPolicy).toContain("não use calendar.book para o mesmo horário");
+    expect(configuration.journeyPolicy).toContain("nunca um prazo fixo");
+    expect(prompt).toContain("execute calendar.find_slots diretamente");
+    expect(prompt).toContain("runtime.operations.paymentProvider");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("não aceita eventos avulsos");
+  });
+
   it("connects the customer's goal to value and recommends a next step", () => {
     const configuration = createDefaultAgentConfiguration();
     const prompt = buildAgentDeveloperPrompt(configuration, false);
@@ -97,9 +121,13 @@ describe("assistant commercial conduct", () => {
     const prompt = buildAgentDeveloperPrompt(configuration, false);
 
     expect(prompt).toContain("JORNADA DO ATENDIMENTO:");
-    expect(prompt).toContain("completar os dados cadastrais necessários");
-    expect(prompt).toContain("consulte a disponibilidade real imediatamente");
-    expect(prompt).toContain("a reserva só será confirmada depois dos pré-requisitos");
+    expect(prompt).toContain("complete os dados obrigatórios configurados");
+    expect(prompt).toContain("use calendar.find_slots imediatamente");
+    expect(prompt).toContain("mesmo com cadastro ou pagamento pendentes");
+    expect(prompt).toContain("Só informe reserva, confirmação ou reagendamento após resultado bem-sucedido");
+    expect(configuration.journeyPolicy.indexOf("use calendar.hold")).toBeLessThan(
+      configuration.journeyPolicy.indexOf("complete os dados obrigatórios"),
+    );
   });
 
   it("compiles response style separately from conversation policy", () => {

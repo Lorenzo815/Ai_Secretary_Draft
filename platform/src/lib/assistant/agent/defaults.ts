@@ -24,11 +24,15 @@ export const DEFAULT_OFFENSE_POLICY = "Não confronte nem reproduza ofensas. Est
 
 export const DEFAULT_HANDOFF_POLICY = "Resolva de forma autônoma tudo o que estiver autorizado e use as fontes e ferramentas disponíveis antes de encaminhar. Encaminhe para a equipe humana quando faltar informação confirmada após as verificações disponíveis, houver exceção operacional, solicitação sensível ou necessidade de decisão não autorizada. Nunca diga que encaminhou sem registrar de fato o human_handoff.";
 
-export const DEFAULT_JOURNEY_POLICY = `Conduza preferencialmente o atendimento nesta ordem: entender a necessidade, completar os dados cadastrais necessários, solicitar e confirmar o pagamento do sinal e então concluir o agendamento.
+export const DEFAULT_JOURNEY_POLICY = `Identifique a intenção atual e use somente as ferramentas necessárias. Consultar compromissos existentes, buscar novas opções, agendar e reagendar são capacidades complementares, não uma sequência obrigatória.
 
-Essa ordem orienta a condução, mas não bloqueia consultas úteis. Se o cliente perguntar sobre uma data, período ou horário específico, consulte a disponibilidade real imediatamente com calendar.find_slots, mesmo que cadastro ou pagamento ainda estejam pendentes. Apresente a disponibilidade como informativa e explique naturalmente que a reserva só será confirmada depois dos pré-requisitos configurados.
+Para informar o que já está marcado, use calendar.list_appointments quando habilitada. Para disponibilidade, use calendar.find_slots imediatamente quando o tipo ou plano e as preferências estiverem claros, mesmo com cadastro ou pagamento pendentes. Não faça a listagem apenas para cumprir uma etapa antes da busca.
 
-Não trate uma consulta de disponibilidade como reserva, não prometa que o horário ficará guardado e não execute calendar.book antes de o servidor confirmar os pré-requisitos e o cliente confirmar explicitamente o candidato escolhido. Depois de responder à dúvida pontual, retome o próximo passo pendente sem pressionar nem repetir dados já informados.`;
+Em um novo agendamento de plano com sinal pendente: pesquise opções, obtenha a escolha explícita de uma opção completa, use calendar.hold para reservá-la temporariamente, complete os dados obrigatórios configurados e emita o sinal após o aceite de pagamento. Informe o vencimento retornado pelo servidor, nunca um prazo fixo. A confirmação do pagamento promove a reserva automaticamente; não use calendar.book para o mesmo horário. Se não houver reserva temporária e os pré-requisitos aplicáveis já estiverem atendidos, calendar.book confirma um candidato válido explicitamente escolhido.
+
+Para reagendar: consulte os compromissos atuais apenas quando isso ajudar a responder ao cliente; busque o destino com calendar.find_slots, purpose=reschedule, e execute calendar.reschedule uma única vez após a confirmação explícita. Não use hold, sinal ou novo agendamento nesse fluxo. Se o servidor não conseguir identificar um único alvo compatível ou impedir a operação, esclareça o que puder ser resolvido e encaminhe a exceção sem adivinhar.
+
+Uma consulta de disponibilidade não reserva horário. Só informe reserva, confirmação ou reagendamento após resultado bem-sucedido da operação correspondente. Depois de responder à dúvida pontual, retome somente o próximo passo necessário, sem pressionar nem repetir dados já informados.`;
 
 export const DEFAULT_AGENT_KNOWLEDGE = `FORMAÇÃO E ATUAÇÃO:
 - Dr. Matheus T. Busnardo, CRM-PR 47.868, é médico formado pela UNINGÁ e pós-graduado em Nutrologia e em Tricologia.
@@ -113,6 +117,7 @@ export function createDefaultAgentConfiguration(): AgentConfigurationDocument {
       "customer.classify_relationship",
       "customer.update_profile",
       "payment.request_deposit",
+      "calendar.list_appointments",
       "calendar.find_slots",
       "calendar.hold",
       "calendar.book",

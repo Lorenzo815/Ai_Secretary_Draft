@@ -15,6 +15,20 @@ vi.mock("../../mongodb", () => ({
 import { parseAgentAction } from "./model";
 
 describe("parseAgentAction", () => {
+  it("parses an argument-free request for the current customer's appointments", () => {
+    expect(parseAgentAction(JSON.stringify({
+      action: {
+        type: "tool_request",
+        reasonCode: "need_authoritative_data",
+        toolCall: { name: "calendar.list_appointments", argumentsJson: "{}" },
+      },
+    }))).toEqual({
+      type: "tool_request",
+      reasonCode: "need_authoritative_data",
+      toolCall: { tool: "calendar.list_appointments", arguments: {} },
+    });
+  });
+
   it("parses compact serialized tool arguments", () => {
     const action = parseAgentAction(JSON.stringify({
       action: {

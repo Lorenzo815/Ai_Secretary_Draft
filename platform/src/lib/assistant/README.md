@@ -40,6 +40,28 @@ model iteration.
 - Pix secrets are exposed only by the payment tool after server-side checks.
 - Scheduling plans use configurable steps and deterministic constraints.
 - Each claimed job pins one configuration revision for its full execution.
+- `calendar.list_appointments` accepts only `{}` and reads future scheduled
+  appointments for the runtime customer and currently authorized event types.
+  The server fixes identity, time and the 50-result limit; `hasMore` reports
+  truncation. Holds, cancelled/completed events and appointments already started
+  are excluded. No notes, contact details or customer/appointment IDs are returned.
+- Agent Studio derives the appointment lookup's checkbox and protected
+  instructions from the registry. It is enabled in new default configurations;
+  existing tool permissions are preserved and may be updated in Studio.
+- Appointment lookup only reports existing times. Rescheduling still requires
+  `calendar.find_slots` with `purpose=reschedule`, followed by one confirmed
+  `calendar.reschedule`; it never uses hold, deposit or booking in that flow.
+- Appointment lookup is optional before a search. Only the rescheduling search
+  resolves a unique compatible target; multiple listed appointments are not an
+  error and do not authorize selecting an event by ID or list position.
+- The plan deposit journey reserves an explicitly chosen candidate before
+  collecting remaining required fields and requesting payment. Hold expiry
+  comes from `holdExpiresAt`, and payment promotes the hold without another
+  booking call. Holds are not available for single-event candidates.
+- Profile collection follows refreshed configured missing fields. Relationship
+  and profile data volunteered together are saved in one profile update.
+- The runtime exposes the active payment mode without credentials so payer
+  email collection follows the current provider rather than saved assumptions.
 - A new inbound message invalidates the pending follow-up before scheduling its normal response.
 - Follow-ups are sent only inside the configured active hours, before the WhatsApp 24-hour cutoff and while no future appointment exists.
 - Drop-off analysis is evidence-based; silence alone is not treated as proof of lost interest.

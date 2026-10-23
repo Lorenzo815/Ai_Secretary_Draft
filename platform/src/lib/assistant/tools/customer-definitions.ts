@@ -13,6 +13,7 @@ export const customerToolDefinitions = {
     }),
     promptInstructions: `customer.classify_relationship exige status=new ou returning e confirmedByCustomer=true.
 - Use somente depois de o cliente responder explicitamente se já realizou consulta com o Dr. Matheus.
+- Se a mesma mensagem trouxer também novos dados cadastrais, use customer.update_profile uma única vez para salvar esses dados e a classificação juntos; não execute as duas ferramentas para a mesma resposta.
 - Nunca deduza retorno apenas porque o contato já existe no CRM.`,
     execute: async (context, args) => (await import("./customer")).executeRegisteredCustomerTool("classify_relationship", context, args),
   }),
@@ -36,8 +37,8 @@ export const customerToolDefinitions = {
       secondaryPhones: { type: "array", items: { type: "string" }, maxItems: 5 },
       profession: nullableString,
     }),
-    promptInstructions: `customer.update_profile salva somente dados explicitamente informados pelo cliente; envie null nos campos ausentes.
-  - Envie null para todo campo já salvo no cadastro. A ferramenta preenche campos ausentes e ignora valores repetidos de campos já persistidos.
+    promptInstructions: `customer.update_profile salva somente dados explicitamente informados pelo cliente; envie null nos campos de texto ausentes e [] em secondaryPhones quando não houver novos telefones.
+  - Envie null para campos de texto já salvos no cadastro. A ferramenta preenche campos ausentes e ignora valores repetidos de campos já persistidos.
   - Quando o cliente informar se é novo ou retorno, envie relationshipStatus e relationshipConfirmedByCustomer=true. Caso contrário, envie relationshipStatus=null e relationshipConfirmedByCustomer=false.
 - birthDate usa AAAA-MM-DD. CPF e telefones são validados pelo servidor.
 - Ao receber CEP, envie postalCode; o servidor consulta o endereço. Depois pergunte número e complemento, sem exigir complemento quando não houver.
@@ -45,7 +46,8 @@ export const customerToolDefinitions = {
 - Peça apenas um pequeno bloco por vez, normalmente dois ou três campos, para manter a conversa natural sem sobrecarregar o cliente.
 - Salve juntos todos os dados que o cliente oferecer, inclusive quando ele antecipar informações de blocos posteriores.
   - Sempre chame esta tool no mesmo turno em que o cliente fornecer qualquer dado novo, mesmo que outros campos do cadastro permaneçam pendentes.
-  - Depois da execução, use somente profile.missingFields do resultado para decidir a próxima pergunta.
+  - Depois da execução, use runtime.customer.configuredMissingFields e runtime.customer.missingFieldsCount atualizados para decidir quais dados obrigatórios ainda faltam. profile.missingFields do resultado descreve o cadastro geral e não torna obrigatórios campos opcionais na configuração do agente.
+- Não interrompa uma consulta de agendamentos ou de disponibilidade para completar cadastro. A coleta deve atender à intenção atual e às regras configuradas para a próxima operação.
 - Nunca copie CPF completo para reply, summary, state ou notes.`,
     execute: async (context, args) => (await import("./customer")).executeRegisteredCustomerTool("update_profile", context, args),
   getGroundedReply: customerInputGroundedReply,
