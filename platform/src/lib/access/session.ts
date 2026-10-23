@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
+import { getMongoClient } from "../mongodb";
 import type { UserDocument } from "../users";
 import { LEGACY_COMPANY_ID } from "../companies/ownership";
 import { parsePermissions, type Principal } from "./contracts";
@@ -35,7 +35,7 @@ export function equalFingerprint(left: unknown, right: string) {
 
 export async function loadIdentity(id: unknown) {
   if (typeof id !== "string" || !/^[a-f0-9]{24}$/i.test(id)) return null;
-  const db = (await clientPromise).db("ai_secretary");
+  const db = (await getMongoClient()).db("ai_secretary");
   const user = await db.collection<UserDocument>("users").findOne({ _id: new ObjectId(id) });
   if (!user || user.disabled !== false || !Number.isSafeInteger(user.sessionVersion) ||
     !(user.companyId instanceof ObjectId) || user.companyId.toHexString() !== LEGACY_COMPANY_ID) return null;

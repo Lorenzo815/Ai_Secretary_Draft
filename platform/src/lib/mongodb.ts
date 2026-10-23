@@ -20,7 +20,7 @@ declare global {
   var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
-function getMongoClientPromise() {
+export function getMongoClient() {
   if (global._mongoClientPromise) return global._mongoClientPromise;
 
   const connection = connectWithRetry();
@@ -70,7 +70,7 @@ function delay(milliseconds: number) {
 
 const clientPromise: PromiseLike<MongoClient> = {
   then(onfulfilled, onrejected) {
-    return getMongoClientPromise().then(onfulfilled, onrejected);
+    return getMongoClient().then(onfulfilled, onrejected);
   },
 };
 

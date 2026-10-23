@@ -132,6 +132,9 @@ canceladas retroativamente. JWTs anteriores a esta versão exigem novo login.
 NextAuth e proxy compartilham o mesmo nome de cookie de sessão; no Vercel ele é
 sempre `__Secure-next-auth.session-token`, mesmo se `NEXTAUTH_URL` tiver sido
 copiado de um ambiente HTTP local. Configure a URL oficial HTTPS em produção.
+A validação no proxy obtém o cliente com uma chamada explícita a `getMongoClient()`;
+isso preserva a conexão tardia e o pool sem depender de métodos `then` implícitos
+que podem ser removidos pela otimização do build de produção.
 
 O bootstrap explícito da conta inicial requer backup criptografado com restauração
 comprovada e exatamente o usuário existente na empresa:

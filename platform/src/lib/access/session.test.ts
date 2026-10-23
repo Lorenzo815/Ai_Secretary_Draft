@@ -5,7 +5,7 @@ import { legacyCompanyId } from "../companies/ownership";
 
 const mocks = vi.hoisted(() => ({ user: vi.fn(), company: vi.fn() }));
 vi.mock("../mongodb", () => ({
-  default: Promise.resolve({ db: () => ({ collection: (name: string) => ({ findOne: name === "users" ? mocks.user : mocks.company }) }) }),
+  getMongoClient: async () => ({ db: () => ({ collection: (name: string) => ({ findOne: name === "users" ? mocks.user : mocks.company }) }) }),
 }));
 import { loadIdentity, resolveToken, sessionFingerprint } from "./session";
 import type { UserDocument } from "../users";

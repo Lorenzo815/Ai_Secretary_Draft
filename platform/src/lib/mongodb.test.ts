@@ -37,13 +37,25 @@ describe("MongoDB connection lifecycle", () => {
     delete (globalThis as { _mongoClientPromise?: Promise<unknown> })._mongoClientPromise;
   });
 
+  it("connects lazily through the explicit accessor and shares the existing pool", async () => {
+    connect.mockResolvedValue(undefined);
+    const { default: clientPromise, getMongoClient } = await import("./mongodb");
+    expect(constructor).not.toHaveBeenCalled();
+
+    const firstClient = getMongoClient();
+    expect(getMongoClient()).toBe(firstClient);
+    await expect(clientPromise).resolves.toBe(await firstClient);
+    expect(constructor).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a connection reset and then reuses the recovered client", async () => {
     connect
       .mockRejectedValueOnce(Object.assign(new Error("reset"), { cause: { code: "ECONNRESET" } }))
       .mockResolvedValue(undefined);
-    const { default: clientPromise } = await import("./mongodb");
+    const { default: clientPromise, getMongoClient } = await import("./mongodb");
 
-    const firstClient = Promise.resolve(clientPromise);
+    const firstClient = getMongoClient();
     await vi.advanceTimersByTimeAsync(250);
 
     await expect(firstClient).resolves.toBeDefined();
@@ -54,9 +66,9 @@ describe("MongoDB connection lifecycle", () => {
 
   it("clears a failed connection so a later request can reconnect", async () => {
     connect.mockRejectedValueOnce(new Error("authentication failed"));
-    const { default: clientPromise } = await import("./mongodb");
+    const { default: clientPromise, getMongoClient } = await import("./mongodb");
 
-    await expect(clientPromise).rejects.toThrow("authentication failed");
+    await expect(getMongoClient()).rejects.toThrow("authentication failed");
 
     connect.mockResolvedValueOnce(undefined);
     await expect(clientPromise).resolves.toBeDefined();
