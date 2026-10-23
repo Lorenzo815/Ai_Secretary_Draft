@@ -3,6 +3,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
 import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { LEAD_QUALIFICATION_VERSION, type LeadInsightTag } from "../qualification/contracts";
 import { CustomerProfileValidationError, getWhatsAppPhoneAliases, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone, normalizeWhatsAppPhone } from "./validation";
 
@@ -185,7 +186,7 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
     },
     $min: { firstInteractionAt: input.interactionAt },
     $max: { lastInteractionAt: input.interactionAt },
-    $setOnInsert: {
+    $setOnInsert: withLegacyCompany({
       _id: new ObjectId(),
       ...(!input.name ? { name: phone } : {}),
       phones: [phone],
@@ -194,7 +195,7 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
       ],
       serviceStatus: "ai_active" as const,
       createdAt: now,
-    },
+    }),
   };
   const exactCustomer = await customers.findOneAndUpdate(
     {
@@ -281,7 +282,7 @@ export async function createCustomer(input: { name: string; whatsapp: string }) 
     updatedAt: now,
   };
   try {
-    await customers.insertOne(customer);
+    await customers.insertOne(withLegacyCompany(customer));
     return customer;
   } catch (error) {
     if (error instanceof MongoServerError && error.code === 11000) {
@@ -905,7 +906,7 @@ export async function saveCustomerLeadQualification(
         customerId: id,
         ...qualification,
       };
-      await history.insertOne(historyEntry, { session });
+      await history.insertOne(withLegacyCompany(historyEntry), { session });
       customer = await customers.findOneAndUpdate(
         { _id: id },
         { $set: { leadQualification: qualification, updatedAt: new Date() } },

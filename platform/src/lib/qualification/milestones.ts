@@ -2,6 +2,7 @@ import "server-only";
 
 import { MongoServerError, type ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 
 export type QualificationMilestone = "profile_completed" | "first_appointment_confirmed";
 
@@ -27,13 +28,13 @@ export async function claimQualificationMilestone(
   occurredAt: Date,
 ) {
   try {
-    await (await clientPromise).db(DB_NAME).collection<QualificationMilestoneDocument>("qualification_milestones").insertOne({
+    await (await clientPromise).db(DB_NAME).collection<QualificationMilestoneDocument>("qualification_milestones").insertOne(withLegacyCompany({
       _id: `${customerId.toHexString()}:${milestone}`,
       customerId,
       milestone,
       occurredAt,
       createdAt: new Date(),
-    });
+    }));
     return true;
   } catch (error) {
     if (error instanceof MongoServerError && error.code === 11000) return false;

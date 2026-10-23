@@ -1,5 +1,6 @@
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "./mongodb";
+import { withLegacyCompany } from "./companies/ownership";
 
 export interface UserDocument {
   _id: ObjectId;
@@ -32,14 +33,14 @@ export async function createUser(
 ): Promise<UserDocument> {
   const users = await getUsersCollection();
   const now = new Date();
-  const result = await users.insertOne({
+  const result = await users.insertOne(withLegacyCompany({
     _id: new ObjectId(),
     email: email.toLowerCase(),
     name,
     passwordHash,
     createdAt: now,
     updatedAt: now,
-  });
+  }));
   return {
     _id: result.insertedId,
     email: email.toLowerCase(),

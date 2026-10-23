@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import { getAiProviderConfiguration } from "../ai/provider-config";
 import { getVercelGatewayCredential } from "../ai/provider-credentials";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { fetchWhatsAppMediaFile } from "./client";
 
 const DB_NAME = "ai_secretary";
@@ -111,14 +112,14 @@ async function startAudioTrace(input: {
     ]);
     await indexesPromise;
     const traceId = new ObjectId();
-    await collection.insertOne({
+    await collection.insertOne(withLegacyCompany({
       _id: traceId,
       ...input,
       provider: "vercel",
       selectedProvider: "vercel",
       inferenceProvider: null,
       status: "started",
-    });
+    }));
     return traceId;
   } catch (error) {
     console.error("Audio transcription trace could not be started", error);

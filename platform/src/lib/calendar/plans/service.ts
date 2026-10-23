@@ -2,6 +2,7 @@ import "server-only";
 
 import { ObjectId, type Collection } from "mongodb";
 import clientPromise from "../../mongodb";
+import { withLegacyCompany } from "../../companies/ownership";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
 import { scheduleFirstAppointmentQualification } from "../../qualification/triggers";
 import {
@@ -141,7 +142,7 @@ export async function findSchedulingPlanOptions(input: {
     expiresAt: new Date(now.getTime() + input.plan.proposalExpiryMinutes * 60_000),
     createdAt: now,
   }));
-  await options.insertMany(proposed);
+  await options.insertMany(proposed.map((option) => withLegacyCompany(option)));
   await Promise.all([
     options.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     options.createIndex({ customerId: 1, createdAt: -1 }),

@@ -3,6 +3,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION = "ai_provider_credentials";
@@ -69,7 +70,7 @@ export async function saveVercelGatewayApiKey(apiKey: string, updatedBy: string)
   }
   await (await getCollection()).replaceOne(
     { _id: "vercel" },
-    { apiKey: encryptSecret(normalized), updatedAt: new Date(), updatedBy },
+    withLegacyCompany({ apiKey: encryptSecret(normalized), updatedAt: new Date(), updatedBy }),
     { upsert: true },
   );
 }

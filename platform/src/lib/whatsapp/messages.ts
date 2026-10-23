@@ -2,6 +2,7 @@ import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -58,7 +59,7 @@ export async function saveWhatsAppMessage(
     { metaMessageId: message.metaMessageId },
     {
       $set: { ...message, updatedAt: now },
-      $setOnInsert: { _id: new ObjectId() },
+      $setOnInsert: withLegacyCompany({ _id: new ObjectId() }),
     },
     { upsert: true },
   );

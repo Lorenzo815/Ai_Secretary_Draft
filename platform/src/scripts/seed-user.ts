@@ -10,6 +10,7 @@ config({ path: ".env.local" });
 
 import { MongoClient, ObjectId } from "mongodb";
 import { hash } from "bcryptjs";
+import { withLegacyCompany } from "../lib/companies/ownership";
 
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) {
@@ -33,14 +34,14 @@ async function main() {
     console.log(`ℹ️  User "${email}" already exists — skipping.`);
   } else {
     const passwordHash = await hash("password123", 12);
-    await users.insertOne({
+    await users.insertOne(withLegacyCompany({
       _id: new ObjectId(),
       email,
       name: "Admin",
       passwordHash,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
+    }));
     console.log(`✅  Created user "${email}" with password "password123"`);
   }
 

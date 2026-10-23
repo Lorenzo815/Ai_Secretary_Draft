@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import type { AutomationRuleDocument } from "./contracts";
 import { createDefaultAutomationRules } from "./defaults";
 
@@ -20,7 +21,7 @@ export async function listAutomationRules() {
     collection.deleteMany({ _id: { $in: RETIRED_RULE_IDS } }),
     ...defaults.map((rule) => collection.updateOne(
       { _id: rule._id },
-      { $setOnInsert: rule },
+      { $setOnInsert: withLegacyCompany(rule) },
       { upsert: true },
     )),
   ]);
@@ -36,7 +37,19 @@ export async function replaceAutomationRules(input: {
   const ids = input.rules.map((rule) => rule._id);
   await Promise.all(input.rules.map((rule) => collection.replaceOne(
     { _id: rule._id },
-    { ...rule, updatedAt: new Date(), updatedBy: input.updatedBy },
+    withLegacyCompany({
+      _id: rule._id,
+      name: rule.name,
+      enabled: rule.enabled,
+      process: rule.process,
+      event: rule.event,
+      conditions: rule.conditions,
+      debounceMs: rule.debounceMs,
+      cooldownMinutes: rule.cooldownMinutes,
+      rerunWhenSourceChanges: rule.rerunWhenSourceChanges,
+      updatedAt: new Date(),
+      updatedBy: input.updatedBy,
+    }),
     { upsert: true },
   )));
   await collection.deleteMany({ _id: { $nin: ids } });

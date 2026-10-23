@@ -3,6 +3,7 @@ import "server-only";
 import { Collection, MongoServerError, ObjectId, type ClientSession, type UpdateFilter } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
 import { getSlotAccessDecision, isSlotAllowedByAccessEvents } from "./access-policy";
 import {
@@ -210,7 +211,7 @@ export async function getCalendarSettings() {
     confirmationMessageTemplate: DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
-  await settings.insertOne(initial);
+  await settings.insertOne(withLegacyCompany(initial));
   return initial;
 }
 
@@ -262,7 +263,7 @@ export async function updateCalendarSettings(input: {
     confirmationMessageTemplate: input.confirmationMessageTemplate?.trim().slice(0, 500) || DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
-  await (await getSettingsCollection()).replaceOne({ _id: SETTINGS_ID }, next, { upsert: true });
+  await (await getSettingsCollection()).replaceOne({ _id: SETTINGS_ID }, withLegacyCompany(next), { upsert: true });
   return next;
 }
 
@@ -334,7 +335,7 @@ export async function createCalendarAccessEvent(input: {
     updatedAt: now,
   };
   await ensureCalendarIndexes();
-  await (await getAccessEventsCollection()).insertOne(event);
+  await (await getAccessEventsCollection()).insertOne(withLegacyCompany(event));
   return event;
 }
 
@@ -1306,7 +1307,7 @@ function createAppointmentDocument(
   now: Date,
   recurrence?: AppointmentRecurrenceMetadata,
 ): AppointmentDocument {
-  return {
+  return withLegacyCompany({
     _id: new ObjectId(),
     providerId: input.resourceId ?? settings.eventTypes.find((item) => item.key === input.eventType)?.resourceId ?? settings.providerId,
     customerId: input.customerId,
@@ -1329,7 +1330,7 @@ function createAppointmentDocument(
     source: input.source,
     createdAt: now,
     updatedAt: now,
-  };
+  });
 }
 
 export async function cancelAppointment(id: string) {

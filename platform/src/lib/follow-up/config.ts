@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { DEFAULT_FOLLOW_UP_ATTEMPT_INSTRUCTIONS, DEFAULT_FOLLOW_UP_PROMPT } from "./instructions";
 
 const DB_NAME = "ai_secretary";
@@ -39,7 +40,7 @@ export async function getFollowUpConfiguration() {
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
-    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, migrated);
+    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, withLegacyCompany(migrated));
     return result.matchedCount === 1 ? migrated : (await collection.findOne({ _id: "active" })) ?? migrated;
   }
   const initial = withHash({
@@ -56,7 +57,7 @@ export async function getFollowUpConfiguration() {
     updatedAt: new Date(),
     updatedBy: "system",
   });
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: initial }, { upsert: true });
+  await collection.updateOne({ _id: "active" }, { $setOnInsert: withLegacyCompany(initial) }, { upsert: true });
   return (await collection.findOne({ _id: "active" })) ?? initial;
 }
 
@@ -88,7 +89,7 @@ export async function updateFollowUpConfiguration(input: {
   });
   const result = await (await getCollection()).replaceOne(
     { _id: "active", revision: input.expectedRevision },
-    next,
+    withLegacyCompany(next),
   );
   if (result.matchedCount === 0) throw new Error("A configuração de follow-up foi alterada. Recarregue antes de salvar.");
   return next;

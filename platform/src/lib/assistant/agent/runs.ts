@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
 import clientPromise from "../../mongodb";
+import { withLegacyCompany } from "../../companies/ownership";
 import type { AssistantDecision } from "../tools";
 import type {
   AgentAction,
@@ -52,7 +53,7 @@ export async function startAgentRun(input: {
       { $set: { status: "superseded", completedAt: run.startedAt } },
     );
   }
-  await collection.insertOne(run);
+  await collection.insertOne(withLegacyCompany(run));
   await collection.createIndex({ customerId: 1, startedAt: -1 });
   return run;
 }
@@ -71,7 +72,7 @@ export async function recordAgentRunStep(input: {
     createdAt: new Date(),
   };
   const collection = (await clientPromise).db(DB_NAME).collection<AgentRunStepDocument>("assistant_run_steps");
-  await collection.insertOne(step);
+  await collection.insertOne(withLegacyCompany(step));
   await collection.createIndex({ runId: 1, iteration: 1 }, { unique: true });
 }
 

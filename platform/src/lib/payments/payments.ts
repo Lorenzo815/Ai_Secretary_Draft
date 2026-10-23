@@ -2,6 +2,7 @@ import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { updateCustomerServiceStatus } from "../crm";
 import { getAutomaticPaymentProvider } from "./providers/registry";
 
@@ -62,7 +63,7 @@ export async function createPaymentRequest(input: {
     createdAt: now,
     updatedAt: now,
   };
-  await requests.insertOne(request);
+  await requests.insertOne(withLegacyCompany(request));
   await requests.createIndex(
     { customerId: 1, status: 1 },
     { unique: true, partialFilterExpression: { status: "awaiting_human_confirmation" } },
@@ -139,7 +140,7 @@ export async function createMercadoPagoPaymentRequest(input: {
     createdAt: now,
     updatedAt: now,
   };
-  await requests.insertOne(request);
+  await requests.insertOne(withLegacyCompany(request));
   await updateCustomerServiceStatus(input.customerId, "waiting_human");
   try {
     const providerPayment = await getAutomaticPaymentProvider("mercado_pago").createPayment({

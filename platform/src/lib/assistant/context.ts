@@ -2,6 +2,7 @@ import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 import { fetchWhatsAppImageDataUrl } from "../whatsapp/client";
 import { fetchAndTranscribeWhatsAppAudio } from "../whatsapp/audio";
 import { listWhatsAppMessagesForAssistant, updateWhatsAppMediaTranscription } from "../whatsapp/messages";
@@ -96,7 +97,7 @@ export async function saveAssistantContext(input: {
         summarizedThrough: input.summarizedThrough,
         updatedAt: new Date(),
       },
-      $setOnInsert: { _id: new ObjectId(), customerId: input.customerId },
+      $setOnInsert: withLegacyCompany({ _id: new ObjectId(), customerId: input.customerId }),
     },
     { upsert: true },
   );

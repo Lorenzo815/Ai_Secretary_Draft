@@ -2,6 +2,7 @@ import "server-only";
 
 import { MongoServerError, ObjectId, type Collection } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 
 const DB_NAME = "ai_secretary";
 const LOCK_COLLECTION = "lead_qualification_locks";
@@ -49,7 +50,7 @@ export async function acquireQualificationLock(customerId: ObjectId, sourceHash:
           leaseUntil: new Date(now.getTime() + LOCK_LEASE_MS),
           updatedAt: now,
         },
-        $setOnInsert: { _id: new ObjectId(), createdAt: now },
+        $setOnInsert: withLegacyCompany({ _id: new ObjectId(), createdAt: now }),
       },
       { upsert: true, returnDocument: "after" },
     );

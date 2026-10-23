@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
+import { withLegacyCompany } from "../../companies/ownership";
 import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./contracts";
@@ -60,7 +61,7 @@ export async function getAgentConfiguration() {
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
-    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, migrated);
+    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, withLegacyCompany(migrated));
     if (result.matchedCount > 0) return migrated;
     const concurrent = await collection.findOne({ _id: "active" });
     return concurrent
@@ -88,7 +89,7 @@ export async function getAgentConfiguration() {
   });
   await collection.updateOne(
     { _id: "active" },
-    { $setOnInsert: initial },
+    { $setOnInsert: withLegacyCompany(initial) },
     { upsert: true },
   );
   return (await collection.findOne({ _id: "active" })) ?? initial;
@@ -100,7 +101,7 @@ export async function updateAgentConfiguration(input: {
   configuration: Omit<AgentConfigurationDocument, "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy">;
 }) {
   const configuration = {
-    ...input.configuration,
+    ...withoutMetadata(input.configuration),
     toolGuidance: normalizeToolGuidance(input.configuration.toolGuidance),
     relationshipRouting: normalizeRelationshipRouting(input.configuration.relationshipRouting),
   };
@@ -117,7 +118,7 @@ export async function updateAgentConfiguration(input: {
   });
   const result = await collection.replaceOne(
     { _id: "active", revision: input.expectedRevision },
-    next,
+    withLegacyCompany(next),
   );
   if (result.matchedCount === 0) {
     throw new Error("A configuração foi alterada por outra sessão. Recarregue antes de salvar.");
@@ -157,7 +158,9 @@ export async function setAgentEnabled(enabled: boolean, updatedBy = "settings") 
   });
 }
 
-function withoutMetadata(document: AgentConfigurationDocument) {
+function withoutMetadata(
+  document: Omit<AgentConfigurationDocument, "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy">,
+) {
   return {
     enabled: document.enabled,
     identityPrompt: document.identityPrompt,

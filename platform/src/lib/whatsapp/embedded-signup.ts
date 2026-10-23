@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
+import { withLegacyCompany } from "../companies/ownership";
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
 const DB_NAME = "ai_secretary";
@@ -78,7 +79,7 @@ export async function updateEmbeddedSignupConfiguration(input: {
     graphVersion: DEFAULT_GRAPH_VERSION,
     updatedAt: new Date(),
   };
-  await (await getCollection()).replaceOne({ _id: "active" }, next, { upsert: true });
+  await (await getCollection()).replaceOne({ _id: "active" }, withLegacyCompany(next), { upsert: true });
   return next;
 }
 
@@ -124,7 +125,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
 
   const now = new Date();
   const connectionId = randomUUID();
-  await (await getConnectionsCollection()).insertOne({
+  await (await getConnectionsCollection()).insertOne(withLegacyCompany({
     _id: connectionId,
     appId: configuration.appId,
     graphVersion: configuration.graphVersion,
@@ -132,7 +133,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
     status: "token_exchanged",
     createdAt: now,
     updatedAt: now,
-  });
+  }));
   return { connectionId };
 }
 
@@ -529,14 +530,14 @@ export async function captureCoexistenceWebhookEvent(input: {
   const result = await (await getWebhookEventsCollection()).updateOne(
     { _id: eventId },
     {
-      $setOnInsert: {
+      $setOnInsert: withLegacyCompany({
         _id: eventId,
         wabaId: input.wabaId,
         field: input.field,
         value: input.value,
         receivedAt: new Date(),
         processedAt: null,
-      },
+      }),
     },
     { upsert: true },
   );

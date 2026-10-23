@@ -96,6 +96,101 @@ prefixo `NEXT_PUBLIC_*` para segredos.
 
 ## Verificação
 
+### Migração aditiva de propriedade da empresa (fase 0/1)
+
+O CLI `src\scripts\company-ownership.ts` **não executa migração automaticamente**:
+sem comando, faz somente `dry-run`. Não habilita isolamento/múltiplas empresas.
+Esta fase adiciona **somente metadados**: não implementa isolamento de leituras
+por tenant nem isolamento de autorização e não habilita uma nova empresa.
+IDs originais, inclusive IDs em string e ObjectIds, mantêm seus tipos/valores;
+índices existentes e definições/funcionamento de TTL em produção são preservados.
+Não usa repositórios da aplicação, não corrige referências órfãs, não altera
+campos de negócio, timestamps, revisões/hashes, documentos ou índices existentes.
+`bootstrap` insere somente a empresa inicial (`isolationReady:false`); `apply`
+adiciona somente `companyId` ausente, com guardas e transações de até 200 documentos.
+Cada transação compara BSON antes/depois, omitindo apenas o novo campo; qualquer
+diferença aborta aquela transação. Transações já concluídas permanecem aplicadas
+se houver falha posterior; a execução é retomável/idempotente.
+
+As novas escritas e substituições completas atribuem a empresa inicial no servidor;
+metadados de propriedade enviados por clientes não controlam essa atribuição nem
+compõem hashes de configuração. Essa ponte é transitória, não um resolvedor de tenants.
+Use `dry-run` e `verify` para confirmar a cobertura no ambiente de destino.
+O ensaio de `apply` em scratch não equivale a executar `apply` em produção.
+
+Pré-requisitos: MongoDB **5+ em replica set ou mongos**, sessões snapshot,
+transações e permissões de leitura do catálogo. Não há fallback sem snapshot.
+`restore-test` precisa criar/escrever/indexar/remover um banco isolado e listar
+bancos para confirmar sua ausência antes/depois. Opcionalmente configure
+`COMPANY_MIGRATION_RESTORE_URI` com um **destino separado compatível**; a origem
+continua vinculada ao `MONGODB_URI` exato usado no backup. Não coloque URIs
+ou chaves na linha de comando.
+
+Forneça `COMPANY_MIGRATION_BACKUP_KEY` via ambiente: **32 bytes aleatórios em
+Base64 canônico**. Armazene a chave separadamente, protegida por DPAPI/gerenciador
+de segredos; perdê-la torna o backup irrecuperável. Use diretório local privado
+com ACL restritiva, **fora do repositório**. Arquivos existentes nunca são
+sobrescritos. Backup/recibo não devem ser colocados em pasta pública/sincronizada.
+A cópia local da chave protegida por **Windows DPAPI** permanece vinculada ao
+usuário/perfil Windows e à máquina atuais; não presuma recuperação em outro
+usuário/computador. O caminho privado e o arquivo de chave não são versionados.
+Retenha tanto o material de chave recuperável quanto o backup criptografado,
+protegidos e separados. DPAPI local não oferece escrow entre máquinas e este
+backup não substitui os backups/snapshots independentes do provedor.
+
+Exemplo PowerShell, executado em `platform` após fornecer a chave por ambiente
+e configurar `MONGODB_URI` no `.env.local`. Defina
+`COMPANY_MIGRATION_BACKUP_DIRECTORY` somente no ambiente local com o diretório
+privado existente, fora do repositório; não versione esse caminho:
+
+```powershell
+$backup = Join-Path $env:COMPANY_MIGRATION_BACKUP_DIRECTORY 'snapshot.bson.aes'
+$proof = Join-Path $env:COMPANY_MIGRATION_BACKUP_DIRECTORY 'restore-proof.json'
+$cli = @('--env-file=.env.local', '--import', 'tsx', 'src\scripts\company-ownership.ts')
+node @cli backup --backup $backup
+node @cli restore-test --backup $backup --receipt $proof
+node @cli dry-run
+node @cli bootstrap --backup $backup --receipt $proof --company-name 'Empresa atual' --confirm-production 'ai_secretary:9b9d1f4b4f16cf6e84abcce4'
+# PARAR: implantar/validar a inclusão de companyId nas novas escritas antes de apply.
+node @cli apply --backup $backup --receipt $proof --confirm-production 'ai_secretary:9b9d1f4b4f16cf6e84abcce4'
+node @cli verify
+```
+
+`backup` usa uma única sessão snapshot para todos os documentos, BSON bruto
+com validação de round-trip sem promoção numérica, manifesto SHA256/contagens
+e catálogo/índices completos. Tudo é criptografado em fluxo AES-256-GCM;
+nenhum conteúdo de documento ou segredo é impresso. A criação do backup por si
+só **não comprova recuperação**.
+
+`restore-test` autentica o arquivo completo, cria somente um banco com nome
+aleatório `cmr_<32 hex>` (36 bytes ASCII, abaixo do limite de 38 bytes do Atlas
+shared, mantendo 128 bits aleatórios), restaura documentos e índices não TTL,
+compara hashes BSON/contagens e metadados de índices, ensaia dry-run/bootstrap/
+apply/segunda execução e verifica preservação dos campos originais. Os índices
+TTL ficam **apenas no backup**, nunca no banco de ensaio, para impedir exclusões.
+Coleções/opções não suportadas, BSON que não possa ser preservado exatamente,
+propriedade divergente/nula/inválida ou uma segunda empresa bloqueiam o processo.
+Dados que passaram a existir ou mudar depois do snapshot não estão nesse backup:
+ele não é um rollback automático das escritas posteriores.
+
+O recibo autenticado só é gravado após esse ensaio **e a limpeza confirmada**
+do banco criado pela própria ferramenta. Bootstrap/apply exigem tanto o arquivo
+original íntegro quanto o recibo, vinculados ao hash, banco, empresa e conexão de
+origem por HMAC-SHA256 da URI com a chave de backup (sem persistir/imprimir URI
+ou credenciais); uma flag de confirmação não substitui essa prova. Mudança na URI exige
+novo backup/ensaio. Sem recibo válido, falha fechada antes de conectar para
+mutação. Não há comando de restauração sobre produção. Se a limpeza do ensaio
+falhar, não há recibo: inspecione o banco aleatório/marker antes de qualquer
+limpeza administrativa; a ferramenta nunca remove banco sem sua própria marca.
+Falhas do CLI produzem somente JSON sanitizado com `stage`, `safetyErrorId`
+estável e, se disponíveis, `mongoCode` numérico/`mongoCodeName`; nunca mensagens
+brutas, stack, registros, URIs ou conteúdo de arquivos. O relatório identifica
+o prefixo/banco aleatório de ensaio e `cleanup`: `not-created` (esta execução não
+iniciou criação), `not-confirmed` (pode exigir inspeção administrativa) ou
+`confirmed`. Falha na criação/inserção do marker não garante limpeza; após o
+marker, a limpeza é tentada em `finally`, mas uma falha nela impede recibo e
+reporta separadamente a etapa/código anteriores.
+
 ```bash
 npm test
 npm run lint
