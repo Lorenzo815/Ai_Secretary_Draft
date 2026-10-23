@@ -54,7 +54,22 @@ export function assertOwnership(document: Document): void {
 }
 
 export function assertCompany(document: Document): void {
-  const fields = ["_id", "key", "name", "status", "isolationReady", "createdAt"];
+  const fields = ["_id", "key", "name", "status", "isolationReady", "createdAt",
+    "adminUserId", "accessControlVersion", "userManagementVersion", "legalName", "cnpj", "contactEmail", "contactPhone"];
+  const accessConfigured = Object.hasOwn(document, "accessControlVersion");
+  const numeric = (value: unknown) => typeof value === "number" ||
+    value instanceof BSON.Int32 || value instanceof BSON.Double || value instanceof BSON.Long;
+  requireSafe(
+    accessConfigured
+      ? numeric(document.accessControlVersion) && Number(document.accessControlVersion) === 1 &&
+        document.adminUserId instanceof ObjectId && numeric(document.userManagementVersion) &&
+        Number.isSafeInteger(Number(document.userManagementVersion)) && Number(document.userManagementVersion) >= 0
+      : !Object.hasOwn(document, "adminUserId") && !Object.hasOwn(document, "userManagementVersion"),
+    "Company access-control metadata is invalid.",
+  );
+  for (const key of ["legalName", "cnpj", "contactEmail", "contactPhone"]) {
+    requireSafe(!Object.hasOwn(document, key) || typeof document[key] === "string", "Company profile metadata is invalid.");
+  }
   requireSafe(
     document._id instanceof ObjectId &&
       document._id.toHexString() === LEGACY_COMPANY_ID &&

@@ -33,6 +33,8 @@ async function main() {
   if (existing) {
     console.log(`ℹ️  User "${email}" already exists — skipping.`);
   } else {
+    const company = await db.collection("companies").findOne({ accessControlVersion: 1 });
+    if (company) throw new Error("A gestão de usuários já está ativa. Crie contas nas configurações da empresa.");
     const passwordHash = await hash("password123", 12);
     await users.insertOne(withLegacyCompany({
       _id: new ObjectId(),

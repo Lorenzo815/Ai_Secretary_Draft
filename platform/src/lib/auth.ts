@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { findUserByEmail } from "@/lib/users";
+import { loadIdentity, resolveToken, sessionFingerprint } from "@/lib/access/session";
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
@@ -24,15 +25,19 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
-        const isValid = await compare(credentials.password, user.passwordHash);
+        const identity = await loadIdentity(user._id.toHexString());
+        const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
+        if (!identity || !secret || identity.user.email !== user.email) return null;
+        const isValid = await compare(credentials.password, identity.user.passwordHash);
         if (!isValid) {
           return null;
         }
 
         return {
           id: user._id.toString(),
-          email: user.email,
-          name: user.name,
+          email: identity.user.email,
+          name: identity.user.name,
+          accessFingerprint: sessionFingerprint(identity.user, secret),
         };
       },
     }),
@@ -51,13 +56,18 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        token.accessFingerprint = user.accessFingerprint;
       }
+      const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
+      const principal = secret ? await resolveToken(token, secret) : null;
+      token.principal = principal;
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id as string;
-      }
+      session.principal = token.principal ?? null;
+      session.user.id = token.principal?.id ?? "";
+      session.user.email = token.principal?.email ?? "";
+      session.user.name = token.principal?.name ?? "";
       return session;
     },
   },

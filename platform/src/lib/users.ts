@@ -1,14 +1,18 @@
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "./mongodb";
-import { withLegacyCompany } from "./companies/ownership";
+import type { Permissions } from "./access/contracts";
 
 export interface UserDocument {
   _id: ObjectId;
+  companyId: ObjectId;
   email: string;
   name: string;
   passwordHash: string;
   createdAt: Date;
   updatedAt: Date;
+  permissions?: Permissions;
+  disabled?: boolean;
+  sessionVersion?: number;
 }
 
 const DB_NAME = "ai_secretary";
@@ -24,31 +28,6 @@ export async function findUserByEmail(
 ): Promise<UserDocument | null> {
   const users = await getUsersCollection();
   return users.findOne({ email: email.toLowerCase() });
-}
-
-export async function createUser(
-  email: string,
-  name: string,
-  passwordHash: string
-): Promise<UserDocument> {
-  const users = await getUsersCollection();
-  const now = new Date();
-  const result = await users.insertOne(withLegacyCompany({
-    _id: new ObjectId(),
-    email: email.toLowerCase(),
-    name,
-    passwordHash,
-    createdAt: now,
-    updatedAt: now,
-  }));
-  return {
-    _id: result.insertedId,
-    email: email.toLowerCase(),
-    name,
-    passwordHash,
-    createdAt: now,
-    updatedAt: now,
-  };
 }
 
 /** Ensure unique index on email */

@@ -3,9 +3,15 @@ import Link from "next/link";
 import { ArrowRight, KeyRound, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { authOptions } from "@/lib/auth";
 import AutoRefresh from "../_components/auto-refresh";
+import { redirect } from "next/navigation";
+import { getCompanySettings } from "@/lib/access/management";
+import { canAccess } from "@/lib/access/contracts";
+import CompanyUsersSettings from "./_components/company-users-settings";
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions);
+  if (!session?.principal) redirect("/login");
+  const companySettings = await getCompanySettings(session.principal);
 
   const initials = session?.user?.name
     ? session.user.name
@@ -21,8 +27,8 @@ export default async function SettingsPage() {
       <AutoRefresh />
       <header className="border-b border-mist pb-5">
         <p className="text-sm font-semibold text-deep-teal">Identidade e acesso</p>
-        <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Minha conta</h1>
-        <p className="mt-2 text-sm text-stone">Dados da sessão atual e escopo de acesso à operação.</p>
+        <h1 className="mt-1 font-heading text-2xl font-bold text-slate-ink">Conta e empresa</h1>
+        <p className="mt-2 text-sm text-stone">Identidade, usuários e permissões de {companySettings.company.name}.</p>
       </header>
 
       <section className="overflow-hidden rounded-lg border border-mist bg-white">
@@ -54,11 +60,12 @@ export default async function SettingsPage() {
         <div className="grid gap-4 sm:grid-cols-3">
           <AccessDetail icon={KeyRound} label="Método" value="Email e senha" />
           <AccessDetail icon={ShieldCheck} label="Duração" value="24 horas" />
-          <AccessDetail icon={ShieldCheck} label="Escopo" value="Dashboard completo" />
+          <AccessDetail icon={ShieldCheck} label="Escopo" value={session.principal.isAdmin ? "Administrador" : "Por módulo"} />
         </div>
       </section>
 
-      <Link href="/dashboard/settings/system" className="group flex items-center justify-between gap-5 rounded-lg border border-mist bg-white p-5 transition hover:border-deep-teal/40"><div className="flex items-start gap-4"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><SlidersHorizontal className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-slate-ink">Configurações do sistema</p><p className="mt-1 text-xs leading-5 text-stone">Gerencie Pix, disponibilidade do agente e limpeza de dados operacionais.</p></div></div><ArrowRight className="h-4 w-4 shrink-0 text-stone transition group-hover:translate-x-0.5 group-hover:text-deep-teal" /></Link>
+      <CompanyUsersSettings initial={companySettings} principal={session.principal} />
+      {canAccess(session.principal, "system") && <Link href="/dashboard/settings/system" className="group flex items-center justify-between gap-5 rounded-lg border border-mist bg-white p-5 transition hover:border-deep-teal/40"><div className="flex items-start gap-4"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><SlidersHorizontal className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-slate-ink">Configurações do sistema</p><p className="mt-1 text-xs leading-5 text-stone">Gerencie Pix, disponibilidade do agente e limpeza de dados operacionais.</p></div></div><ArrowRight className="h-4 w-4 shrink-0 text-stone transition group-hover:translate-x-0.5 group-hover:text-deep-teal" /></Link>}
     </div>
   );
 }

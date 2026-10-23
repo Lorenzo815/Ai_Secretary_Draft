@@ -10,10 +10,10 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const session = await getServerSession(authOptions);
-  if (!session) redirect("/login?callbackUrl=%2Fdashboard");
+  if (!session?.principal) redirect("/login?callbackUrl=%2Fdashboard%2Fsettings");
 
   return (
-    <Providers>
+    <Providers session={session}>
       <div className="app-canvas app-viewport flex overflow-hidden">
         <Sidebar />
         <main className="h-full min-w-0 flex-1 overflow-y-auto pt-14 lg:pt-0">

@@ -21,7 +21,7 @@ export async function GET(
     return new NextResponse(media.bytes, {
       headers: {
         "Content-Type": media.mimeType,
-        "Cache-Control": "private, max-age=300",
+        "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
     });

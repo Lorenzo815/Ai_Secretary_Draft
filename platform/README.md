@@ -96,7 +96,52 @@ prefixo `NEXT_PUBLIC_*` para segredos.
 
 ## Verificação
 
-### Migração aditiva de propriedade da empresa (fase 0/1)
+### Contas, empresa e controle de acesso
+
+Em `/dashboard/settings`, o administrador edita nome, razão social, CNPJ e contatos
+da empresa e gerencia até **25 contas no total**, incluindo a própria conta e contas
+desativadas. Contas podem ser reativadas, editadas ou excluídas pelo administrador.
+A exclusão exige confirmação, libera uma vaga e revoga as sessões da conta, sem
+excluir clientes, agendamentos ou históricos operacionais. A conta administradora
+não pode ser excluída nem desativada antes de transferir a administração.
+O administrador único é definido por `companies.adminUserId`,
+não por um papel enviado pelo navegador. A transferência exige a senha atual,
+troca esse único vínculo em transação e revoga as sessões das duas contas.
+
+Novos usuários começam sem permissões. Cada módulo admite **Sem acesso / Somente
+leitura / Gerenciar**. O proxy Node.js do Next valida no banco cada requisição
+protegida, com catálogo explícito de páginas, APIs e métodos HTTP; caminhos novos
+ficam bloqueados até serem cadastrados. As APIs administrativas também revalidam
+o administrador dentro da transação. Criação de contas e mudanças administrativas
+serializam uma escrita no documento da empresa, evitando ultrapassar o limite em
+requisições concorrentes. O email permanece globalmente único.
+
+Clientes inclui seu histórico completo, análise e pagamentos. Visão geral tem
+permissão independente para os indicadores e resumos do dashboard: não libera
+outras páginas ou suas APIs. Sistema inclui
+integrações e credenciais; exclusão de dados operacionais é sempre exclusiva do
+administrador. Webhooks e execução interna continuam usando suas autenticações
+de máquina existentes, sem depender de cookies do dashboard.
+
+Senhas novas usam bcrypt e exigem 12 caracteres, com limite de 72 bytes UTF-8.
+Um HMAC do hash armazenado, email, empresa, versão da sessão, estado e permissões
+vincula a sessão ao registro atual. Alterar esses dados, inclusive o hash diretamente
+no servidor, invalida o token na próxima requisição. Páginas abertas verificam a
+sessão a cada 30 segundos enquanto conectadas. Requisições já em execução não são
+canceladas retroativamente. JWTs anteriores a esta versão exigem novo login.
+
+O bootstrap explícito da conta inicial requer backup criptografado com restauração
+comprovada e exatamente o usuário existente na empresa:
+
+```powershell
+node --env-file=.env.local --import tsx src\scripts\company-user-access.ts --admin-id ID_EXISTENTE --backup CAMINHO_ABSOLUTO --receipt CAMINHO_ABSOLUTO --confirm-production 'ai_secretary:9b9d1f4b4f16cf6e84abcce4'
+```
+
+Não há promoção automática no login nem redefinição da senha existente. Esta etapa
+continua limitada à empresa inicial: `isolationReady:false`. Não habilite outra
+empresa até concluir o isolamento de todas as consultas operacionais.
+
+### Ferramentas de migração de propriedade
 
 O CLI `src\scripts\company-ownership.ts` **não executa migração automaticamente**:
 sem comando, faz somente `dry-run`. Não habilita isolamento/múltiplas empresas.
