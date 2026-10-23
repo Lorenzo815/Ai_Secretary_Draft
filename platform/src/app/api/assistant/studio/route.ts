@@ -17,13 +17,12 @@ import {
   updateLeadQualificationConfiguration,
 } from "@/lib/qualification/config";
 import { getFollowUpConfiguration, updateFollowUpConfiguration } from "@/lib/follow-up/config";
+import { getMercadoPagoCredentialStatus, getPaymentProviderConfiguration } from "@/lib/payments";
 
 type AgentConfigurationInput = Omit<
   AgentConfigurationDocument,
   "_id" | "revision" | "contentHash" | "updatedAt" | "updatedBy" | "payment"
-> & {
-  payment: { signalAmountCents: number };
-};
+>;
 
 async function authenticate() {
   return getServerSession(authOptions);
@@ -33,12 +32,14 @@ export async function GET() {
   const session = await authenticate();
   if (!session) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
 
-  const [configuration, qualification, followUp, automationRules, calendarSettings] = await Promise.all([
+  const [configuration, qualification, followUp, automationRules, calendarSettings, paymentProvider, mercadoPago] = await Promise.all([
     getAgentConfiguration(),
     getLeadQualificationConfiguration(),
     getFollowUpConfiguration(),
     listAutomationRules(),
     getCalendarSettings(),
+    getPaymentProviderConfiguration(),
+    getMercadoPagoCredentialStatus(),
   ]);
   return NextResponse.json({
     configuration: sanitizeConfiguration(configuration, calendarSettings.eventTypes.map((eventType) => eventType.key)),
@@ -47,6 +48,12 @@ export async function GET() {
     automationRules,
     availableTools: listToolMetadata(),
     calendarEventTypes: calendarSettings.eventTypes,
+    paymentStatus: {
+      activeProvider: paymentProvider.activeProvider,
+      humanFallbackEnabled: paymentProvider.humanFallbackEnabled,
+      manualConfigured: Boolean(configuration.payment.pixKey && configuration.payment.recipientName),
+      mercadoPagoConfigured: mercadoPago.configured,
+    },
     previews: {
       structuralPolicy: AGENT_STRUCTURAL_POLICY,
       developerPrompt: buildAgentDeveloperPrompt(configuration, false),
@@ -75,11 +82,7 @@ export async function PUT(request: Request) {
         updatedBy,
         configuration: {
           ...editable,
-          payment: {
-            pixKey: current.payment.pixKey,
-            recipientName: current.payment.recipientName,
-            signalAmountCents: Number(editable.payment?.signalAmountCents),
-          },
+          payment: current.payment,
         },
       });
       return NextResponse.json({ configuration: sanitizeConfiguration(configuration) });
@@ -173,7 +176,6 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument, availa
     updatedAt: configuration.updatedAt,
     updatedBy: configuration.updatedBy,
     payment: {
-      configured: Boolean(configuration.payment.pixKey && configuration.payment.recipientName),
       signalAmountCents: configuration.payment.signalAmountCents,
     },
   };

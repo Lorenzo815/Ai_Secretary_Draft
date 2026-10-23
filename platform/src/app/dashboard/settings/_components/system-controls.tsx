@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, CheckCircle2, CircleAlert, CircleDollarSign, DatabaseZap, KeyRound, LoaderCircle, RefreshCw, Save, Trash2 } from "lucide-react";
 
@@ -13,6 +13,12 @@ interface MercadoPagoStatus {
   storageEncryptionConfigured: boolean;
 }
 
+interface PaymentSettings {
+  configured: boolean;
+  recipientName: string;
+  signalAmountCents: number;
+}
+
 export default function SystemControls({
   initialProcessingEnabled,
   initialPayment,
@@ -20,7 +26,7 @@ export default function SystemControls({
   initialCustomers,
 }: {
   initialProcessingEnabled: boolean;
-  initialPayment: { configured: boolean; recipientName: string; signalAmountCents: number };
+  initialPayment: PaymentSettings;
   initialPaymentProvider: { activeProvider: PaymentProvider; humanFallbackEnabled: boolean; mercadoPago: MercadoPagoStatus };
   initialCustomers: Array<{ id: string; label: string }>;
 }) {
@@ -35,12 +41,14 @@ export default function SystemControls({
   const [message, setMessage] = useState<string | null>(null);
   const [pixKey, setPixKey] = useState("");
   const [recipientName, setRecipientName] = useState(initialPayment.recipientName);
+  const [manualConfigured, setManualConfigured] = useState(initialPayment.configured);
   const [signalAmount, setSignalAmount] = useState(initialSignalAmount);
-  const [paymentBaseline, setPaymentBaseline] = useState({
-    recipientName: initialPayment.recipientName,
-    signalAmount: initialSignalAmount,
-  });
+  const [recipientBaseline, setRecipientBaseline] = useState(initialPayment.recipientName);
+  const [amountBaseline, setAmountBaseline] = useState(initialSignalAmount);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [savingAmount, setSavingAmount] = useState(false);
+  const receivedManualPayment = useRef(initialPayment);
+  const receivedSignalAmount = useRef(initialSignalAmount);
   const [paymentProvider, setPaymentProvider] = useState(initialPaymentProvider.activeProvider);
   const [providerBaseline, setProviderBaseline] = useState(initialPaymentProvider.activeProvider);
   const [humanFallbackEnabled, setHumanFallbackEnabled] = useState(initialPaymentProvider.humanFallbackEnabled);
@@ -55,14 +63,11 @@ export default function SystemControls({
   const confirmationAccepted = confirmation.trim() === "APAGAR";
   const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
   const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !deleting;
-  const paymentDirty = Boolean(
-    pixKey
-    || recipientName !== paymentBaseline.recipientName
-    || signalAmount !== paymentBaseline.signalAmount,
-  );
+  const paymentDirty = Boolean(pixKey || recipientName !== recipientBaseline);
+  const amountDirty = signalAmount !== amountBaseline;
   const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline;
   const credentialDirty = Boolean(accessToken || webhookSecret);
-  const refreshBlocked = paymentDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingProvider || savingCredential || deleting;
+  const refreshBlocked = paymentDirty || amountDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingAmount || savingProvider || savingCredential || deleting;
 
   useEffect(() => {
     setProcessingEnabled(initialProcessingEnabled);
@@ -73,14 +78,22 @@ export default function SystemControls({
   }, []);
 
   useEffect(() => {
+    const previous = receivedManualPayment.current;
+    receivedManualPayment.current = initialPayment;
+    if (previous.recipientName === initialPayment.recipientName && previous.configured === initialPayment.configured) return;
+    setManualConfigured(initialPayment.configured);
     if (paymentDirty || savingPayment) return;
     setRecipientName(initialPayment.recipientName);
+    setRecipientBaseline(initialPayment.recipientName);
+  }, [initialPayment, paymentDirty, savingPayment]);
+
+  useEffect(() => {
+    if (receivedSignalAmount.current === initialSignalAmount) return;
+    receivedSignalAmount.current = initialSignalAmount;
+    if (amountDirty || savingAmount) return;
     setSignalAmount(initialSignalAmount);
-    setPaymentBaseline({
-      recipientName: initialPayment.recipientName,
-      signalAmount: initialSignalAmount,
-    });
-  }, [initialPayment.recipientName, initialSignalAmount, paymentDirty, savingPayment]);
+    setAmountBaseline(initialSignalAmount);
+  }, [initialSignalAmount, amountDirty, savingAmount]);
 
   async function toggleProcessing() {
     setSaving(true);
@@ -140,25 +153,50 @@ export default function SystemControls({
     setSavingPayment(true);
     setMessage(null);
     try {
-      const amountCents = Math.round(Number(signalAmount.replace(",", ".")) * 100);
       const response = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          payment: { pixKey, recipientName, signalAmountCents: amountCents },
+          payment: { pixKey, recipientName },
         }),
       });
-      const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Não foi possível salvar o Pix.");
+      const result = await response.json() as { payment?: PaymentSettings; error?: string };
+      if (!response.ok || !result.payment) throw new Error(result.error ?? "Não foi possível salvar o Pix.");
       setPixKey("");
-      const normalizedAmount = (amountCents / 100).toFixed(2);
-      setSignalAmount(normalizedAmount);
-      setPaymentBaseline({ recipientName, signalAmount: normalizedAmount });
-      setMessage("Configuração do sinal via Pix atualizada.");
+      setRecipientName(result.payment.recipientName);
+      setRecipientBaseline(result.payment.recipientName);
+      setManualConfigured(result.payment.configured);
+      setMessage("Dados do Pix manual e fallback atualizados. O valor do sinal não foi alterado.");
+      router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível salvar o Pix.");
     } finally {
       setSavingPayment(false);
+    }
+  }
+
+  async function saveSignalAmount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingAmount(true);
+    setMessage(null);
+    try {
+      const amountCents = Math.round(Number(signalAmount.replace(",", ".")) * 100);
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment: { signalAmountCents: amountCents } }),
+      });
+      const result = await response.json() as { payment?: PaymentSettings; error?: string };
+      if (!response.ok || !result.payment) throw new Error(result.error ?? "Não foi possível salvar o valor do sinal.");
+      const normalizedAmount = (result.payment.signalAmountCents / 100).toFixed(2);
+      setSignalAmount(normalizedAmount);
+      setAmountBaseline(normalizedAmount);
+      setMessage("Valor do sinal atualizado para novas cobranças em todos os modos de pagamento.");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível salvar o valor do sinal.");
+    } finally {
+      setSavingAmount(false);
     }
   }
 
@@ -222,7 +260,17 @@ export default function SystemControls({
   return (
     <div className="grid gap-5 lg:grid-cols-2" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
       <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Pipeline de confirmação do Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Escolha quem confirma a transação e quando a IA pode continuar o atendimento.</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Pagamentos e sinal via Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Defina o valor único do sinal, quem confirma a transação e quando a IA pode continuar o atendimento.</p></div></div>
+        <form onSubmit={saveSignalAmount} className="mt-5 grid gap-3 border-b border-mist pb-5 sm:grid-cols-[minmax(180px,240px)_1fr] sm:items-end">
+          <label className="text-xs font-semibold text-slate-ink">
+            Valor do sinal (R$)
+            <input type="number" min="1" max="10000" step="0.01" value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required disabled={savingAmount} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" />
+          </label>
+          <button type="submit" disabled={savingAmount || !amountDirty} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 sm:justify-self-start">
+            {savingAmount ? "Salvando..." : "Salvar valor do sinal"}
+          </button>
+          <p className="text-xs leading-5 text-stone sm:col-span-2">Aplica-se ao Mercado Pago, ao modo humano e ao fallback. Permitido de R$ 1,00 a R$ 10.000,00. A alteração vale para novas cobranças; cobranças pendentes mantêm o valor original.</p>
+        </form>
         <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
           <div>
             <fieldset><legend className="text-xs font-semibold text-slate-ink">Confirmação ativa</legend><div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">{([ ["mercado_pago", "Mercado Pago"], ["manual", "Humana"] ] as const).map(([value, label]) => <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold ${paymentProvider === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}><input type="radio" name="paymentProvider" value={value} checked={paymentProvider === value} onChange={() => setPaymentProvider(value)} className="sr-only" />{label}</label>)}</div></fieldset>
@@ -240,21 +288,18 @@ export default function SystemControls({
           </div>
         </div>
         <form onSubmit={savePayment} className="mt-5 grid gap-3 border-t border-mist pt-5 md:grid-cols-3 md:items-end">
-          <p className="md:col-span-3 text-xs font-semibold text-slate-ink">Dados do modo humano e fallback</p>
+          <p className="md:col-span-3 text-xs font-semibold text-slate-ink">Dados do Pix manual e fallback</p>
+          <p className="md:col-span-3 text-xs leading-5 text-stone">Pix manual / fallback: <strong className="text-slate-ink">{manualConfigured ? "configurado" : "não configurado"}</strong>. Chave e favorecido usados apenas no modo humano ou se a cobrança automática falhar. O Mercado Pago usa as credenciais da conta acima.</p>
           <label className="text-xs font-semibold text-slate-ink">
             Chave Pix
-            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!initialPayment.configured} placeholder={initialPayment.configured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+            <input value={pixKey} onChange={(event) => setPixKey(event.target.value)} required={!manualConfigured} disabled={savingPayment} placeholder={manualConfigured ? "Deixe vazio para manter a chave atual" : "Informe a chave Pix"} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" />
           </label>
           <label className="text-xs font-semibold text-slate-ink">
             Favorecido
-            <input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required placeholder="Nome exibido no comprovante" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
-          </label>
-          <label className="text-xs font-semibold text-slate-ink">
-            Valor do sinal (R$)
-            <input value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required inputMode="decimal" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+            <input value={recipientName} onChange={(event) => setRecipientName(event.target.value)} required disabled={savingPayment} placeholder="Nome exibido no comprovante" className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" />
           </label>
           <button type="submit" disabled={savingPayment || !paymentDirty} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 md:col-start-3">
-            {savingPayment ? "Salvando..." : "Salvar dados Pix"}
+            {savingPayment ? "Salvando..." : "Salvar Pix manual / fallback"}
           </button>
         </form>
       </section>

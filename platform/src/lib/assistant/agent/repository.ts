@@ -121,9 +121,9 @@ export async function updateAgentConfiguration(input: {
 }
 
 export async function updateAgentPaymentSettings(input: {
-  pixKey: string;
-  recipientName: string;
-  signalAmountCents: number;
+  pixKey?: string;
+  recipientName?: string;
+  signalAmountCents?: number;
   updatedBy?: string;
 }) {
   const current = await getAgentConfiguration();
@@ -133,9 +133,11 @@ export async function updateAgentPaymentSettings(input: {
     configuration: {
       ...withoutMetadata(current),
       payment: {
-        pixKey: input.pixKey.trim().slice(0, 200),
-        recipientName: input.recipientName.trim().slice(0, 200),
-        signalAmountCents: input.signalAmountCents,
+        pixKey: input.pixKey?.trim().slice(0, 200) || current.payment.pixKey,
+        recipientName: input.recipientName === undefined
+          ? current.payment.recipientName
+          : input.recipientName.trim().slice(0, 200),
+        signalAmountCents: input.signalAmountCents ?? current.payment.signalAmountCents,
       },
     },
   });

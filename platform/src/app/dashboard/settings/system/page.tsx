@@ -38,7 +38,7 @@ export default async function SystemSettingsPage() {
     <section aria-label="Resumo operacional" className="grid overflow-hidden rounded-lg border border-mist bg-white sm:grid-cols-3 sm:divide-x sm:divide-mist">
       <StatusSummary icon={Radio} label="WhatsApp" value={connectionStatus} active={embeddedConnection?.status === "operational"} />
       <StatusSummary icon={Bot} label="Respostas automáticas" value={assistantSettings.enabled ? "Ativas" : "Pausadas"} active={assistantSettings.enabled} />
-      <StatusSummary icon={CircleDollarSign} label="Confirmação do Pix" value={paymentProvider.activeProvider === "mercado_pago" ? "Mercado Pago" : "Revisão humana"} active={paymentProvider.activeProvider === "mercado_pago" ? mercadoPagoStatus.configured : Boolean(assistantSettings.payment.pixKey)} />
+      <StatusSummary icon={CircleDollarSign} label="Confirmação do Pix" value={paymentProvider.activeProvider === "mercado_pago" ? "Mercado Pago" : "Revisão humana"} active={paymentProvider.activeProvider === "mercado_pago" ? mercadoPagoStatus.configured : Boolean(assistantSettings.payment.pixKey && assistantSettings.payment.recipientName)} />
     </section>
 
     <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Canais e credenciais</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Integrações</h2></div>

@@ -137,7 +137,6 @@ const SETTINGS_ID = "default-calendar";
 const DEFAULT_SLOT_DURATION_MINUTES = 30;
 const LEGACY_CONFIRMATION_MESSAGE = "Olá, {nome}! Podemos confirmar sua consulta em {data} às {hora}?";
 const DEFAULT_CONFIRMATION_MESSAGE = "Olá, {nome}! Podemos confirmar {evento} em {data} às {hora}?";
-const validSlotDurations = new Set([15, 20, 30, 45, 60, 90, 120]);
 
 const defaultWeek: WeeklyAvailability[] = [
   ...[1, 2, 3, 4, 5].map((weekday) => ({
@@ -1396,11 +1395,11 @@ function validateSettings(input: {
 }) {
   if (!input.providerName.trim()) throw new Error("Informe o nome do profissional.");
   if (!DateTime.now().setZone(input.timezone).isValid) throw new Error("Fuso horário inválido.");
-  if (!validSlotDurations.has(input.slotDurationMinutes)) {
-    throw new Error("Duração de consulta inválida.");
+  if (!Number.isInteger(input.slotDurationMinutes) || input.slotDurationMinutes < 1 || input.slotDurationMinutes > 1440) {
+    throw new Error("O intervalo da grade deve ser um número inteiro entre 1 e 1440 minutos.");
   }
   if (!Number.isFinite(input.minimumNoticeHours) || input.minimumNoticeHours < 0 || input.minimumNoticeHours > 720) throw new Error("Antecedência inválida.");
-  if (input.eventTypes.length === 0 || input.eventTypes.length > 20) throw new Error("Configure entre 1 e 20 tipos de evento.");
+  if (input.eventTypes.length === 0 || input.eventTypes.length > 50) throw new Error("Configure entre 1 e 50 tipos de evento.");
   if (input.resources.length === 0 || input.resources.length > 20) throw new Error("Configure entre 1 e 20 recursos de agenda.");
   const resourceIds = new Set<string>();
   for (const resource of input.resources) {
@@ -1414,8 +1413,8 @@ function validateSettings(input: {
     if (!/^[a-z][a-z0-9_]{1,39}$/.test(eventType.key) || !eventType.name.trim() || !/^#[0-9A-Fa-f]{6}$/.test(eventType.color) || !/^[a-z][a-z0-9_-]{1,39}$/.test(eventType.resourceId)) {
       throw new Error("Tipo de evento inválido.");
     }
-    if (!Number.isInteger(eventType.durationMinutes) || eventType.durationMinutes < 5 || eventType.durationMinutes > 480) {
-      throw new Error("A duração do tipo deve estar entre 5 e 480 minutos.");
+    if (!Number.isInteger(eventType.durationMinutes) || eventType.durationMinutes < 1 || eventType.durationMinutes > 1440) {
+      throw new Error("A duração do tipo deve ser um número inteiro entre 1 e 1440 minutos.");
     }
     if (eventTypeKeys.has(eventType.key)) throw new Error("As chaves dos tipos de evento devem ser únicas.");
     if (!resourceIds.has(eventType.resourceId)) throw new Error("O tipo de evento aponta para um recurso inexistente.");
@@ -1469,7 +1468,7 @@ function normalizeWeeklyAvailability(value: unknown): WeeklyAvailability[] {
 }
 
 function normalizeSlotDuration(value: unknown) {
-  return typeof value === "number" && validSlotDurations.has(value)
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1440
     ? value
     : DEFAULT_SLOT_DURATION_MINUTES;
 }

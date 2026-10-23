@@ -17,6 +17,28 @@ npm run dev
 `npm run dev` inicia o Next.js e o worker do assistente. Para processos
 separados, use `npm run dev:next` e `npm run worker:assistant`.
 
+## Agenda
+
+Em `/dashboard/calendario`, abra **Configurar agenda** para definir o
+**Intervalo da grade** e a **Duração** de cada tipo de evento com valores
+personalizados de **1 a 1440 minutos inteiros**, inclusive. O intervalo da grade
+controla a distância entre os horários de início sugeridos; a duração determina
+o tempo ocupado pelo evento. Os dois valores são independentes.
+Podem ser configurados até **50 tipos de evento**, incluindo os tipos padrão.
+
+## Pagamentos
+
+O **Valor do sinal** é editado somente em **Configurações do sistema → Pagamentos
+e sinal via Pix** (`/dashboard/settings/system`). O mesmo valor, de R$ 1,00 a
+R$ 10.000,00, é usado para Mercado Pago, modo humano e fallback. O Agent Studio
+mostra um resumo somente leitura com um link para essas configurações e
+indicadores separados das credenciais Mercado Pago e do Pix manual.
+
+Chave Pix e favorecido são exclusivos do modo humano e fallback e têm um
+salvamento independente do valor do sinal. Mercado Pago usa as credenciais da
+conta configurada. Alterações não modificam cobranças pendentes nem a
+configuração já carregada por uma execução do agente em andamento.
+
 ## Assistente
 
 O webhook persiste cada mensagem e publica eventos em uma fila genérica no

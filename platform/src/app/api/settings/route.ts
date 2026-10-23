@@ -42,20 +42,28 @@ export async function PUT(request: Request) {
   if (input.payment && typeof input.payment === "object") {
     const payment = input.payment as Record<string, unknown>;
     if (
-      typeof payment.pixKey !== "string" ||
-      typeof payment.recipientName !== "string" ||
-      typeof payment.signalAmountCents !== "number"
+      (payment.pixKey === undefined && payment.recipientName === undefined && payment.signalAmountCents === undefined) ||
+      (payment.pixKey !== undefined && typeof payment.pixKey !== "string") ||
+      (payment.recipientName !== undefined && (typeof payment.recipientName !== "string" || !payment.recipientName.trim())) ||
+      (payment.signalAmountCents !== undefined && typeof payment.signalAmountCents !== "number")
     ) {
       return NextResponse.json({ error: "Configuração Pix inválida." }, { status: 400 });
     }
     try {
-      const current = await getAgentConfiguration();
       const settings = await updateAgentPaymentSettings({
-        pixKey: payment.pixKey.trim() || current.payment.pixKey,
-        recipientName: payment.recipientName,
-        signalAmountCents: payment.signalAmountCents,
+        ...(typeof payment.pixKey === "string" ? { pixKey: payment.pixKey } : {}),
+        ...(typeof payment.recipientName === "string" ? { recipientName: payment.recipientName } : {}),
+        ...(typeof payment.signalAmountCents === "number" ? { signalAmountCents: payment.signalAmountCents } : {}),
       });
-      return NextResponse.json({ paymentConfigured: Boolean(settings.payment.pixKey && settings.payment.recipientName) });
+      const configured = Boolean(settings.payment.pixKey && settings.payment.recipientName);
+      return NextResponse.json({
+        paymentConfigured: configured,
+        payment: {
+          configured,
+          recipientName: settings.payment.recipientName,
+          signalAmountCents: settings.payment.signalAmountCents,
+        },
+      });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Não foi possível salvar o Pix." },

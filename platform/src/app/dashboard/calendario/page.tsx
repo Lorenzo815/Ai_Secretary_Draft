@@ -202,20 +202,24 @@ export default function CalendarPage() {
     if (!settings) return;
     setBusy(true);
     setFeedback("");
-    const response = await fetch("/api/calendar", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
-    });
-    const data = await response.json() as { settings?: Settings; error?: string };
-    if (response.ok && data.settings) {
+    try {
+      const response = await fetch("/api/calendar", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      const data = await response.json() as { settings?: Settings; error?: string };
+      if (!response.ok || !data.settings) {
+        throw new Error(data.error ?? "Não foi possível salvar.");
+      }
       setSettings(data.settings);
       setFeedback("Expediente e regras atualizados.");
       setSettingsOpen(false);
-    } else {
-      setFeedback(data.error ?? "Não foi possível salvar.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Não foi possível salvar.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   function openCreateEvent(targetDate?: string, targetTime?: string) {
@@ -711,7 +715,7 @@ export default function CalendarPage() {
             <button type="button" onClick={() => openAccessEvent("permission")} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal px-3 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5"><ShieldCheck className="h-4 w-4" />Permitir horários</button>
             <button type="button" onClick={() => openAccessEvent("blocker")} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-burnt-coral/40 px-3 text-sm font-semibold text-burnt-coral hover:bg-burnt-coral/5"><Ban className="h-4 w-4" />Bloquear período</button>
             <button type="button" onClick={() => openCreateEvent()} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-deep-teal px-3 text-sm font-semibold text-deep-teal hover:bg-deep-teal/5"><CalendarPlus className="h-4 w-4" />Novo evento</button>
-            <button type="button" onClick={() => setSettingsOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-deep-teal px-3 text-sm font-semibold text-white hover:bg-forest-teal"><Settings2 className="h-4 w-4" />Configurar agenda</button>
+            <button type="button" onClick={() => { setFeedback(""); setSettingsOpen(true); }} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-deep-teal px-3 text-sm font-semibold text-white hover:bg-forest-teal"><Settings2 className="h-4 w-4" />Configurar agenda</button>
           </div>
         </div>
       </header>
@@ -951,7 +955,7 @@ export default function CalendarPage() {
       </div>, document.body)}
 
       {settingsOpen && createPortal(<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-ink/45 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="hours-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
+      <form role="dialog" aria-modal="true" aria-labelledby="hours-title" onSubmit={(event) => { event.preventDefault(); void saveSettings(); }} className="flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
         <div className="shrink-0 border-b border-mist px-5 py-4 sm:px-7 sm:py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -968,11 +972,9 @@ export default function CalendarPage() {
             <input value={settings.providerName} onChange={(event) => setSettings({ ...settings, providerName: event.target.value })} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
           </label>
           <label className="text-xs font-semibold text-slate-ink">
-            Intervalo da grade
-            <select value={settings.slotDurationMinutes} onChange={(event) => setSettings({ ...settings, slotDurationMinutes: Number(event.target.value) })} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
-              {[15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
-            </select>
-            <span className="mt-2 block font-normal leading-5 text-stone">Define a distância entre horários de início. Com 30 min: 09:00, 09:30 e 10:00. Não altera a duração do evento.</span>
+            Intervalo da grade (min)
+            <input type="number" required min="1" max="1440" step="1" value={settings.slotDurationMinutes || ""} onChange={(event) => setSettings({ ...settings, slotDurationMinutes: Number(event.target.value) })} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal" />
+            <span className="mt-2 block font-normal leading-5 text-stone">Informe de 1 a 1440 minutos inteiros. Define a distância entre horários de início. Com 30 min: 09:00, 09:30 e 10:00. Não altera a duração do evento.</span>
           </label>
           <label className="text-xs font-semibold text-slate-ink">
             Antecedência mínima (h)
@@ -991,9 +993,9 @@ export default function CalendarPage() {
           <div className="flex items-end justify-between gap-4">
             <div>
               <h3 id="event-types-title" className="text-sm font-semibold text-slate-ink">Tipos de evento</h3>
-              <p className="mt-1 text-xs text-stone">Personalize nome, cor, duração e agenda responsável por cada tipo.</p>
+              <p className="mt-1 text-xs text-stone">Personalize nome, cor, duração e agenda responsável por cada tipo. Limite de 50 tipos.</p>
             </div>
-            <button type="button" onClick={addEventType} disabled={settings.eventTypes.length >= 20} className="rounded-lg border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">Adicionar tipo</button>
+            <button type="button" onClick={addEventType} disabled={settings.eventTypes.length >= 50} className="rounded-lg border border-deep-teal/30 px-3 py-2 text-xs font-semibold text-deep-teal hover:bg-deep-teal/5 disabled:opacity-40">Adicionar tipo</button>
           </div>
           <div className="mt-4 divide-y divide-mist border-y border-mist">
             {settings.eventTypes.map((eventType) => (
@@ -1004,10 +1006,9 @@ export default function CalendarPage() {
                 <label className="text-xs font-semibold text-slate-ink">Nome
                   <input value={eventType.name} maxLength={60} onChange={(event) => updateEventType(eventType.key, { name: event.target.value })} className="mt-1 w-full rounded-lg border border-mist bg-white px-3 py-2 text-sm font-normal outline-none focus:border-deep-teal" />
                 </label>
-                <label className="text-xs font-semibold text-slate-ink">Duração
-                  <select value={eventType.durationMinutes} onChange={(event) => updateEventType(eventType.key, { durationMinutes: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-mist bg-white px-3 py-2 text-sm font-normal">
-                    {[15, 20, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
-                  </select>
+                <label className="text-xs font-semibold text-slate-ink">Duração (min)
+                  <input type="number" required min="1" max="1440" step="1" value={eventType.durationMinutes || ""} onChange={(event) => updateEventType(eventType.key, { durationMinutes: Number(event.target.value) })} className="mt-1 w-full rounded-lg border border-mist bg-white px-3 py-2 text-sm font-normal outline-none focus:border-deep-teal" aria-label={`Duração de ${eventType.name} (min)`} />
+                  <span className="mt-1 block font-normal text-stone">1 a 1440 minutos</span>
                 </label>
                 <label className="text-xs font-semibold text-slate-ink">Profissional
                   <select value={eventType.resourceId} onChange={(event) => updateEventType(eventType.key, { resourceId: event.target.value })} className="mt-1 w-full rounded-lg border border-mist bg-white px-3 py-2 text-sm font-normal">
@@ -1080,12 +1081,13 @@ export default function CalendarPage() {
           </table>
         </div>
         </section>
+        {feedback && <p className="rounded-md border border-burnt-coral/30 bg-burnt-coral/5 px-3 py-2.5 text-sm leading-5 text-burnt-coral" role="alert">{feedback}</p>}
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-mist bg-white px-5 py-4 sm:px-7">
           <button type="button" onClick={() => setSettingsOpen(false)} className="rounded-lg border border-mist px-4 py-2.5 text-sm font-semibold text-slate-ink hover:bg-soft-ivory">Fechar</button>
-          <button type="button" onClick={saveSettings} disabled={busy} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50">Salvar expediente</button>
+          <button type="submit" disabled={busy} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50">Salvar expediente</button>
         </div>
-      </section>
+      </form>
       </div>, document.body)}
 
       {pendingSeriesAction && createPortal(

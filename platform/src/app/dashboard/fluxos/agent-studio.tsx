@@ -2,6 +2,7 @@
 
 import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
 
 type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
@@ -56,7 +57,7 @@ interface AgentConfiguration {
     maxModelIterations: number;
     maxRepeatedInvalidCalls: number;
   };
-  payment: { configured: boolean; signalAmountCents: number };
+  payment: { signalAmountCents: number };
   updatedAt: string;
   updatedBy: string;
 }
@@ -106,6 +107,12 @@ interface StudioPayload {
   automationRules: AutomationRule[];
   availableTools: Array<{ key: string; label: string; description: string; mutates: boolean; protectedInstructions: string }>;
   calendarEventTypes: Array<{ key: string; name: string; durationMinutes: number; resourceId: string }>;
+  paymentStatus: {
+    activeProvider: "manual" | "mercado_pago";
+    humanFallbackEnabled: boolean;
+    manualConfigured: boolean;
+    mercadoPagoConfigured: boolean;
+  };
   previews: { structuralPolicy: string; developerPrompt: string; iterativeSchema: unknown; finalSchema: unknown };
 }
 
@@ -124,7 +131,7 @@ const tabs: Array<{ id: Tab; label: string; group: "Agente" | "Operação" | "Ta
   { id: "data", label: "Dados", group: "Agente", icon: Database, description: "Escolha quais dados cadastrais o agente coleta e em qual ordem.", configKey: "agent_config.dataCollectionRules" },
   { id: "scheduling", label: "Agenda", group: "Operação", icon: CalendarDays, description: "Escolha os eventos autorizados para a IA e monte planos com pré-requisitos reais.", configKey: "agent_config.bookableEventTypeKeys / schedulingPlans" },
   { id: "tools", label: "Ferramentas", group: "Operação", icon: Wrench, description: "Autorize ações do agente e oriente quando cada ferramenta deve ser usada.", configKey: "agent_config.enabledTools / toolGuidance" },
-  { id: "limits", label: "Execução", group: "Operação", icon: Gauge, description: "Controle a proteção contra loops e o valor do sinal solicitado ao cliente.", configKey: "agent_config.loopPolicy / payment" },
+  { id: "limits", label: "Execução", group: "Operação", icon: Gauge, description: "Controle a proteção contra loops e consulte a configuração de pagamento.", configKey: "agent_config.loopPolicy" },
   { id: "qualification", label: "Qualificação", group: "Tarefas", icon: UserCheck, description: "Configure a análise independente de aderência e contexto dos leads.", configKey: "lead_qualification_config" },
   { id: "follow_up", label: "Follow-up", group: "Tarefas", icon: Send, description: "Defina quando e como retomar conversas que ficaram sem resposta.", configKey: "follow_up_config" },
   { id: "automation", label: "Automação", group: "Tarefas", icon: Workflow, description: "Crie gatilhos condicionais para iniciar processos a partir de eventos.", configKey: "automation_rules" },
@@ -334,7 +341,7 @@ export function AgentStudio() {
       {tab === "data" && <DataEditor rules={agent.dataCollectionRules} change={(dataCollectionRules) => setAgent({ ...agent, dataCollectionRules })} />}
       {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} bookableEventTypeKeys={agent.bookableEventTypeKeys} eventTypes={payload.calendarEventTypes} change={(schedulingPlans, bookableEventTypeKeys) => setAgent({ ...agent, schedulingPlans, bookableEventTypeKeys })} />}
       {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} guidance={agent.toolGuidance} change={(enabledTools, toolGuidance) => setAgent({ ...agent, enabledTools, toolGuidance })} />}
-      {tab === "limits" && <LimitsEditor value={agent} change={setAgent} />}
+      {tab === "limits" && <LimitsEditor value={agent} change={setAgent} paymentStatus={payload.paymentStatus} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
       {tab === "follow_up" && <FollowUpEditor value={followUp} change={setFollowUp} />}
       {tab === "automation" && <AutomationEditor rules={automation} change={setAutomation} />}
@@ -496,13 +503,29 @@ function ToolsEditor({ tools, enabled, guidance, change }: { tools: StudioPayloa
   </div>;
 }
 
-function LimitsEditor({ value, change }: { value: AgentConfiguration; change: (value: AgentConfiguration) => void }) {
+function LimitsEditor({ value, change, paymentStatus }: { value: AgentConfiguration; change: (value: AgentConfiguration) => void; paymentStatus: StudioPayload["paymentStatus"] }) {
   const fields: Array<{ key: keyof AgentConfiguration["loopPolicy"]; label: string; min: number; max: number }> = [
     { key: "maxModelIterations", label: "Iterações do modelo", min: 2, max: 10 },
     { key: "maxRepeatedInvalidCalls", label: "Chamadas inválidas repetidas", min: 0, max: 3 },
   ];
   return <div className="space-y-7"><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{fields.map((field) => <Field key={field.key} label={field.label} fieldKey={`loopPolicy.${field.key}`}><input type="number" min={field.min} max={field.max} value={value.loopPolicy[field.key]} onChange={(event) => change({ ...value, loopPolicy: { ...value.loopPolicy, [field.key]: Number(event.target.value) } })} className={inputClass} /><small className="mt-1 block text-xs font-normal text-stone">Permitido: {field.min} a {field.max}</small></Field>)}</div>
-    <section className="border-t border-mist pt-5"><h2 className="text-sm font-semibold text-slate-ink">Pagamento</h2><div className="mt-3 grid gap-4 sm:grid-cols-2"><Field label="Valor do sinal (R$)" fieldKey="payment.signalAmountCents"><input type="number" min={1} max={10000} step="0.01" value={value.payment.signalAmountCents / 100} onChange={(event) => change({ ...value, payment: { ...value.payment, signalAmountCents: Math.round(Number(event.target.value) * 100) } })} className={inputClass} /></Field><div className="pt-7 text-sm text-stone">Credenciais Pix: <strong className="text-slate-ink">{value.payment.configured ? "configuradas" : "não configuradas"}</strong>. A chave nunca é enviada ao Studio.</div></div></section>
+    <section className="border-t border-mist pt-5">
+      <h2 className="text-sm font-semibold text-slate-ink">Pagamento · somente leitura</h2>
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        <div>
+          <p className="text-sm text-stone">Valor do sinal</p>
+          <p className="mt-1 text-lg font-semibold text-slate-ink">{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value.payment.signalAmountCents / 100)}</p>
+          <p className="mt-1 text-xs leading-5 text-stone">Mesmo valor para Mercado Pago, modo humano e fallback. Cobranças pendentes mantêm o valor original.</p>
+          <Link href="/dashboard/settings/system#payment-settings-title" className="mt-2 inline-block text-sm font-semibold text-deep-teal hover:underline">Editar nas configurações de pagamento</Link>
+        </div>
+        <div className="space-y-2 text-sm text-stone">
+          <p>Confirmação ativa: <strong className="text-slate-ink">{paymentStatus.activeProvider === "mercado_pago" ? "Mercado Pago" : "Humana"}</strong></p>
+          <p>Credenciais Mercado Pago: <strong className="text-slate-ink">{paymentStatus.mercadoPagoConfigured ? "configuradas" : "não configuradas"}</strong></p>
+          <p>Pix manual / fallback: <strong className="text-slate-ink">{paymentStatus.manualConfigured ? "configurado" : "não configurado"}</strong></p>
+          <p>Fallback humano: <strong className="text-slate-ink">{paymentStatus.humanFallbackEnabled ? "ativado" : "desativado"}</strong></p>
+        </div>
+      </div>
+    </section>
   </div>;
 }
 
@@ -611,4 +634,4 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
 function formatHour(hour: number) { return `${String(hour).padStart(2, "0")}:00`; }
-function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, bookableEventTypeKeys: agent.bookableEventTypeKeys, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy, payment: { signalAmountCents: agent.payment.signalAmountCents } }; }
+function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, bookableEventTypeKeys: agent.bookableEventTypeKeys, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy }; }
