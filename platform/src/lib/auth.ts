@@ -3,9 +3,12 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { findUserByEmail } from "@/lib/users";
 import { loadIdentity, resolveToken, sessionFingerprint } from "@/lib/access/session";
+import { sessionCookie } from "@/lib/access/cookies";
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
+  useSecureCookies: sessionCookie().options.secure,
+  cookies: { sessionToken: sessionCookie() },
   providers: [
     CredentialsProvider({
       name: "Credentials",

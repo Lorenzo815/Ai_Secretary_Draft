@@ -129,6 +129,9 @@ vincula a sessão ao registro atual. Alterar esses dados, inclusive o hash diret
 no servidor, invalida o token na próxima requisição. Páginas abertas verificam a
 sessão a cada 30 segundos enquanto conectadas. Requisições já em execução não são
 canceladas retroativamente. JWTs anteriores a esta versão exigem novo login.
+NextAuth e proxy compartilham o mesmo nome de cookie de sessão; no Vercel ele é
+sempre `__Secure-next-auth.session-token`, mesmo se `NEXTAUTH_URL` tiver sido
+copiado de um ambiente HTTP local. Configure a URL oficial HTTPS em produção.
 
 O bootstrap explícito da conta inicial requer backup criptografado com restauração
 comprovada e exatamente o usuário existente na empresa:

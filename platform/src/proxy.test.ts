@@ -20,6 +20,15 @@ describe("server request authorization", () => {
     mocks.resolveToken.mockResolvedValue(null);
     expect((await proxy(new NextRequest("http://localhost:3000/api/calendar"))).status).toBe(401);
   });
+  it("reads the secure cookie on Vercel even when NEXTAUTH_URL points at localhost", async () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("NEXTAUTH_URL", "http://localhost:3000");
+    await proxy(new NextRequest("https://oria.example/api/company/settings"));
+    expect(mocks.getToken).toHaveBeenCalledWith(expect.objectContaining({
+      cookieName: "__Secure-next-auth.session-token", secureCookie: true,
+    }));
+    vi.unstubAllEnvs();
+  });
   it("protects direct pages and RSC requests, not just sidebar navigation", async () => {
     const result = await proxy(new NextRequest("http://localhost:3000/dashboard/calendario", { headers: { RSC: "1" } }));
     expect(result.headers.get("location")).toBe("http://localhost:3000/dashboard/access-denied");

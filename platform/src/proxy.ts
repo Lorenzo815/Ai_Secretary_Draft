@@ -2,6 +2,7 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveToken } from "./lib/access/session";
 import { allows, routePolicy } from "./lib/access/policy";
+import { sessionCookie } from "./lib/access/cookies";
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname.replace(/\/$/, "");
@@ -14,7 +15,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Controle de acesso indisponível." }, { status: 503 });
   }
   try {
-    const principal = await resolveToken(await getToken({ req: request, secret }), secret);
+    const cookie = sessionCookie();
+    const principal = await resolveToken(await getToken({
+      req: request, secret, cookieName: cookie.name, secureCookie: cookie.options.secure,
+    }), secret);
     if (!principal) {
       return api
         ? NextResponse.json({ error: "Sessão expirada. Entre novamente." }, { status: 401 })
@@ -33,8 +37,10 @@ export async function proxy(request: NextRequest) {
     response.headers.set("Cache-Control", "private, no-store");
     return response;
   } catch (error) {
-    console.error("Access control validation failed.", { errorType: error instanceof Error ? error.name : "Unknown" });
-    return NextResponse.json({ error: "Não foi possível validar o acesso. Tente novamente." }, { status: 503 });
+    const errorType = error instanceof Error ? error.name : "Unknown";
+    const failure = errorType.startsWith("Mongo") ? "ACCESS_DATABASE_UNAVAILABLE" : "ACCESS_SESSION_UNAVAILABLE";
+    console.error("Access control validation failed.", { errorType, failure });
+    return NextResponse.json({ error: "Não foi possível validar o acesso. Tente novamente.", code: failure }, { status: 503 });
   }
 }
 
