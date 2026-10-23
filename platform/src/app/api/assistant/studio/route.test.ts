@@ -144,4 +144,47 @@ describe("Studio read-only payment configuration", () => {
     }));
     expect(body.configuration.enabledTools).toContain("calendar.list_appointments");
   });
+
+  it("exposes and saves the independent new/returning routing choices", async () => {
+    expect((await (await GET()).json()).configuration.relationshipRouting).toEqual({ new: "preserve", returning: "preserve" });
+    const relationshipRouting = { new: "ai_active", returning: "waiting_human" };
+
+    const response = await PUT(new Request("http://localhost/api/assistant/studio", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "agent", expectedRevision: configuration.revision, configuration: { ...configuration, relationshipRouting } }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).configuration.relationshipRouting).toEqual(relationshipRouting);
+    expect(mocks.updateAgentConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({ relationshipRouting }),
+    }));
+  });
+
+  it("preserves current routing when an older Studio client omits the new setting", async () => {
+    configuration.relationshipRouting = { new: "waiting_human", returning: "ai_active" };
+    const response = await PUT(new Request("http://localhost/api/assistant/studio", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "agent", expectedRevision: configuration.revision, configuration: { identityPrompt: "Updated" } }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateAgentConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({ relationshipRouting: configuration.relationshipRouting }),
+    }));
+  });
+
+  it("does not convert an explicit invalid routing value into a successful default", async () => {
+    mocks.updateAgentConfiguration.mockRejectedValueOnce(new Error("O roteamento de clientes novos e de retorno é inválido."));
+    const response = await PUT(new Request("http://localhost/api/assistant/studio", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "agent", expectedRevision: configuration.revision, configuration: { ...configuration, relationshipRouting: null } }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/roteamento/i);
+    expect(mocks.updateAgentConfiguration).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({ relationshipRouting: null }),
+    }));
+  });
 });

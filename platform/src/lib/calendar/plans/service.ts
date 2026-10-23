@@ -39,6 +39,7 @@ export interface SchedulingPlanOptionDocument {
   steps: PlanCandidateStep[];
   purpose?: "book" | "reschedule";
   targetAppointmentIds?: ObjectId[];
+  targetAppointmentStatus?: "scheduled" | "held";
   status: "proposed" | "processing" | "held" | "superseded" | "booked" | "rescheduled";
   expiresAt: Date;
   createdAt: Date;
@@ -78,6 +79,7 @@ export async function findSchedulingPlanOptions(input: {
   candidateCount: number;
   purpose?: "book" | "reschedule";
   targetAppointmentIds?: ObjectId[];
+  targetAppointmentStatus?: "scheduled" | "held";
 }) {
   const settings = await getCalendarSettings();
   const options = await getOptionsCollection();
@@ -134,6 +136,7 @@ export async function findSchedulingPlanOptions(input: {
     steps: candidate,
     purpose: input.purpose ?? "book",
     targetAppointmentIds: input.targetAppointmentIds,
+    ...(input.targetAppointmentStatus ? { targetAppointmentStatus: input.targetAppointmentStatus } : {}),
     status: "proposed",
     expiresAt: new Date(now.getTime() + input.plan.proposalExpiryMinutes * 60_000),
     createdAt: now,
@@ -155,7 +158,8 @@ export async function getActiveSchedulingPlanOption(customerId: ObjectId, option
   };
   const option = optionId
     ? await options.findOne({ ...baseFilter, status: { $in: ["proposed", "held"] } })
-    : await options.findOne({ ...baseFilter, status: "held" }, { sort: { createdAt: -1, _id: -1 } })
+    : await options.findOne({ ...baseFilter, status: "proposed", purpose: "reschedule" }, { sort: { createdAt: -1, _id: -1 } })
+      ?? await options.findOne({ ...baseFilter, status: "held" }, { sort: { createdAt: -1, _id: -1 } })
       ?? await options.findOne({ ...baseFilter, status: "proposed" }, { sort: { createdAt: -1, _id: -1 } });
   if (!option) return null;
   const serialized = serializeActiveOption(option);
@@ -203,6 +207,7 @@ function serializeActiveOption(option: SchedulingPlanOptionDocument) {
     purpose: option.purpose ?? "book",
     preference: option.preference,
     status: option.status,
+    ...(option.purpose === "reschedule" ? { targetAppointmentStatus: option.targetAppointmentStatus ?? "scheduled" } : {}),
     steps: option.steps,
     expiresAt: option.expiresAt.toISOString(),
   };
@@ -244,11 +249,7 @@ export async function holdSchedulingPlanOption(input: {
   if (!option) throw new Error("A opção expirou, foi substituída ou já está reservada. Consulte novos horários.");
 
   const now = new Date();
-  const firstStartAt = Math.min(...option.steps.map((step) => new Date(step.slot.startAt).getTime()));
-  const holdExpiresAt = new Date(Math.min(
-    now.getTime() + input.plan.holdDurationMinutes * 60_000,
-    firstStartAt,
-  ));
+  const holdExpiresAt = getHoldExpiresAt(input.plan, option.steps, now);
   if (holdExpiresAt <= now) {
     await options.updateOne(
       { _id: option._id, status: "processing" },
@@ -414,38 +415,70 @@ export async function rescheduleSchedulingPlanOption(input: {
   configRevision: number;
 }) {
   const options = await getOptionsCollection();
-  const option = await options.findOneAndUpdate({
-    _id: input.optionId,
-    customerId: input.customerId,
-    planKey: input.plan.key,
-    configRevision: input.configRevision,
-    purpose: "reschedule",
-    status: "proposed",
-    expiresAt: { $gt: new Date() },
-  }, { $set: { status: "processing", processingAt: new Date() } }, { returnDocument: "after" });
-  if (!option || option.targetAppointmentIds?.length !== option.steps.length) {
-    throw new Error("A opção de reagendamento expirou ou não identifica os eventos atuais. Consulte novos horários.");
-  }
-
+  const settings = await getCalendarSettings();
+  const client = await clientPromise;
+  const session = client.startSession();
   try {
-    const appointments = await updateCustomerAppointments({
-      customerId: input.customerId,
-      appointments: option.steps.map((step, index) => ({
-        appointmentId: option.targetAppointmentIds![index],
-        startAt: step.slot.startAt,
-        eventType: step.eventTypeKey,
-      })),
+    return await session.withTransaction(async () => {
+      const option = await options.findOneAndUpdate({
+        _id: input.optionId,
+        customerId: input.customerId,
+        planKey: input.plan.key,
+        configRevision: input.configRevision,
+        purpose: "reschedule",
+        status: "proposed",
+        expiresAt: { $gt: new Date() },
+      }, { $set: { status: "processing", processingAt: new Date() } }, { returnDocument: "after", session });
+      if (!option || option.targetAppointmentIds?.length !== option.steps.length) {
+        throw new Error("A opção de reagendamento expirou ou não identifica os eventos atuais. Consulte novos horários.");
+      }
+
+      const status = option.targetAppointmentStatus ?? "scheduled";
+      const now = new Date();
+      const holdExpiresAt = status === "held" ? getHoldExpiresAt(input.plan, option.steps, now) : null;
+      const appointments = await updateCustomerAppointments({
+        customerId: input.customerId,
+        appointments: option.steps.map((step, index) => ({
+          appointmentId: option.targetAppointmentIds![index],
+          startAt: step.slot.startAt,
+          eventType: step.eventTypeKey,
+        })),
+        session,
+        ...(holdExpiresAt ? { hold: { expiresAt: holdExpiresAt } } : {}),
+      });
+      if (holdExpiresAt) {
+        const heldOptionId = appointments[0]?.schedulingOptionId;
+        if (!heldOptionId || !appointments.every(appointment => appointment.schedulingOptionId?.equals(heldOptionId))) {
+          throw new Error("A reserva temporária atual não identifica um único plano.");
+        }
+        const heldOption = await options.findOne({
+          _id: heldOptionId, customerId: input.customerId, planKey: input.plan.key,
+          status: "held", expiresAt: { $gt: new Date() },
+        }, { session });
+        if (!heldOption || heldOption.steps.length !== option.steps.length) {
+          throw new Error("A reserva temporária expirou ou exige mover todas as etapas do plano.");
+        }
+        const renewed = await options.updateOne(
+          { _id: heldOptionId, customerId: input.customerId, status: "held", expiresAt: { $gt: new Date() } },
+          { $set: { steps: option.steps, configRevision: input.configRevision, heldAt: now, expiresAt: holdExpiresAt } },
+          { session },
+        );
+        if (renewed.matchedCount !== 1) throw new Error("A reserva temporária foi alterada por outra operação.");
+      }
+      const consumed = await options.updateOne(
+        { _id: option._id, status: "processing" },
+        { $set: { status: "rescheduled", rescheduledAt: new Date() }, $unset: { processingAt: "" } },
+        { session },
+      );
+      if (consumed.matchedCount !== 1) throw new Error("A opção de reagendamento foi alterada por outra operação.");
+      return { settings, option, appointments, status, holdExpiresAt };
     });
-    await options.updateOne(
-      { _id: option._id, status: "processing" },
-      { $set: { status: "rescheduled", rescheduledAt: new Date() }, $unset: { processingAt: "" } },
-    );
-    return { settings: await getCalendarSettings(), option, appointments };
-  } catch (error) {
-    await options.updateOne(
-      { _id: option._id, status: "processing" },
-      { $set: { status: "proposed" }, $unset: { processingAt: "" } },
-    );
-    throw error;
+  } finally {
+    await session.endSession();
   }
+}
+
+function getHoldExpiresAt(plan: SchedulingPlan, steps: PlanCandidateStep[], now: Date) {
+  const firstStartAt = Math.min(...steps.map(step => new Date(step.slot.startAt).getTime()));
+  return new Date(Math.min(now.getTime() + plan.holdDurationMinutes * 60_000, firstStartAt));
 }

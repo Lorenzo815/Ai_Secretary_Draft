@@ -131,6 +131,7 @@ function createConfigurationSnapshot(configuration: AgentConfigurationDocument):
     responseStyle: configuration.responseStyle,
     offensePolicy: configuration.offensePolicy,
     handoffPolicy: configuration.handoffPolicy,
+    relationshipRouting: configuration.relationshipRouting,
     journeyPolicy: configuration.journeyPolicy,
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Collection, MongoServerError, ObjectId, type UpdateFilter } from "mongodb";
+import { Collection, MongoServerError, ObjectId, type ClientSession, type UpdateFilter } from "mongodb";
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
@@ -408,6 +408,7 @@ export async function findCustomerAppointments(input: {
   toDate: string;
   eventTypes?: string[];
   limit?: number;
+  includeActiveHolds?: boolean;
 }) {
   const settings = await getCalendarSettings();
   const from = DateTime.fromISO(input.fromDate, { zone: settings.timezone }).startOf("day");
@@ -420,35 +421,36 @@ export async function findCustomerAppointments(input: {
   if (eventTypes.some((eventType) => !validTypes.has(eventType))) {
     throw new Error("Tipo de evento inválido.");
   }
-  const appointments = await listScheduledCustomerAppointments({
+  const appointments = await listCustomerAppointments({
     customerId: input.customerId,
     startAt: { $gte: from.toUTC().toJSDate(), $lte: to.toUTC().toJSDate() },
     eventTypes: eventTypes.length > 0 ? eventTypes : undefined,
     limit: Math.min(Math.max(input.limit ?? 20, 1), 50),
+    activeHoldsAt: input.includeActiveHolds ? new Date() : undefined,
   });
   return { settings, appointments };
 }
 
 export async function findUpcomingCustomerAppointments(input: {
   customerId: ObjectId;
-  eventTypes: string[];
 }) {
   const queriedAt = new Date();
   const limit = 50;
-  const appointments = await listScheduledCustomerAppointments({
+  const appointments = await listCustomerAppointments({
     customerId: input.customerId,
     startAt: { $gte: queriedAt },
-    eventTypes: input.eventTypes,
+    activeHoldsAt: queriedAt,
     limit: limit + 1,
   });
   return { appointments: appointments.slice(0, limit), hasMore: appointments.length > limit, queriedAt };
 }
 
-async function listScheduledCustomerAppointments(input: {
+async function listCustomerAppointments(input: {
   customerId: ObjectId;
   startAt: { $gte: Date; $lte?: Date };
   eventTypes?: string[];
   limit: number;
+  activeHoldsAt?: Date;
 }) {
   if (!(input.customerId instanceof ObjectId)) {
     throw new Error("Cliente da consulta de agendamentos não identificado.");
@@ -456,7 +458,12 @@ async function listScheduledCustomerAppointments(input: {
   return (await getAppointmentsCollection())
     .find({
       customerId: input.customerId,
-      status: "scheduled",
+      ...(input.activeHoldsAt ? {
+        $or: [
+          { status: "scheduled" },
+          { status: "held", holdExpiresAt: { $gt: input.activeHoldsAt } },
+        ],
+      } : { status: "scheduled" }),
       startAt: input.startAt,
       ...(input.eventTypes ? { eventType: { $in: input.eventTypes } } : {}),
     })
@@ -1145,12 +1152,19 @@ export async function updateCustomerAppointments(input: {
     eventType?: string;
     notes?: string | null;
   }>;
+  hold?: { expiresAt: Date };
+  session?: ClientSession;
 }) {
   if (input.appointments.length === 0 || input.appointments.length > 10) {
     throw new Error("Informe de um a dez eventos para alteração.");
   }
   const settings = await getCalendarSettings();
   const appointments = await getAppointmentsCollection();
+  const holdExpiresAt = input.hold?.expiresAt;
+  const status = holdExpiresAt ? "held" : "scheduled";
+  if (holdExpiresAt && holdExpiresAt <= new Date()) {
+    throw new Error("O prazo da nova reserva temporária deve ser futuro.");
+  }
   const appointmentIds = input.appointments.map((appointment) => appointment.appointmentId);
   if (new Set(appointmentIds.map((appointmentId) => appointmentId.toHexString())).size !== appointmentIds.length) {
     throw new Error("Cada evento deve aparecer uma única vez na alteração.");
@@ -1158,8 +1172,9 @@ export async function updateCustomerAppointments(input: {
   const currentAppointments = await appointments.find({
     _id: { $in: appointmentIds },
     customerId: input.customerId,
-    status: "scheduled",
-  }).toArray();
+    status,
+    ...(input.hold ? { holdExpiresAt: { $gt: new Date() } } : {}),
+  }, input.session ? { session: input.session } : {}).toArray();
   if (currentAppointments.length !== appointmentIds.length) throw new Error("Um ou mais eventos não foram encontrados para este cliente.");
   const currentById = new Map(currentAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
   const prepared: Array<{
@@ -1213,20 +1228,30 @@ export async function updateCustomerAppointments(input: {
   }
 
   const now = new Date();
+  if (holdExpiresAt && holdExpiresAt <= now) {
+    throw new Error("O prazo da nova reserva temporária deve ser futuro.");
+  }
+  if (holdExpiresAt && prepared.some(({ nextStart }) => holdExpiresAt.getTime() > nextStart.toMillis())) {
+    throw new Error("A reserva temporária não pode vencer depois do início do atendimento.");
+  }
   const client = await clientPromise;
-  const session = client.startSession();
+  const session = input.session ?? client.startSession();
   let updatedAppointments: AppointmentDocument[] = [];
   try {
-    await session.withTransaction(async () => {
+    const applyUpdates = async () => {
       const result = await appointments.bulkWrite(prepared.map(({ current, update, eventType, providerId, nextStart, nextEnd }) => ({
         updateOne: {
-          filter: { _id: current._id, customerId: input.customerId, status: "scheduled", updatedAt: current.updatedAt },
+          filter: {
+            _id: current._id, customerId: input.customerId, status, updatedAt: current.updatedAt,
+            ...(input.hold ? { holdExpiresAt: { $gt: new Date() } } : {}),
+          },
           update: {
             $set: {
               startAt: nextStart.toJSDate(),
               endAt: nextEnd.toJSDate(),
               eventType,
               providerId,
+              ...(input.hold ? { holdExpiresAt: input.hold.expiresAt } : {}),
               ...(update.notes?.trim() ? { notes: update.notes.trim().slice(0, 1_000) } : {}),
               updatedAt: now,
             },
@@ -1236,14 +1261,16 @@ export async function updateCustomerAppointments(input: {
       })), { ordered: true, session });
       if (result.modifiedCount !== prepared.length) throw new Error("Um ou mais eventos foram alterados por outra operação.");
       updatedAppointments = await appointments.find({ _id: { $in: appointmentIds } }, { session }).toArray();
-    });
+    };
+    if (input.session) await applyUpdates();
+    else await session.withTransaction(applyUpdates);
   } catch (error) {
     if (error instanceof MongoServerError && error.code === 11000) {
       throw new Error("Já existe um evento deste tipo no novo horário.");
     }
     throw error;
   } finally {
-    await session.endSession();
+    if (!input.session) await session.endSession();
   }
   const updatedById = new Map(updatedAppointments.map((appointment) => [appointment._id.toHexString(), appointment]));
   return appointmentIds.map((appointmentId) => updatedById.get(appointmentId.toHexString())!);

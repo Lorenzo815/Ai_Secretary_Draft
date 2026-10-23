@@ -3,6 +3,7 @@ import "server-only";
 import { CustomerProfileValidationError, classifyCustomerRelationship, getCustomerProfileSnapshot, updateCustomerProfile } from "../../crm";
 import { emitAutomationEvent } from "../../automation";
 import { scheduleProfileCompletionQualification } from "../../qualification/triggers";
+import { DEFAULT_RELATIONSHIP_ROUTING } from "../agent/defaults";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
 export async function executeRegisteredCustomerTool(
@@ -15,8 +16,8 @@ export async function executeRegisteredCustomerTool(
       if ((args.status !== "new" && args.status !== "returning") || args.confirmedByCustomer !== true) {
         return validationError("A classificação exige uma resposta explícita do cliente.");
       }
-      const customer = await classifyCustomerRelationship(context.customerId, args.status);
-      return success("customer.classify_relationship", getCustomerProfileSnapshot(customer));
+      const customer = await classifyCustomerRelationship(context.customerId, args.status, relationshipRoutingOptions(context, args.status));
+      return success("customer.classify_relationship", getCustomerProfileSnapshot(customer), customer.serviceStatus);
     }
 
     const relationshipStatus = optionalRelationshipStatus(args.relationshipStatus);
@@ -35,7 +36,7 @@ export async function executeRegisteredCustomerTool(
         ? args.secondaryPhones.filter((value): value is string => typeof value === "string")
         : [],
       profession: optionalString(args.profession),
-    });
+    }, relationshipRoutingOptions(context, relationshipStatus));
     const profile = getCustomerProfileSnapshot(customer);
     const occurredAt = new Date();
     await Promise.all([
@@ -47,7 +48,7 @@ export async function executeRegisteredCustomerTool(
       }),
       scheduleProfileCompletionQualification(context.customerId, profile.missingFields, occurredAt),
     ]);
-    return success("customer.update_profile", profile);
+    return success("customer.update_profile", profile, customer.serviceStatus);
   } catch (error) {
     if (error instanceof CustomerProfileValidationError) {
       return customerInputError(error.message);
@@ -79,8 +80,13 @@ function optionalRelationshipStatus(value: unknown) {
   return value === "new" || value === "returning" ? value : undefined;
 }
 
-function success(tool: string, profile: ReturnType<typeof getCustomerProfileSnapshot>): ToolExecution {
-  return { output: JSON.stringify({ ok: true, tool, profile }), retryable: false };
+function relationshipRoutingOptions(context: ToolExecutionContext, status?: "new" | "returning") {
+  const action = status ? (context.configuration.relationshipRouting ?? DEFAULT_RELATIONSHIP_ROUTING)[status] : "preserve";
+  return action === "preserve" ? {} : { serviceStatus: action };
+}
+
+function success(tool: string, profile: ReturnType<typeof getCustomerProfileSnapshot>, serviceStatus: string | undefined): ToolExecution {
+  return { output: JSON.stringify({ ok: true, tool, profile, serviceStatus: serviceStatus ?? "ai_active" }), retryable: false };
 }
 
 function validationError(message: string): ToolExecution {

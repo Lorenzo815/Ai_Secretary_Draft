@@ -14,7 +14,8 @@ export const customerToolDefinitions = {
     promptInstructions: `customer.classify_relationship exige status=new ou returning e confirmedByCustomer=true.
 - Use somente depois de o cliente responder explicitamente se já realizou consulta com o Dr. Matheus.
 - Se a mesma mensagem trouxer também novos dados cadastrais, use customer.update_profile uma única vez para salvar esses dados e a classificação juntos; não execute as duas ferramentas para a mesma resposta.
-- Nunca deduza retorno apenas porque o contato já existe no CRM.`,
+- Nunca deduza retorno apenas porque o contato já existe no CRM.
+- Classificar retorno não implica encaminhamento humano. O servidor aplica relationshipRouting da configuração desta execução; preserve mantém o atendimento atual. Confira serviceStatus retornado e finalize com human_handoff se estiver aguardando humano.`,
     execute: async (context, args) => (await import("./customer")).executeRegisteredCustomerTool("classify_relationship", context, args),
   }),
   "customer.update_profile": defineTool({
@@ -40,6 +41,7 @@ export const customerToolDefinitions = {
     promptInstructions: `customer.update_profile salva somente dados explicitamente informados pelo cliente; envie null nos campos de texto ausentes e [] em secondaryPhones quando não houver novos telefones.
   - Envie null para campos de texto já salvos no cadastro. A ferramenta preenche campos ausentes e ignora valores repetidos de campos já persistidos.
   - Quando o cliente informar se é novo ou retorno, envie relationshipStatus e relationshipConfirmedByCustomer=true. Caso contrário, envie relationshipStatus=null e relationshipConfirmedByCustomer=false.
+- Ao registrar a primeira classificação, o servidor aplica relationshipRouting, sem presumir que retorno exige humano. Classificações já salvas não reaplicam o roteamento; confira serviceStatus retornado.
 - birthDate usa AAAA-MM-DD. CPF e telefones são validados pelo servidor.
 - Ao receber CEP, envie postalCode; o servidor consulta o endereço. Depois pergunte número e complemento, sem exigir complemento quando não houver.
 - Agrupe na mesma pergunta campos relacionados que façam sentido no contexto; não imponha uma pergunta separada para cada campo.

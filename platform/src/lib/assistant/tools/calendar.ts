@@ -79,10 +79,10 @@ async function executeCalendarAction(input: {
     if (validation.length > 0) return validationError("calendar.find_slots", validation);
     const plan = resolveSchedulingPlan(input.action, input.configuration, settings);
     if (!plan) return validationError("calendar.find_slots", [invalid("arguments", "Informe eventType ou planKey habilitado, mas não ambos.")]);
-    const targetAppointmentIds = input.action.purpose === "reschedule"
+    const target = input.action.purpose === "reschedule"
       ? await resolveRescheduleTargets(input.customerId, plan, settings.timezone)
-      : [];
-    if (input.action.purpose === "reschedule" && targetAppointmentIds.length === 0) {
+      : null;
+    if (input.action.purpose === "reschedule" && !target) {
       return validationError("calendar.find_slots", [invalid("currentAppointments", "Não foi possível identificar um único agendamento atual compatível. Encaminhe para a equipe.")]);
     }
     const appliedCriteria = plan.steps.map((step) => {
@@ -109,7 +109,8 @@ async function executeCalendarAction(input: {
         preferredTime: input.action.preferredTime,
         candidateCount: input.action.candidateCount!,
         purpose: input.action.purpose!,
-        targetAppointmentIds,
+        targetAppointmentIds: target?.appointmentIds ?? [],
+        ...(target ? { targetAppointmentStatus: target.status } : {}),
         criteria: appliedCriteria,
       });
       const candidates = result.options.map((option) => serializeCandidate(option, plan));
@@ -148,7 +149,7 @@ async function executeCalendarAction(input: {
     const settings = await getCalendarSettings();
     const plan = resolveOptionPlan(option, input.configuration, settings);
     if (!plan) return validationError(tool, [invalid("candidateId", "A proposta usa uma configuração que não está mais ativa.")]);
-    if (!plan.key.startsWith("event:")) {
+    if (!plan.key.startsWith("event:") && !(input.action.action === "reschedule" && option.targetAppointmentStatus === "held")) {
       const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, input.configuration, tool);
       if (prerequisiteError) return prerequisiteError;
     }
@@ -187,6 +188,8 @@ async function executeCalendarAction(input: {
           ok: true,
           tool,
           timezone: result.settings.timezone,
+          status: result.status,
+          holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
           steps: serializeCandidate(result.option, plan).steps,
         }),
         retryable: false,
@@ -554,6 +557,7 @@ async function resolveRescheduleTargets(customerId: ObjectId, plan: SchedulingPl
     toDate: now.plus({ days: 365 }).toISODate()!,
     eventTypes: [...new Set(plan.steps.map((step) => step.eventTypeKey))],
     limit: 50,
+    includeActiveHolds: true,
   });
   const groups = new Map<string, typeof result.appointments>();
   for (const appointment of result.appointments) {
@@ -567,9 +571,12 @@ async function resolveRescheduleTargets(customerId: ObjectId, plan: SchedulingPl
       if (index < 0) return [];
       return [remaining.splice(index, 1)[0]._id];
     });
-    return ids.length === plan.steps.length ? [ids] : [];
+    const status = appointments[0]?.status;
+    return ids.length === plan.steps.length && (status === "scheduled" || status === "held") && appointments.every(appointment => appointment.status === status)
+      ? [{ appointmentIds: ids, status }]
+      : [];
   });
-  return matchingGroups.length === 1 ? matchingGroups[0] : [];
+  return matchingGroups.length === 1 ? matchingGroups[0] : null;
 }
 
 function serializeCandidate(option: SchedulingPlanOptionDocument, plan: SchedulingPlan) {
@@ -577,6 +584,7 @@ function serializeCandidate(option: SchedulingPlanOptionDocument, plan: Scheduli
     candidateId: option._id.toHexString(),
     planKey: plan.key.startsWith("event:") ? null : plan.key,
     planName: plan.name,
+    ...(option.purpose === "reschedule" ? { targetAppointmentStatus: option.targetAppointmentStatus ?? "scheduled" } : {}),
     expiresAt: option.expiresAt.toISOString(),
     steps: option.steps.map((step) => {
       const local = DateTime.fromISO(step.slot.startAt, { setZone: true });
@@ -823,10 +831,8 @@ export async function executeUpcomingAppointmentsTool(
       throw new Error("Cliente desta execução não identificado. Não foi possível consultar agendamentos.");
     }
     const settings = await getCalendarSettings();
-    const authorizedTypes = settings.eventTypes.filter((eventType) => context.configuration.bookableEventTypeKeys.includes(eventType.key));
     const result = await findUpcomingCustomerAppointments({
       customerId: context.customerId,
-      eventTypes: authorizedTypes.map((eventType) => eventType.key),
     });
     return {
       output: JSON.stringify({
@@ -840,9 +846,12 @@ export async function executeUpcomingAppointmentsTool(
           const end = DateTime.fromJSDate(appointment.endAt, { zone: settings.timezone });
           return {
             eventType: appointment.eventType,
-            eventTypeName: authorizedTypes.find((eventType) => eventType.key === appointment.eventType)?.name ?? "Tipo de evento não identificado",
+            eventTypeName: settings.eventTypes.find((eventType) => eventType.key === appointment.eventType)?.name ?? "Tipo de evento não identificado",
             resourceName: settings.resources.find((resource) => resource.id === appointment.providerId)?.name ?? "Profissional não identificado",
             status: appointment.status,
+            confirmationStatus: appointment.confirmationStatus ?? null,
+            holdExpiresAt: appointment.status === "held" ? appointment.holdExpiresAt?.toISOString() ?? null : null,
+            withinAgentSchedulingScope: context.configuration.bookableEventTypeKeys.includes(appointment.eventType) && settings.eventTypes.some(eventType => eventType.key === appointment.eventType),
             startAt: appointment.startAt.toISOString(),
             endAt: appointment.endAt.toISOString(),
             localDate: start.toISODate(),

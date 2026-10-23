@@ -82,6 +82,9 @@ export async function PUT(request: Request) {
         updatedBy,
         configuration: {
           ...editable,
+          relationshipRouting: editable.relationshipRouting === undefined
+            ? current.relationshipRouting
+            : editable.relationshipRouting,
           payment: current.payment,
         },
       });
@@ -163,6 +166,7 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument, availa
     responseStyle: configuration.responseStyle,
     offensePolicy: configuration.offensePolicy,
     handoffPolicy: configuration.handoffPolicy,
+    relationshipRouting: configuration.relationshipRouting,
     journeyPolicy: configuration.journeyPolicy,
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,

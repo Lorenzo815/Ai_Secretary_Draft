@@ -14,7 +14,7 @@ vi.mock("../../mongodb", () => ({
 vi.mock("../../calendar/calendar", () => ({ getCalendarSettings: mocks.getCalendarSettings }));
 vi.mock("../tools", () => ({ isAssistantToolKey: () => true }));
 
-import { getAgentConfiguration, updateAgentPaymentSettings } from "./repository";
+import { getAgentConfiguration, setAgentEnabled, updateAgentConfiguration, updateAgentPaymentSettings } from "./repository";
 
 describe("partial agent payment settings", () => {
   let current: AgentConfigurationDocument;
@@ -103,5 +103,59 @@ describe("partial agent payment settings", () => {
 
     expect((await getAgentConfiguration()).enabledTools).toEqual([]);
     expect(mocks.replaceOne).not.toHaveBeenCalled();
+  });
+
+  it("migrates missing relationship routing without changing other settings or repeatedly migrating", async () => {
+    delete (current as Partial<AgentConfigurationDocument>).relationshipRouting;
+    const before = { ...current };
+
+    const saved = await getAgentConfiguration();
+
+    expect(saved).toEqual({
+      ...before, relationshipRouting: { new: "preserve", returning: "preserve" },
+      revision: before.revision + 1, contentHash: expect.any(String), updatedAt: expect.any(Date), updatedBy: "system-migration",
+    });
+    expect((await getAgentConfiguration()).relationshipRouting).toEqual(saved.relationshipRouting);
+    expect(mocks.replaceOne).toHaveBeenCalledOnce();
+  });
+
+  it("persists independent routing choices, includes them in the hash and preserves them in partial saves", async () => {
+    const originalHash = current.contentHash;
+    const saved = await updateAgentConfiguration({
+      expectedRevision: current.revision, updatedBy: "test",
+      configuration: { ...current, relationshipRouting: { new: "ai_active", returning: "waiting_human" } },
+    });
+    expect(saved.contentHash).not.toBe(originalHash);
+    expect((await getAgentConfiguration()).relationshipRouting).toEqual({ new: "ai_active", returning: "waiting_human" });
+    await updateAgentPaymentSettings({ signalAmountCents: 25_000 });
+    await setAgentEnabled(false);
+    expect(current.relationshipRouting).toEqual(saved.relationshipRouting);
+  });
+
+  it("does not reset explicit existing routing choices on read", async () => {
+    current.relationshipRouting = { new: "waiting_human", returning: "ai_active" };
+
+    expect((await getAgentConfiguration()).relationshipRouting).toEqual(current.relationshipRouting);
+    expect(mocks.replaceOne).not.toHaveBeenCalled();
+  });
+
+  it.each([null, false, [], {}, { new: "preserve" }, { new: "preserve", returning: "human_active" }, { new: "preserve", returning: "preserve", other: "waiting_human" }])(
+    "rejects invalid relationship routing %j without saving",
+    async value => {
+      await expect(updateAgentConfiguration({
+        expectedRevision: current.revision, updatedBy: "test",
+        configuration: { ...current, relationshipRouting: JSON.parse(JSON.stringify(value)) },
+      })).rejects.toThrow(/roteamento/i);
+      expect(mocks.replaceOne).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the concurrent policy rather than reverting it when migration loses a revision race", async () => {
+    delete (current as Partial<AgentConfigurationDocument>).relationshipRouting;
+    const concurrent = { ...current, revision: 3, relationshipRouting: { new: "ai_active", returning: "waiting_human" } };
+    mocks.findOne.mockResolvedValueOnce(current).mockResolvedValueOnce(concurrent);
+    mocks.replaceOne.mockResolvedValueOnce({ matchedCount: 0 });
+
+    expect((await getAgentConfiguration()).relationshipRouting).toEqual(concurrent.relationshipRouting);
   });
 });

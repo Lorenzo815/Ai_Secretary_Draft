@@ -3,6 +3,7 @@
 import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import type { RelationshipRoutingPolicy } from "@/lib/assistant/agent/contracts";
 
 type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
@@ -29,6 +30,7 @@ interface AgentConfiguration {
   responseStyle: string;
   offensePolicy: string;
   handoffPolicy: string;
+  relationshipRouting: RelationshipRoutingPolicy;
   journeyPolicy: string;
   knowledge: string;
   dataCollectionRules: Array<{
@@ -363,6 +365,26 @@ function ConversationEditor({ value, change }: { value: AgentConfiguration; chan
     <Field label="Política de conversa" fieldKey="conversationPolicy"><textarea rows={8} value={value.conversationPolicy} onChange={(event) => change({ ...value, conversationPolicy: event.target.value })} className={textareaClass} /></Field>
     <Field label="Conduta diante de ofensas" fieldKey="offensePolicy"><textarea rows={6} value={value.offensePolicy} onChange={(event) => change({ ...value, offensePolicy: event.target.value })} className={textareaClass} /></Field>
     <Field label="Encaminhamento humano" fieldKey="handoffPolicy"><textarea rows={6} value={value.handoffPolicy} onChange={(event) => change({ ...value, handoffPolicy: event.target.value })} className={textareaClass} /></Field>
+    <div className="space-y-4 rounded-lg border border-mist p-4 xl:col-span-2">
+      <div>
+        <h3 className="font-semibold text-forest-teal">Atendimento ao classificar novo ou retorno</h3>
+        <p className="mt-2 text-sm leading-6 text-stone">Por padrão, a classificação não muda quem atende a conversa: a IA continua ativa onde já estava ativa, sem reativar conversas encaminhadas para humano. Estas regras não alteram retroativamente os clientes existentes.</p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {(["new", "returning"] as const).map(status => <Field key={status} label={status === "new" ? "Novo cliente" : "Paciente de retorno"} fieldKey={`relationshipRouting.${status}`}>
+          <select value={value.relationshipRouting[status]} onChange={(event) => {
+            const action = event.target.value;
+            if (action === "preserve" || action === "ai_active" || action === "waiting_human") {
+              change({ ...value, relationshipRouting: { ...value.relationshipRouting, [status]: action } });
+            }
+          }} className={inputClass}>
+            <option value="preserve">Manter atendimento atual</option>
+            <option value="ai_active">Ativar atendimento pela IA</option>
+            <option value="waiting_human">Encaminhar para humano</option>
+          </select>
+        </Field>)}
+      </div>
+    </div>
   </div>;
 }
 
@@ -634,4 +656,4 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 function SectionHeader({ title, description, action, onAction }: { title: string; description: string; action?: string; onAction?: () => void }) { return <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-ink">{title}</h2><p className="mt-1 text-xs text-stone">{description}</p></div>{action && onAction && <button type="button" onClick={onAction} className={buttonClass}>{action}</button>}</div>; }
 function scalar(value: string): string | number | boolean { if (value === "true") return true; if (value === "false") return false; const number = Number(value); return value.trim() !== "" && Number.isFinite(number) ? number : value; }
 function formatHour(hour: number) { return `${String(hour).padStart(2, "0")}:00`; }
-function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, bookableEventTypeKeys: agent.bookableEventTypeKeys, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy }; }
+function editableAgent(agent: AgentConfiguration) { return { enabled: agent.enabled, identityPrompt: agent.identityPrompt, conversationPolicy: agent.conversationPolicy, responseStyle: agent.responseStyle, offensePolicy: agent.offensePolicy, handoffPolicy: agent.handoffPolicy, relationshipRouting: agent.relationshipRouting, journeyPolicy: agent.journeyPolicy, knowledge: agent.knowledge, dataCollectionRules: agent.dataCollectionRules, schedulingPlans: agent.schedulingPlans, bookableEventTypeKeys: agent.bookableEventTypeKeys, enabledTools: agent.enabledTools, toolGuidance: agent.toolGuidance, loopPolicy: agent.loopPolicy }; }

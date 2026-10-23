@@ -40,6 +40,15 @@ describe("tool registry", () => {
     expect(toolRegistry["calendar.reschedule"].promptInstructions).toContain("não substitui a busca");
   });
 
+  it("distinguishes read visibility, attendance confirmation and live holds from mutation authorization", () => {
+    const instructions = toolRegistry["calendar.list_appointments"].promptInstructions;
+    expect(instructions).toContain("confirmationStatus");
+    expect(instructions).toContain("withinAgentSchedulingScope");
+    expect(instructions).toContain("holdExpiresAt");
+    expect(toolRegistry["calendar.reschedule"].promptInstructions).toContain("aguardando sinal");
+    expect(toolRegistry["calendar.reschedule"].promptInstructions).toContain("não exige os pré-requisitos de confirmação definitiva");
+  });
+
   it("keeps operating windows and customer identity out of search arguments", () => {
     const schema = toolRegistry["calendar.find_slots"].argumentsSchema as {
       required: string[];
@@ -127,6 +136,8 @@ describe("tool registry", () => {
     expect(instructions).toContain("runtime.customer.configuredMissingFields");
     expect(instructions).toContain("[] em secondaryPhones");
     expect(toolRegistry["customer.classify_relationship"].promptInstructions).toContain("não execute as duas ferramentas");
+    expect(toolRegistry["customer.classify_relationship"].promptInstructions).toContain("Classificar retorno não implica encaminhamento humano");
+    expect(toolRegistry["customer.update_profile"].promptInstructions).toContain("relationshipRouting");
   });
 
   it("accepts payer email for automatic Pix creation", () => {
@@ -220,6 +231,23 @@ describe("tool registry", () => {
 
     expect(reply).toContain("Não consegui consultar a agenda");
     expect(reply).not.toContain("equipe");
+  });
+
+  it("describes a moved hold as temporary and still awaiting payment rather than a confirmed booking", () => {
+    const reply = getGroundedToolReply(JSON.stringify({
+      executedTools: ["calendar.reschedule"],
+      results: [{
+        ok: true, tool: "calendar.reschedule", status: "held", timezone: "America/Sao_Paulo",
+        holdExpiresAt: "2026-10-23T18:00:00Z",
+        steps: [{ label: "Consulta", startAt: "2026-10-26T19:00:00Z" }],
+      }],
+    }));
+
+    expect(reply).toContain("reserva temporária");
+    expect(reply).toContain("aguardando o sinal");
+    expect(reply).toContain("vence em");
+    expect(reply).toContain("23/10/2026");
+    expect(reply).not.toContain("confirmado");
   });
 
   it("reports payment failures without claiming a handoff was already registered", () => {

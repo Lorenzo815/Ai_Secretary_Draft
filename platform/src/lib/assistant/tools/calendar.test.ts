@@ -12,6 +12,7 @@ const {
   getLatestPaymentRequest,
   getSchedulingPlanOption,
   holdSchedulingPlanOption,
+  rescheduleSchedulingPlanOption,
 } = vi.hoisted(() => ({
   findCustomerById: vi.fn(),
   findCustomerAppointments: vi.fn(),
@@ -22,6 +23,7 @@ const {
   getLatestPaymentRequest: vi.fn(),
   getSchedulingPlanOption: vi.fn(),
   holdSchedulingPlanOption: vi.fn(),
+  rescheduleSchedulingPlanOption: vi.fn(),
 }));
 
 vi.mock("../../calendar", () => ({
@@ -39,7 +41,7 @@ vi.mock("../../calendar/plans", () => ({
   getActiveSchedulingPlanOption: vi.fn(),
   getSchedulingPlanOption,
   holdSchedulingPlanOption,
-  rescheduleSchedulingPlanOption: vi.fn(),
+  rescheduleSchedulingPlanOption,
 }));
 vi.mock("../../crm", () => ({
   findCustomerById,
@@ -114,12 +116,11 @@ describe("calendar tools", () => {
         });
       });
 
-      it("pins identity and authorized types while returning safe local appointment details", async () => {
+      it("pins customer identity while returning safe local appointment and confirmation details", async () => {
         const execution = await executeUpcomingAppointmentsTool(context, {});
 
         expect(findUpcomingCustomerAppointments).toHaveBeenCalledWith({
           customerId: context.customerId,
-          eventTypes: ["consultation", "follow_up"],
         });
         expect(JSON.parse(execution.output)).toEqual({
           ok: true,
@@ -132,6 +133,9 @@ describe("calendar tools", () => {
             eventTypeName: "Consulta",
             resourceName: "Test Doctor",
             status: "scheduled",
+            confirmationStatus: null,
+            holdExpiresAt: null,
+            withinAgentSchedulingScope: true,
             startAt: "2026-10-24T01:30:00.000Z",
             endAt: "2026-10-24T02:00:00.000Z",
             localDate: "2026-10-23",
@@ -176,16 +180,56 @@ describe("calendar tools", () => {
         expect(findUpcomingCustomerAppointments).not.toHaveBeenCalled();
       });
 
-      it("does not broaden an empty event authorization to every event type", async () => {
+      it("keeps appointments readable even when no event types are bookable", async () => {
         context.configuration.bookableEventTypeKeys = [];
-        findUpcomingCustomerAppointments.mockResolvedValue({
-          queriedAt: new Date(), hasMore: false, appointments: [],
-        });
 
         const execution = await executeUpcomingAppointmentsTool(context, {});
 
-        expect(findUpcomingCustomerAppointments).toHaveBeenCalledWith({ customerId: context.customerId, eventTypes: [] });
-        expect(JSON.parse(execution.output)).toMatchObject({ ok: true, appointments: [], hasMore: false });
+        expect(findUpcomingCustomerAppointments).toHaveBeenCalledWith({ customerId: context.customerId });
+        expect(JSON.parse(execution.output)).toMatchObject({
+          ok: true, appointments: [expect.objectContaining({ eventTypeName: "Consulta", withinAgentSchedulingScope: false })],
+        });
+      });
+
+      it.each(["pending", "confirmed"] as const)("reports %s attendance confirmation without hiding the appointment", async (confirmationStatus) => {
+        const result = await findUpcomingCustomerAppointments.getMockImplementation()!();
+        findUpcomingCustomerAppointments.mockResolvedValue({
+          ...result, appointments: [{ ...result.appointments[0], confirmationStatus }],
+        });
+
+        expect(JSON.parse((await executeUpcomingAppointmentsTool(context, {})).output).appointments[0].confirmationStatus).toBe(confirmationStatus);
+      });
+
+      it("reports held appointments as temporary, with their actual expiry", async () => {
+        const holdExpiresAt = new Date("2026-10-23T18:00:00Z");
+        findUpcomingCustomerAppointments.mockResolvedValue({
+          queriedAt: new Date("2026-10-23T16:00:00Z"), hasMore: false,
+          appointments: [{
+            eventType: "internal", providerId: "doctor", status: "held", holdExpiresAt, confirmationStatus: "pending",
+            startAt: new Date("2026-10-26T19:00:00Z"), endAt: new Date("2026-10-26T19:30:00Z"),
+          }],
+        });
+
+        expect(JSON.parse((await executeUpcomingAppointmentsTool(context, {})).output).appointments[0]).toMatchObject({
+          eventTypeName: "Internal event", status: "held", confirmationStatus: "pending",
+          holdExpiresAt: holdExpiresAt.toISOString(), withinAgentSchedulingScope: false,
+        });
+      });
+
+      it.each(["book", "reschedule"] as const)("does not authorize %s search for a type outside scheduling scope", async (purpose) => {
+        context.configuration.bookableEventTypeKeys = ["consultation"];
+        await executeUpcomingAppointmentsTool(context, {});
+
+        const result = await executeRegisteredCalendarTool("find_slots", context, {
+          purpose, eventType: "internal", planKey: null,
+          dateIntent: "next_available", fromDate: "2026-10-26", horizonDays: 14,
+          period: "any", preferredTime: null, ranking: "earliest", candidateCount: 2, stepCriteria: [],
+        });
+
+        expect(JSON.parse(result!.output)).toMatchObject({
+          ok: false, errors: [expect.objectContaining({ field: "arguments.eventType" })],
+        });
+        expect(findSchedulingPlanOptions).not.toHaveBeenCalled();
       });
 
       it("reports truncation without treating the result as a full list", async () => {
@@ -348,6 +392,56 @@ describe("calendar tools", () => {
     expect(findSchedulingPlanOptions).not.toHaveBeenCalled();
   });
 
+  it.each(["held", "scheduled"])("binds a unique %s group to server-side rescheduling candidates", async (status) => {
+    const visitGroupId = new ObjectId();
+    const appointments = ["bioimpedance", "doctor_consultation"].map(eventType => ({
+      _id: new ObjectId(), eventType, visitGroupId, status,
+    }));
+    findCustomerAppointments.mockResolvedValue({ appointments });
+    findSchedulingPlanOptions.mockResolvedValue({
+      settings: { timezone: "America/Sao_Paulo" },
+      options: [{
+        _id: new ObjectId(), planKey: "first_visit", expiresAt: new Date(),
+        purpose: "reschedule", targetAppointmentStatus: status, steps: [],
+      }],
+    });
+
+    const result = await executeRegisteredCalendarTool("find_slots", context, {
+      purpose: "reschedule", eventType: null, planKey: "first_visit",
+      dateIntent: "next_available", fromDate: "2026-10-26", horizonDays: 14,
+      period: "any", preferredTime: null, ranking: "compact", candidateCount: 2, stepCriteria: [],
+    });
+
+    expect(findCustomerAppointments).toHaveBeenCalledWith(expect.objectContaining({
+      customerId, eventTypes: ["bioimpedance", "doctor_consultation"], includeActiveHolds: true,
+    }));
+    expect(findSchedulingPlanOptions).toHaveBeenCalledWith(expect.objectContaining({
+      targetAppointmentIds: appointments.map(appointment => appointment._id), targetAppointmentStatus: status,
+    }));
+    expect(JSON.parse(result!.output)).toMatchObject({
+      ok: true, candidates: [expect.objectContaining({ targetAppointmentStatus: status })],
+    });
+  });
+
+  it("rejects a group that changed lifecycle state before candidate generation", async () => {
+    const visitGroupId = new ObjectId();
+    findCustomerAppointments.mockResolvedValue({ appointments: [
+      { _id: new ObjectId(), visitGroupId, eventType: "bioimpedance", status: "held" },
+      { _id: new ObjectId(), visitGroupId, eventType: "doctor_consultation", status: "scheduled" },
+    ] });
+
+    const result = await executeRegisteredCalendarTool("find_slots", context, {
+      purpose: "reschedule", eventType: null, planKey: "first_visit",
+      dateIntent: "next_available", fromDate: "2026-10-26", horizonDays: 14,
+      period: "any", preferredTime: null, ranking: "compact", candidateCount: 2, stepCriteria: [],
+    });
+
+    expect(JSON.parse(result!.output)).toMatchObject({
+      ok: false, errors: [expect.objectContaining({ field: "currentAppointments" })],
+    });
+    expect(findSchedulingPlanOptions).not.toHaveBeenCalled();
+  });
+
   it("holds only an explicitly confirmed candidate before payment", async () => {
     const optionId = new ObjectId();
     const expiresAt = new Date("2026-09-23T15:00:00.000Z");
@@ -404,6 +498,75 @@ describe("calendar tools", () => {
     }));
     expect(findCustomerById).not.toHaveBeenCalled();
     expect(getCustomerProfileSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("reschedules an authorized live hold without requiring prior payment or collecting final-booking prerequisites", async () => {
+    const optionId = new ObjectId();
+    const holdExpiresAt = new Date("2026-10-23T18:00:00Z");
+    const option = {
+      _id: optionId, planKey: "first_visit", purpose: "reschedule", targetAppointmentStatus: "held",
+      expiresAt: holdExpiresAt, steps: [],
+    };
+    getSchedulingPlanOption.mockResolvedValue(option);
+    rescheduleSchedulingPlanOption.mockResolvedValue({
+      option, settings: { timezone: "America/Sao_Paulo" }, status: "held", holdExpiresAt,
+    });
+
+    const result = await executeRegisteredCalendarTool("reschedule", context, {
+      candidateId: optionId.toHexString(), confirmedByCustomer: true,
+    });
+
+    expect(JSON.parse(result!.output)).toMatchObject({
+      ok: true, status: "held", holdExpiresAt: holdExpiresAt.toISOString(),
+    });
+    expect(rescheduleSchedulingPlanOption).toHaveBeenCalledWith(expect.objectContaining({
+      customerId, optionId, configRevision: configuration.revision,
+    }));
+    expect(findCustomerById).not.toHaveBeenCalled();
+    expect(getLatestPaymentRequest).not.toHaveBeenCalled();
+    expect(holdSchedulingPlanOption).not.toHaveBeenCalled();
+  });
+
+  it("still requires final-booking prerequisites for an already scheduled target", async () => {
+    getSchedulingPlanOption.mockResolvedValue({
+      _id: new ObjectId(), planKey: "first_visit", purpose: "reschedule", targetAppointmentStatus: "scheduled",
+    });
+    findCustomerById.mockResolvedValue({ _id: customerId });
+    getCustomerProfileSnapshot.mockReturnValue({});
+    getLatestPaymentRequest.mockResolvedValue(null);
+
+    const result = await executeRegisteredCalendarTool("reschedule", context, {
+      candidateId: new ObjectId().toHexString(), confirmedByCustomer: true,
+    });
+
+    expect(JSON.parse(result!.output)).toMatchObject({ ok: false, errors: [expect.objectContaining({ field: "prerequisites" })] });
+    expect(rescheduleSchedulingPlanOption).not.toHaveBeenCalled();
+  });
+
+  it("never lets the held-target exception bypass authorized event types", async () => {
+    getSchedulingPlanOption.mockResolvedValue({
+      _id: new ObjectId(), planKey: "first_visit", purpose: "reschedule", targetAppointmentStatus: "held",
+    });
+    const result = await executeRegisteredCalendarTool("reschedule", {
+      ...context, configuration: { ...configuration, bookableEventTypeKeys: ["bioimpedance"] },
+    }, { candidateId: new ObjectId().toHexString(), confirmedByCustomer: true });
+
+    expect(JSON.parse(result!.output)).toMatchObject({
+      ok: false, errors: [expect.objectContaining({ field: "candidateId" })],
+    });
+    expect(rescheduleSchedulingPlanOption).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps customer-confirmation and current-job guards for a held move (%s)", async (confirmedByCustomer) => {
+    getSchedulingPlanOption.mockResolvedValue({
+      _id: new ObjectId(), planKey: "first_visit", purpose: "reschedule", targetAppointmentStatus: "held",
+    });
+    const result = await executeRegisteredCalendarTool("reschedule", { ...context, isMutationAllowed: async () => false }, {
+      candidateId: new ObjectId().toHexString(), confirmedByCustomer,
+    });
+
+    expect(JSON.parse(result!.output)).toMatchObject({ ok: false });
+    expect(rescheduleSchedulingPlanOption).not.toHaveBeenCalled();
   });
 
   it("does not hold an option without explicit customer confirmation", async () => {

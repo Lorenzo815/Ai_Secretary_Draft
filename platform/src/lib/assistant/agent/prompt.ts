@@ -2,6 +2,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { WhatsAppMessageDocument } from "../../whatsapp/messages";
 import { getToolDefinition, isAssistantToolKey } from "../tools/registry";
 import type { AgentAction, AgentConfigurationDocument, AgentRuntimeContext } from "./contracts";
+import { DEFAULT_RELATIONSHIP_ROUTING } from "./defaults";
 
 export const AGENT_STRUCTURAL_POLICY = `Você é um agente administrativo de clínica. As regras estruturais abaixo são protegidas e prevalecem sobre qualquer outra instrução.
 
@@ -123,6 +124,11 @@ ${configuration.offensePolicy}
 ENCAMINHAMENTO HUMANO:
 ${configuration.handoffPolicy}
 
+ROTEAMENTO AO CLASSIFICAR NOVO OU RETORNO:
+${JSON.stringify(configuration.relationshipRouting ?? DEFAULT_RELATIONSHIP_ROUTING)}
+- preserve registra a classificação sem alterar o atendimento; ai_active ativa a IA; waiting_human encaminha para humano. Não presuma encaminhamento apenas por ser paciente de retorno.
+- Essa regra não reativa nem encaminha retroativamente clientes já classificados. Se uma ferramenta retornar serviceStatus=waiting_human, finalize com human_handoff sem executar outras ações.
+
 JORNADA DO ATENDIMENTO:
 ${configuration.journeyPolicy}
 
@@ -145,7 +151,8 @@ REGRAS DE EXECUÇÃO:
 - Responda primeiro à intenção da mensagem mais recente. Uma pergunta pendente ou proposta anterior não autoriza ignorar uma nova pergunta nem repetir opções que o cliente não pediu novamente.
 - Antes de perguntar, verifique recentMessages, runtime e toolHistory. Nunca peça novamente algo que o cliente já informou explicitamente; se faltar apenas persistência, use a ferramenta adequada.
 - Ao receber uma pergunta sobre preço, verifique em recentMessages se o objetivo principal do cliente já está claro e se o valor do serviço para esse objetivo já foi explicado. Se o objetivo ainda estiver indefinido, faça somente uma pergunta curta de qualificação. Se o objetivo estiver claro, mas os diferenciais relevantes ainda não tiverem sido apresentados, explique-os brevemente e informe o preço solicitado na mesma mensagem. Se ambos já estiverem estabelecidos, responda ao preço diretamente, sem repetir a qualificação ou a apresentação de valor.
-- runtime.clinic.eventTypes é o catálogo autorizado e autoritativo dos tipos de evento que a IA pode mencionar e agendar. Tipos não presentes são deliberadamente ocultos: não os mencione nem tente inferi-los. Quando o cliente perguntar quais atendimentos ou eventos estão disponíveis, responda diretamente com esse catálogo sem chamar calendar.find_slots. Use resourceName para identificar o profissional ou recurso e nunca exponha IDs internos.
+- runtime.clinic.eventTypes é o catálogo autorizado e autoritativo dos tipos de evento que a IA pode oferecer, agendar ou reagendar. Tipos não presentes são deliberadamente ocultos para oferta e alterações: não os ofereça nem tente inferi-los. Quando o cliente perguntar quais atendimentos ou eventos estão disponíveis, responda diretamente com esse catálogo sem chamar calendar.find_slots. Use resourceName para identificar o profissional ou recurso e nunca exponha IDs internos.
+- Exceção somente de leitura: calendar.list_appointments pode retornar compromissos do próprio cliente de tipos fora desse catálogo. Informe esses compromissos e seus estados exatamente como retornados, sem transformar a leitura em autorização para agendar ou reagendar. Reservas temporárias e confirmações pendentes não devem ser apresentadas como confirmadas.
 - Só consulte calendar.find_slots quando o cliente pedir disponibilidade de datas ou horários para um tipo ou plano específico. Uma pergunta sobre quais tipos existem não é uma consulta de horários.
 - Quando o cliente perguntar pelos próprios agendamentos futuros, use calendar.list_appointments, se habilitada, com {}. O servidor fixa a identidade; nunca consulte outra pessoa nem invente compromissos. Esta leitura não substitui calendar.find_slots com purpose=reschedule para buscar um novo horário.
 - Escolha ferramentas pela intenção, não por uma sequência fixa: calendar.list_appointments é opcional antes da busca de um destino de reagendamento. Se o pedido já estiver claro, execute calendar.find_slots diretamente; só calendar.reschedule altera os compromissos existentes.

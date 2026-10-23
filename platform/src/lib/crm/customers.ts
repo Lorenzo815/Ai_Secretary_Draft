@@ -439,13 +439,14 @@ export async function updateCustomerServiceStatus(id: ObjectId, status: Customer
 export async function classifyCustomerRelationship(
   id: ObjectId,
   status: CustomerRelationshipStatus,
+  options: { serviceStatus?: CustomerServiceStatus } = {},
 ) {
   const customer = await (await getCustomersCollection()).findOneAndUpdate(
     { _id: id },
     {
       $set: {
         relationship: { status, source: "customer", classifiedAt: new Date() },
-        serviceStatus: status === "returning" ? "waiting_human" : "ai_active",
+        ...(options.serviceStatus !== undefined ? { serviceStatus: options.serviceStatus } : {}),
         updatedAt: new Date(),
       },
     },
@@ -465,7 +466,7 @@ export async function updateCustomerProfile(id: ObjectId, input: {
   addressComplement?: string;
   secondaryPhones?: string[];
   profession?: string;
-}) {
+}, options: { serviceStatus?: CustomerServiceStatus } = {}) {
   const customers = await getCustomersCollection();
   const current = await customers.findOne({ _id: id });
   if (!current) throw new Error("Cliente não encontrado.");
@@ -474,7 +475,7 @@ export async function updateCustomerProfile(id: ObjectId, input: {
 
   if (input.relationshipStatus !== undefined && !current.relationship) {
     fields.relationship = { status: input.relationshipStatus, source: "customer", classifiedAt: now };
-    fields.serviceStatus = input.relationshipStatus === "returning" ? "waiting_human" : "ai_active";
+    if (options.serviceStatus !== undefined) fields.serviceStatus = options.serviceStatus;
   }
   if (input.fullName !== undefined && !current.profile?.fullName) {
     const fullName = input.fullName.trim().replace(/\s+/g, " ");

@@ -35,15 +35,26 @@ The TypeScript registry is the source of truth for keys, metadata, argument
 schemas, prompt instructions, mutation classification and execution. The active
 agent configuration persists only the tool keys it authorizes.
 
+Customer relationship classification and service routing are separate concerns.
+`relationshipRouting` defines independent `new` and `returning` actions:
+`preserve`, `ai_active`, or `waiting_human`. New and legacy configurations default
+to preserving the current service status. Both customer tools use the pinned
+configuration; CRM helpers do not infer routing from the classification.
+Profile updates route only when first recording a relationship. Tool results
+report the actual service status. Saving or migrating this policy never changes
+existing customers, and unrelated human-handoff and safety rules remain active.
+
 Calendar behavior is exposed through five intent-level tools:
 
 - `calendar.list_appointments` accepts only `{}` and lists the runtime customer's
-  future confirmed appointments for authorized event types, ordered by start
+  future scheduled appointments and unexpired holds across all event types, ordered by start
   time. It returns at most 50 results with `hasMore`, local dates/times, resource
   names and the clinic timezone. Customer identity, current time and limit are
   fixed by the server; model-supplied arguments are rejected. No arbitrary date
-  horizon is applied. Temporary holds, past/in-progress, cancelled and completed
-  appointments are excluded.
+  horizon is applied. Past/in-progress, cancelled/completed appointments and expired
+  holds are excluded. `status`, `confirmationStatus`, `holdExpiresAt` and
+  `withinAgentSchedulingScope` distinguish appointment state, attendance confirmation
+  and type-level mutation scope. Read visibility does not grant booking permissions.
 - `calendar.find_slots` returns server-persisted candidates for one event or a
   configured multi-step plan.
 - `calendar.hold` temporarily reserves a confirmed candidate while awaiting
@@ -62,6 +73,13 @@ type or plan cannot resolve the target, the assistant hands off instead of
 guessing. The current API cannot select an appointment from the listing by ID
 or position. The flow
 does not use `calendar.hold`, `payment.request_deposit` or `calendar.book`.
+Active held targets may also be moved, without a paid-deposit booking prerequisite.
+They keep their appointment IDs, group, temporary status and existing payment request.
+Their hold duration restarts at the move, capped at the earliest new step start.
+The source held option receives the new steps and expiry in the same transaction
+as appointment updates and rescheduling-candidate consumption. Expired holds or
+holds promoted to scheduled after the search require a new candidate; they are
+not resurrected or silently treated as a different lifecycle.
 
 Agent Studio discovers listing metadata from the registry. New configurations
 enable it by default, while existing allowlists remain unchanged. The migration

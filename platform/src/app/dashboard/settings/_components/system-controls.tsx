@@ -33,7 +33,7 @@ export default function SystemControls({
   const router = useRouter();
   const initialSignalAmount = (initialPayment.signalAmountCents / 100).toFixed(2);
   const [processingEnabled, setProcessingEnabled] = useState(initialProcessingEnabled);
-  const [deletionScope, setDeletionScope] = useState<"customer" | "all">("customer");
+  const [deletionScope, setDeletionScope] = useState<"customer_history" | "customer" | "all">("customer_history");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
@@ -62,7 +62,7 @@ export default function SystemControls({
   const [webhookUrl, setWebhookUrl] = useState("/api/webhooks/mercado-pago");
   const confirmationAccepted = confirmation.trim() === "APAGAR";
   const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
-  const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !deleting;
+  const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !saving && !deleting;
   const paymentDirty = Boolean(pixKey || recipientName !== recipientBaseline);
   const amountDirty = signalAmount !== amountBaseline;
   const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline;
@@ -130,16 +130,18 @@ export default function SystemControls({
         body: JSON.stringify({
           confirmation: confirmation.trim(),
           scope: deletionScope,
-          ...(deletionScope === "customer" ? { customerId: selectedCustomerId } : {}),
+          ...(deletionScope !== "all" ? { customerId: selectedCustomerId } : {}),
         }),
       });
       const result = await response.json() as { deletedCount?: number; error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Não foi possível apagar os dados.");
+      if (!response.ok || typeof result.deletedCount !== "number") throw new Error(result.error ?? "Não foi possível apagar os dados.");
       setConfirmation("");
-      setSelectedCustomerId("");
-      setMessage(deletionScope === "customer"
-        ? `${result.deletedCount ?? 0} registros do cliente foram apagados.`
-        : `${result.deletedCount ?? 0} registros dinâmicos foram apagados.`);
+      if (deletionScope !== "customer_history") setSelectedCustomerId("");
+      setMessage(deletionScope === "customer_history"
+        ? "Histórico e memória da conversa apagados. Cadastro, agendamentos, reservas e pagamentos preservados."
+        : deletionScope === "customer"
+          ? `${result.deletedCount} registros do cliente foram apagados.`
+          : `${result.deletedCount} registros dinâmicos foram apagados.`);
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Não foi possível apagar os dados.");
@@ -318,7 +320,7 @@ export default function SystemControls({
             role="switch"
             aria-checked={processingEnabled}
             aria-label="Processamento de respostas automáticas"
-            disabled={saving}
+            disabled={saving || deleting}
             onClick={toggleProcessing}
             className="flex min-h-10 items-center gap-2.5 self-start rounded-md border border-mist bg-white px-3 transition-colors hover:border-stone disabled:cursor-wait disabled:opacity-60 sm:self-auto"
           >
@@ -332,13 +334,14 @@ export default function SystemControls({
       </section>
 
       <section aria-labelledby="database-title" className="rounded-lg border border-red-200 bg-white p-5 shadow-sm lg:col-span-2 sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-700"><DatabaseZap className="h-5 w-5" /></span><div><p className="text-[11px] font-bold uppercase text-red-700">Zona de risco</p><h3 id="database-title" className="mt-0.5 font-heading text-base font-semibold text-slate-ink">Apagar dados dinâmicos</h3><p className="mt-1 max-w-3xl text-sm leading-6 text-stone">Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados.</p></div></div>
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-700"><DatabaseZap className="h-5 w-5" /></span><div><p className="text-[11px] font-bold uppercase text-red-700">Zona de risco</p><h3 id="database-title" className="mt-0.5 font-heading text-base font-semibold text-slate-ink">{deletionScope === "customer_history" ? "Apagar histórico de conversa" : "Apagar dados dinâmicos"}</h3><p className="mt-1 max-w-3xl text-sm leading-6 text-stone">{deletionScope === "customer_history" ? "Remove mensagens, resumos, memória e análises da conversa do cliente selecionado, além dos jobs relacionados. Cadastro, agendamentos, reservas, pagamentos e configurações serão preservados. A exclusão vale somente nesta plataforma, não no WhatsApp do cliente." : "Remove clientes, mensagens, agendamentos, jobs e históricos operacionais. Usuários, calendário e configurações ativas do agente serão preservados."}</p></div></div>
         <form onSubmit={deleteDynamicData} className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)] lg:items-end">
-          <fieldset>
+          <fieldset disabled={deleting}>
             <legend className="text-xs font-semibold text-slate-ink">O que deseja apagar?</legend>
-            <div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">
+            <div className="mt-1.5 grid grid-cols-3 overflow-hidden rounded-md border border-mist bg-white p-1">
               {([
-                ["customer", "Um cliente"],
+                ["customer_history", "Apenas histórico"],
+                ["customer", "Dados do cliente"],
                 ["all", "Todos os dados"],
               ] as const).map(([value, label]) => (
                 <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold transition-colors ${deletionScope === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}>
@@ -348,10 +351,10 @@ export default function SystemControls({
               ))}
             </div>
           </fieldset>
-          {deletionScope === "customer" && (
+          {deletionScope !== "all" && (
             <label className="block text-xs font-semibold text-slate-ink">
               Cliente
-              <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)} required className="mt-1 block min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-red-500">
+              <select value={selectedCustomerId} onChange={(event) => { setSelectedCustomerId(event.target.value); setConfirmation(""); }} required disabled={deleting} className="mt-1 block min-h-10 w-full rounded-md border border-mist bg-white px-3 text-sm font-normal outline-none focus:border-red-500">
                 <option value="">Selecione um cliente</option>
                 {initialCustomers.map((customer) => <option key={customer.id} value={customer.id}>{customer.label}</option>)}
               </select>
@@ -361,6 +364,7 @@ export default function SystemControls({
             Digite APAGAR para confirmar
             <input
               value={confirmation}
+              disabled={deleting}
               onChange={(event) => setConfirmation(event.target.value.toUpperCase())}
               autoComplete="off"
               autoCapitalize="characters"
@@ -382,7 +386,7 @@ export default function SystemControls({
           {processingEnabled
             ? "Pause as respostas automáticas antes de apagar."
             : !deletionTargetSelected
-              ? "Selecione o cliente cujos dados serão apagados."
+              ? deletionScope === "customer_history" ? "Selecione o cliente cujo histórico será apagado." : "Selecione o cliente cujos dados serão apagados."
             : confirmationAccepted
               ? "Confirmação reconhecida. O botão de exclusão está liberado."
               : "O botão será liberado quando você digitar APAGAR."}

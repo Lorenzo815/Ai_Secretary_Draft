@@ -5,8 +5,8 @@ import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
 import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
-import type { AgentConfigurationDocument } from "./contracts";
-import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RESPONSE_STYLE } from "./defaults";
+import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./contracts";
+import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RELATIONSHIP_ROUTING, DEFAULT_RESPONSE_STYLE } from "./defaults";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
@@ -33,6 +33,7 @@ export async function getAgentConfiguration() {
     const responseStyle = normalizeResponseStyle(existing.responseStyle);
     const loopPolicy = normalizeLoopPolicy(existing.loopPolicy);
     const schedulingPlans = normalizeSchedulingPlans(existing.schedulingPlans);
+    const relationshipRouting = normalizeRelationshipRouting(existing.relationshipRouting);
     if (
       enabledTools.join("|") === existing.enabledTools.join("|") &&
       existing.toolGuidance !== undefined &&
@@ -41,6 +42,7 @@ export async function getAgentConfiguration() {
       responseStyle === existing.responseStyle &&
       JSON.stringify(loopPolicy) === JSON.stringify(existing.loopPolicy) &&
       JSON.stringify(schedulingPlans) === JSON.stringify(existing.schedulingPlans) &&
+      JSON.stringify(relationshipRouting) === JSON.stringify(existing.relationshipRouting) &&
       JSON.stringify(bookableEventTypeKeys) === JSON.stringify(existingAuthorization)
     ) return existing;
     const migrated = withContentHash({
@@ -51,6 +53,7 @@ export async function getAgentConfiguration() {
       responseStyle,
       loopPolicy,
       schedulingPlans,
+      relationshipRouting,
       bookableEventTypeKeys,
       revision: existing.revision + 1,
       contentHash: "",
@@ -69,6 +72,7 @@ export async function getAgentConfiguration() {
           responseStyle: normalizeResponseStyle(concurrent.responseStyle),
           loopPolicy: normalizeLoopPolicy(concurrent.loopPolicy),
           schedulingPlans: normalizeSchedulingPlans(concurrent.schedulingPlans),
+          relationshipRouting: normalizeRelationshipRouting(concurrent.relationshipRouting),
           bookableEventTypeKeys: normalizeBookableEventTypeKeys(
             (concurrent as AgentConfigurationDocument & { bookableEventTypeKeys?: unknown }).bookableEventTypeKeys,
             initialEventTypeKeys,
@@ -98,6 +102,7 @@ export async function updateAgentConfiguration(input: {
   const configuration = {
     ...input.configuration,
     toolGuidance: normalizeToolGuidance(input.configuration.toolGuidance),
+    relationshipRouting: normalizeRelationshipRouting(input.configuration.relationshipRouting),
   };
   const calendarSettings = await getCalendarSettings();
   validateConfiguration(configuration, new Set(calendarSettings.eventTypes.map((eventType) => eventType.key)));
@@ -160,6 +165,7 @@ function withoutMetadata(document: AgentConfigurationDocument) {
     responseStyle: document.responseStyle,
     offensePolicy: document.offensePolicy,
     handoffPolicy: document.handoffPolicy,
+    relationshipRouting: document.relationshipRouting,
     journeyPolicy: document.journeyPolicy,
     knowledge: document.knowledge,
     dataCollectionRules: document.dataCollectionRules,
@@ -259,6 +265,22 @@ function validateConfiguration(
 
 function normalizeJourneyPolicy(value: unknown) {
   return typeof value === "string" && value.trim() ? value : DEFAULT_JOURNEY_POLICY;
+}
+
+function normalizeRelationshipRouting(value: unknown): RelationshipRoutingPolicy {
+  if (value === undefined) return { ...DEFAULT_RELATIONSHIP_ROUTING };
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    !("new" in value) || !("returning" in value) ||
+    Object.keys(value).some(key => key !== "new" && key !== "returning")) {
+    throw new Error("O roteamento de clientes novos e de retorno é inválido.");
+  }
+  const validAction = (action: unknown): action is RelationshipRoutingPolicy["new"] => (
+    action === "preserve" || action === "ai_active" || action === "waiting_human"
+  );
+  if (!validAction(value.new) || !validAction(value.returning)) {
+    throw new Error("O roteamento deve manter o atendimento atual, ativar a IA ou encaminhar para humano.");
+  }
+  return { new: value.new, returning: value.returning };
 }
 
 function normalizeResponseStyle(value: unknown) {

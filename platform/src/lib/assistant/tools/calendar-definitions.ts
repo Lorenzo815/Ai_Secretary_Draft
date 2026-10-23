@@ -5,16 +5,18 @@ const nullableString = { type: ["string", "null"] };
 export const calendarToolDefinitions = {
   "calendar.list_appointments": defineTool({
     label: "Consultar meus agendamentos",
-    description: "Consulta os próximos agendamentos confirmados do cliente desta conversa, sem alterar a agenda. Identidade, data e limite são definidos pelo servidor.",
+    description: "Consulta os próximos agendamentos e reservas temporárias válidas do cliente desta conversa, inclusive tipos que a IA não pode agendar, sem alterar a agenda.",
     mutates: false,
     argumentsSchema: strictArguments([], {}),
-    promptInstructions: `calendar.list_appointments consulta os agendamentos futuros confirmados do cliente desta execução e recebe somente {}.
+    promptInstructions: `calendar.list_appointments consulta os agendamentos futuros e reservas temporárias válidas do cliente desta execução e recebe somente {}.
 - Use quando o cliente perguntar quais atendimentos já tem marcados ou a data e o horário da própria consulta. Não use calendar.find_slots para responder quais horários já estão agendados.
-- O servidor fixa a identidade do cliente, o instante atual, os tipos de evento autorizados, o fuso e o limite de 50 resultados em ordem cronológica. Nunca envie IDs, telefone, e-mail, datas, filtros ou qualquer outro argumento.
+- O servidor fixa a identidade do cliente, o instante atual, o fuso e o limite de 50 resultados em ordem cronológica. A leitura inclui todos os tipos de compromisso desse cliente, independentemente da permissão para agendar. Nunca envie IDs, telefone, e-mail, datas, filtros ou qualquer outro argumento.
 - A consulta é somente leitura e não exige confirmação, cadastro completo, pagamento nem pré-requisitos dos planos. Não cria propostas, reservas ou alterações.
-- O resultado inclui somente eventos com status=scheduled e início igual ou posterior ao instante da consulta. Reservas temporárias, eventos em andamento, concluídos ou cancelados não são agendamentos futuros retornados.
+- O resultado inclui status=scheduled, com confirmação confirmada, pendente ou não informada, e status=held somente enquanto holdExpiresAt estiver no futuro. Todos precisam ter início igual ou posterior à consulta. Eventos em andamento, concluídos, cancelados e reservas expiradas são excluídos.
+- status=scheduled significa agendado, não necessariamente presença confirmada. Informe confirmationStatus=confirmed como confirmado, pending como aguardando confirmação e null como confirmação não informada. status=held significa reserva temporária aguardando sinal; informe o vencimento retornado e não a apresente como agendamento confirmado.
+- withinAgentSchedulingScope informa somente se o tipo está autorizado para agendamento pela IA. false não impede informar esse compromisso, mas impede buscar ou executar seu reagendamento automático. true não dispensa as demais validações, disponibilidade e confirmação explícita.
 - Use os nomes, profissionais, datas e horários locais retornados. Não exponha IDs internos nem infira compromissos ocultos ou de outras pessoas.
-- appointments=[] significa que não foram encontrados agendamentos futuros autorizados para consulta. Se hasMore=true, informe que a lista está limitada e não a apresente como completa.
+- appointments=[] significa que não foram encontrados agendamentos futuros ou reservas válidas para esse cliente. Se hasMore=true, informe que a lista está limitada e não a apresente como completa.
 - Esta ferramenta apenas informa os horários atuais; não muda o fluxo de reagendamento. Para buscar novos horários, use calendar.find_slots com purpose=reschedule e, após confirmação explícita, calendar.reschedule uma única vez.
 - Nunca use calendar.hold, payment.request_deposit ou calendar.book no mesmo reagendamento. A consulta não seleciona nem autoriza IDs de eventos.
 - Vários compromissos na listagem não são um erro. Informe os resultados relevantes; a identificação do alvo de um reagendamento ocorre separadamente no servidor durante calendar.find_slots.`,
@@ -123,7 +125,9 @@ export const calendarToolDefinitions = {
     promptInstructions: `calendar.reschedule exige candidateId retornado por calendar.find_slots com purpose=reschedule e confirmedByCustomer=true.
 - calendar.list_appointments é uma consulta opcional dos horários atuais: não substitui a busca de um candidato com purpose=reschedule nem a identificação dos eventos pelo servidor.
 - O servidor associa o candidato aos eventos atuais do cliente e move todas as etapas juntas em uma única mutação.
-- Confirme explicitamente com o cliente todas as novas etapas e horários antes de executar. O servidor continua validando os pré-requisitos configurados; uma pendência não autoriza criar uma cobrança dentro deste fluxo.
+- Pode mover agendamentos e reservas temporárias ainda válidas, desde que o tipo ou plano esteja autorizado para agendamento pela IA. A leitura de um compromisso fora desse escopo não concede permissão para alterá-lo.
+- Em uma reserva com sinal pendente, preserve a cobrança e o status temporário. O servidor renova o prazo configurado a partir do reagendamento, limitado ao início da primeira etapa. Use o novo holdExpiresAt retornado e não afirme confirmação definitiva; não exija pagamento prévio para apenas mover essa reserva existente.
+- Confirme explicitamente com o cliente todas as novas etapas e horários antes de executar. Para um alvo já agendado, o servidor continua validando os pré-requisitos configurados; mover uma reserva existente ainda aguardando sinal não exige os pré-requisitos de confirmação definitiva. Uma pendência não autoriza criar uma cobrança dentro deste fluxo.
 - Execute exatamente uma vez para o candidato escolhido. Depois de um resultado ok=true, considere o reagendamento concluído e nunca tente outro candidateId.
 - Nunca chame calendar.book antes ou depois para concluir um reagendamento; isso criaria duplicatas.
 - Nunca use calendar.hold ou payment.request_deposit no mesmo reagendamento.
@@ -148,12 +152,17 @@ function getCalendarResultOverride(output: string) {
     type?: string;
     steps?: Array<{ label?: string; startAt?: string }>;
     timezone?: string;
+    status?: "scheduled" | "held";
+    holdExpiresAt?: string | null;
   };
   if (parsed.ok && (parsed.tool === "calendar.book" || parsed.tool === "calendar.reschedule")) {
     const labels = parsed.steps?.flatMap((step) => step.startAt
       ? [`${step.label ?? "Evento"} em ${formatDateTime(step.startAt, parsed.timezone)}`]
       : []) ?? [];
     if (labels.length > 0) {
+      if (parsed.tool === "calendar.reschedule" && parsed.status === "held") {
+        return `Sua reserva temporária foi alterada: ${joinRequiredSteps(labels)}. Ela continua aguardando o sinal${parsed.holdExpiresAt ? ` e vence em ${formatDateTime(parsed.holdExpiresAt, parsed.timezone)}` : ""}.`;
+      }
       return parsed.tool === "calendar.book"
         ? `Seu agendamento foi confirmado: ${joinRequiredSteps(labels)}.`
         : `Seu agendamento foi alterado: ${joinRequiredSteps(labels)}.`;

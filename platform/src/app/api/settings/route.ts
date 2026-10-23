@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
-import { clearDynamicData, clearDynamicDataForCustomer } from "@/lib/admin/database";
+import { ChatHistoryInProgressError, clearChatHistoryForCustomer, clearDynamicData, clearDynamicDataForCustomer } from "@/lib/admin/database";
 import { getAgentConfiguration, setAgentEnabled, updateAgentPaymentSettings } from "@/lib/assistant/agent";
 import { authOptions } from "@/lib/auth";
 import {
@@ -84,7 +84,10 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  const input = (await request.json()) as Record<string, unknown>;
+  const input: Record<string, unknown> | null = await request.json();
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return NextResponse.json({ error: "Solicitação de exclusão inválida." }, { status: 400 });
+  }
   if (input.confirmation !== "APAGAR") {
     return NextResponse.json({ error: "Confirmação inválida." }, { status: 400 });
   }
@@ -97,24 +100,35 @@ export async function DELETE(request: Request) {
     );
   }
 
-  if (input.scope !== "all" && input.scope !== "customer") {
+  if (input.scope !== "all" && input.scope !== "customer" && input.scope !== "customer_history") {
     return NextResponse.json({ error: "Escopo de exclusão inválido." }, { status: 400 });
   }
 
-  let deleted;
-  if (input.scope === "customer") {
-    if (typeof input.customerId !== "string" || !ObjectId.isValid(input.customerId)) {
-      return NextResponse.json({ error: "Selecione um cliente válido." }, { status: 400 });
+  try {
+    let deleted;
+    if (input.scope === "all") {
+      deleted = await clearDynamicData();
+    } else {
+      if (typeof input.customerId !== "string" || !ObjectId.isValid(input.customerId)) {
+        return NextResponse.json({ error: "Selecione um cliente válido." }, { status: 400 });
+      }
+      const customerId = new ObjectId(input.customerId);
+      deleted = input.scope === "customer_history"
+        ? await clearChatHistoryForCustomer(customerId)
+        : await clearDynamicDataForCustomer(customerId);
     }
-    deleted = await clearDynamicDataForCustomer(new ObjectId(input.customerId));
     if (!deleted) {
       return NextResponse.json({ error: "Cliente não encontrado." }, { status: 404 });
     }
-  } else {
-    deleted = await clearDynamicData();
+    const deletedCount = Object.values(deleted).reduce((total, count) => total + count, 0);
+    return NextResponse.json({ deleted, deletedCount, scope: input.scope });
+  } catch (error) {
+    if (error instanceof ChatHistoryInProgressError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    console.error("Failed to delete operational data", error);
+    return NextResponse.json({ error: "Não foi possível concluir a exclusão. Tente novamente." }, { status: 500 });
   }
-  const deletedCount = Object.values(deleted).reduce((total, count) => total + count, 0);
-  return NextResponse.json({ deleted, deletedCount, scope: input.scope });
 }
 
 export async function PATCH(request: Request) {

@@ -52,6 +52,9 @@ export interface AgentLoopPolicy {
   maxRepeatedInvalidCalls: number;
 }
 
+export type RelationshipRoutingAction = "preserve" | "ai_active" | "waiting_human";
+export type RelationshipRoutingPolicy = Record<"new" | "returning", RelationshipRoutingAction>;
+
 export interface AgentConfigurationDocument {
   _id: "active";
   revision: number;
@@ -62,6 +65,7 @@ export interface AgentConfigurationDocument {
   responseStyle: string;
   offensePolicy: string;
   handoffPolicy: string;
+  relationshipRouting: RelationshipRoutingPolicy;
   journeyPolicy: string;
   knowledge: string;
   dataCollectionRules: DataCollectionRule[];

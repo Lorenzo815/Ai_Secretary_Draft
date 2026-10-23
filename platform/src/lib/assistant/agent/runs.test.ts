@@ -152,6 +152,19 @@ function failedResult(tool: string) {
     }));
   });
 
+  it("keeps the routing policy in the pinned, credential-free configuration snapshot", async () => {
+    const configuration = createDefaultAgentConfiguration();
+    configuration.relationshipRouting = { new: "preserve", returning: "waiting_human" };
+    configuration.payment.pixKey = "private-test-key";
+
+    const run = await startAgentRun({
+      jobId: new ObjectId(), customerId: new ObjectId(), jobRevision: 1, configuration,
+    });
+
+    expect(run.configSnapshot.relationshipRouting).toEqual(configuration.relationshipRouting);
+    expect(JSON.stringify(run.configSnapshot)).not.toContain("private-test-key");
+  });
+
   it("reconciles already orphaned runs referenced by resumed executions", async () => {
     const interruptedRunId = new ObjectId();
     runFindForReconciliation.mockResolvedValue([{ resumedFromRunIds: [interruptedRunId] }]);

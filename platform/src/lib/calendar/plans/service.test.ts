@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   replaceAppointmentHolds: vi.fn(),
   updateMany: vi.fn(),
   updateOne: vi.fn(),
+  updateCustomerAppointments: vi.fn(),
+  startSession: vi.fn(),
+  withTransaction: vi.fn(),
+  endSession: vi.fn(),
+  find: vi.fn(),
 }));
 
 vi.mock("../../mongodb", () => ({
@@ -27,8 +32,10 @@ vi.mock("../../mongodb", () => ({
         insertMany: mocks.insertMany,
         updateMany: mocks.updateMany,
         updateOne: mocks.updateOne,
+        find: mocks.find,
       }),
     }),
+    startSession: mocks.startSession,
   }),
 }));
 vi.mock("../../qualification/triggers", () => ({
@@ -43,10 +50,10 @@ vi.mock("../calendar", () => ({
   listActiveAppointmentHoldIds: mocks.listActiveAppointmentHoldIds,
   releaseAppointmentHolds: mocks.releaseAppointmentHolds,
   replaceAppointmentHolds: mocks.replaceAppointmentHolds,
-  updateCustomerAppointments: vi.fn(),
+  updateCustomerAppointments: mocks.updateCustomerAppointments,
 }));
 
-import { findSchedulingPlanOptions, holdSchedulingPlanOption } from "./service";
+import { findSchedulingPlanOptions, getActiveSchedulingPlanOption, holdSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument } from "./service";
 
 const plan: SchedulingPlan = {
   key: "first_visit",
@@ -202,6 +209,162 @@ describe("temporary scheduling option replacement", () => {
         $unset: { processingAt: "" },
       },
     );
+  });
+});
+
+describe("rescheduling existing appointment holds", () => {
+  const now = new Date("2026-10-23T16:00:00Z");
+  const session = { withTransaction: mocks.withTransaction, endSession: mocks.endSession };
+  let option: SchedulingPlanOptionDocument;
+  let heldOptionId: ObjectId;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    heldOptionId = new ObjectId();
+    option = {
+      _id: new ObjectId(), customerId: new ObjectId(), planKey: plan.key, configRevision: 10,
+      preference: "compact", purpose: "reschedule", status: "proposed",
+      targetAppointmentStatus: "held", targetAppointmentIds: [new ObjectId(), new ObjectId()],
+      createdAt: now, expiresAt: new Date("2026-10-23T16:30:00Z"),
+      steps: [
+        { stepKey: "assessment", eventTypeKey: "bioimpedance", slot: slot("2026-10-26T13:00:00-03:00", "2026-10-26T13:15:00-03:00") },
+        { stepKey: "consultation", eventTypeKey: "doctor_consultation", slot: slot("2026-10-26T13:15:00-03:00", "2026-10-26T14:45:00-03:00") },
+      ],
+    };
+    mocks.startSession.mockReturnValue(session);
+    mocks.withTransaction.mockImplementation(async (callback: () => Promise<unknown>) => callback());
+    mocks.getCalendarSettings.mockResolvedValue({ timezone: "America/Sao_Paulo" });
+    mocks.findOneAndUpdate.mockResolvedValue(option);
+    mocks.findOne.mockResolvedValue({ ...option, _id: heldOptionId, status: "held" });
+    mocks.updateOne.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
+    mocks.updateCustomerAppointments.mockResolvedValue(option.targetAppointmentIds!.map(_id => ({
+      _id, customerId: option.customerId, schedulingOptionId: heldOptionId, status: "held",
+    })));
+    mocks.find.mockReturnValue({ sort: () => ({ toArray: async () => [option] }) });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  function reschedule() {
+    return rescheduleSchedulingPlanOption({
+      customerId: option.customerId, optionId: option._id, plan, configRevision: 10,
+    });
+  }
+
+  it("moves the same appointment IDs, renews expiry and consumes the candidate in one transaction", async () => {
+    const result = await reschedule();
+    const expiresAt = new Date("2026-10-23T18:00:00Z");
+
+    expect(result).toMatchObject({ status: "held", holdExpiresAt: expiresAt });
+    expect(mocks.withTransaction).toHaveBeenCalledOnce();
+    expect(mocks.findOneAndUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      _id: option._id, customerId: option.customerId, configRevision: 10,
+      purpose: "reschedule", status: "proposed", expiresAt: { $gt: now },
+    }), expect.anything(), { returnDocument: "after", session });
+    expect(mocks.findOne).toHaveBeenCalledWith({
+      _id: heldOptionId, customerId: option.customerId, planKey: plan.key,
+      status: "held", expiresAt: { $gt: now },
+    }, { session });
+    expect(mocks.updateCustomerAppointments).toHaveBeenCalledWith({
+      customerId: option.customerId,
+      appointments: option.steps.map((step, index) => ({
+        appointmentId: option.targetAppointmentIds![index], startAt: step.slot.startAt, eventType: step.eventTypeKey,
+      })),
+      hold: { expiresAt }, session,
+    });
+    expect(mocks.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: heldOptionId, customerId: option.customerId, status: "held" }),
+      { $set: { steps: option.steps, configRevision: 10, heldAt: now, expiresAt } },
+      { session },
+    );
+    expect(mocks.updateOne).toHaveBeenCalledWith(
+      { _id: option._id, status: "processing" },
+      { $set: { status: "rescheduled", rescheduledAt: now }, $unset: { processingAt: "" } },
+      { session },
+    );
+    expect(mocks.holdAppointment).not.toHaveBeenCalled();
+    expect(mocks.replaceAppointmentHolds).not.toHaveBeenCalled();
+    expect(mocks.endSession).toHaveBeenCalledOnce();
+  });
+
+  it("caps the renewed expiry at the first new appointment start", async () => {
+    option.steps[0].slot = slot("2026-10-23T13:45:00-03:00", "2026-10-23T14:00:00-03:00");
+
+    expect((await reschedule()).holdExpiresAt).toEqual(new Date("2026-10-23T16:45:00Z"));
+  });
+
+  it("keeps scheduled-target behavior without renewing a hold or requiring legacy metadata", async () => {
+    delete option.targetAppointmentStatus;
+    mocks.updateCustomerAppointments.mockResolvedValue(option.targetAppointmentIds!.map(_id => ({ _id, status: "scheduled" })));
+
+    const result = await reschedule();
+
+    expect(result).toMatchObject({ status: "scheduled", holdExpiresAt: null });
+    expect(mocks.updateCustomerAppointments.mock.calls[0][0]).not.toHaveProperty("hold");
+    expect(mocks.findOne).not.toHaveBeenCalled();
+    expect(mocks.updateOne).toHaveBeenCalledOnce();
+  });
+
+  it("does not consume the candidate when availability validation fails", async () => {
+    mocks.updateCustomerAppointments.mockRejectedValueOnce(new Error("Slot conflict"));
+
+    await expect(reschedule()).rejects.toThrow("Slot conflict");
+
+    expect(mocks.updateOne).not.toHaveBeenCalled();
+    expect(mocks.withTransaction).toHaveBeenCalledOnce();
+    expect(mocks.endSession).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a partial plan move or an expired source hold", async () => {
+    mocks.findOne.mockResolvedValueOnce({ steps: [option.steps[0]] }).mockResolvedValueOnce(null);
+
+    await expect(reschedule()).rejects.toThrow("todas as etapas");
+    await expect(reschedule()).rejects.toThrow("expirou");
+
+    expect(mocks.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("refuses to combine appointments from different held options", async () => {
+    mocks.updateCustomerAppointments.mockResolvedValue(option.targetAppointmentIds!.map(_id => ({
+      _id, schedulingOptionId: new ObjectId(), status: "held",
+    })));
+
+    await expect(reschedule()).rejects.toThrow("um único plano");
+    expect(mocks.findOne).not.toHaveBeenCalled();
+    expect(mocks.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("aborts if the source hold changes while being renewed", async () => {
+    mocks.updateOne.mockResolvedValueOnce({ matchedCount: 0 });
+
+    await expect(reschedule()).rejects.toThrow("alterada por outra operação");
+  });
+
+  it("aborts if the rescheduling candidate cannot be consumed", async () => {
+    mocks.updateOne.mockResolvedValueOnce({ matchedCount: 1 }).mockResolvedValueOnce({ matchedCount: 0 });
+
+    await expect(reschedule()).rejects.toThrow("alterada por outra operação");
+    expect(mocks.endSession).toHaveBeenCalledOnce();
+  });
+
+  it("rejects already-consumed or unidentifiable candidates before moving appointments", async () => {
+    mocks.findOneAndUpdate.mockResolvedValueOnce(null);
+
+    await expect(reschedule()).rejects.toThrow("expirou");
+    expect(mocks.updateCustomerAppointments).not.toHaveBeenCalled();
+  });
+
+  it("exposes rescheduling choices ahead of the existing hold during customer confirmation", async () => {
+    const active = await getActiveSchedulingPlanOption(option.customerId);
+
+    expect(mocks.findOne).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: option.customerId, status: "proposed", purpose: "reschedule",
+    }), expect.anything());
+    expect(active).toMatchObject({
+      optionId: option._id.toHexString(), purpose: "reschedule", targetAppointmentStatus: "held",
+      presentedCandidates: [expect.objectContaining({ optionId: option._id.toHexString() })],
+    });
   });
 });
 

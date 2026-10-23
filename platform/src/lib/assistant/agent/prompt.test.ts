@@ -28,6 +28,13 @@ describe("assistant commercial conduct", () => {
     expect(AGENT_STRUCTURAL_POLICY).toContain("não aceita eventos avulsos");
   });
 
+  it("permits discussing the customer's actual appointments without expanding scheduling permissions", () => {
+    const prompt = buildAgentDeveloperPrompt(createDefaultAgentConfiguration(), false);
+    expect(prompt).toContain("Exceção somente de leitura");
+    expect(prompt).toContain("sem transformar a leitura em autorização para agendar ou reagendar");
+    expect(prompt).toContain("Reservas temporárias e confirmações pendentes não devem ser apresentadas como confirmadas");
+  });
+
   it("connects the customer's goal to value and recommends a next step", () => {
     const configuration = createDefaultAgentConfiguration();
     const prompt = buildAgentDeveloperPrompt(configuration, false);
@@ -66,6 +73,19 @@ describe("assistant commercial conduct", () => {
 
     expect(configuration.handoffPolicy).toContain("use as fontes e ferramentas disponíveis antes de encaminhar");
     expect(configuration.handoffPolicy).toContain("Nunca diga que encaminhou sem registrar de fato");
+  });
+
+  it("uses configured relationship routing without assuming returning patients need a human", () => {
+    const configuration = createDefaultAgentConfiguration();
+    expect(configuration.relationshipRouting).toEqual({ new: "preserve", returning: "preserve" });
+    configuration.relationshipRouting.returning = "waiting_human";
+    const prompt = buildAgentDeveloperPrompt(configuration, false);
+
+    expect(prompt).toContain('"new":"preserve","returning":"waiting_human"');
+    expect(prompt).toContain("Não presuma encaminhamento apenas por ser paciente de retorno");
+    expect(prompt).toContain("não reativa nem encaminha retroativamente");
+    expect(prompt).toContain("serviceStatus=waiting_human");
+    expect(createDefaultAgentConfiguration().relationshipRouting.returning).toBe("preserve");
   });
 
   it("includes verified administrative facts without unconfirmed service promises", () => {

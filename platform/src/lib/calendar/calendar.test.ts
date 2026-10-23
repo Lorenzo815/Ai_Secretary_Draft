@@ -65,65 +65,71 @@ describe("scheduled customer appointment queries", () => {
     });
     afterEach(() => vi.useRealTimers());
 
-    it("scopes the database query to the runtime customer, future starts and authorized scheduled events", async () => {
+    it("returns all of the runtime customer's future scheduled appointments and only unexpired holds", async () => {
       const matching = appointment();
       const startingNow = appointment({ startAt: now });
+      const pending = appointment({ confirmationStatus: "pending", startAt: new Date("2026-10-26T19:00:00Z") });
+      const held = appointment({ status: "held", holdExpiresAt: new Date("2026-10-23T17:00:00Z"), startAt: new Date("2026-10-27T19:00:00Z") });
+      const nonBookable = appointment({ eventType: "subsequent_consultation", confirmationStatus: "confirmed", startAt: new Date("2026-10-28T19:00:00Z") });
       const farFuture = appointment({ startAt: new Date("2035-01-01T12:00:00.000Z") });
       const rows = [
-        matching, startingNow, farFuture,
+        matching, startingNow, pending, held, nonBookable, farFuture,
         appointment({ customerId: new ObjectId() }),
         appointment({ status: "held" }),
+        appointment({ status: "held", holdExpiresAt: now }),
+        appointment({ status: "held", holdExpiresAt: new Date("2026-10-23T15:59:59.999Z") }),
+        appointment({ status: "held", holdExpiresAt: new Date("2026-10-23T17:00:00Z"), startAt: new Date("2026-10-23T15:00:00Z") }),
         appointment({ status: "cancelled" }),
         appointment({ status: "completed" }),
         appointment({ startAt: new Date("2026-10-23T15:59:59.999Z") }),
-        appointment({ eventType: "internal" }),
       ];
       mocks.find.mockImplementation((query: {
         customerId: ObjectId;
-        status: string;
         startAt: { $gte: Date };
-        eventType: { $in: string[] };
+        $or: [{ status: string }, { status: string; holdExpiresAt: { $gt: Date } }];
       }) => {
         const matches = rows.filter((row) => (
           row.customerId?.equals(query.customerId) &&
-          row.status === query.status &&
           row.startAt >= query.startAt.$gte &&
-          query.eventType.$in.includes(row.eventType)
+          (row.status === query.$or[0].status ||
+            (row.status === query.$or[1].status && row.holdExpiresAt && row.holdExpiresAt > query.$or[1].holdExpiresAt.$gt))
         )).sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
         mocks.toArray.mockResolvedValue(matches);
         return mocks;
       });
 
-      const result = await findUpcomingCustomerAppointments({ customerId, eventTypes: ["consultation"] });
+      const result = await findUpcomingCustomerAppointments({ customerId });
 
       expect(mocks.find).toHaveBeenCalledWith({
-        customerId, status: "scheduled", startAt: { $gte: now }, eventType: { $in: ["consultation"] },
+        customerId, startAt: { $gte: now },
+        $or: [{ status: "scheduled" }, { status: "held", holdExpiresAt: { $gt: now } }],
       });
       expect(mocks.sort).toHaveBeenCalledWith({ startAt: 1 });
       expect(mocks.limit).toHaveBeenCalledWith(51);
-      expect(result).toEqual({ appointments: [startingNow, matching, farFuture], queriedAt: now, hasMore: false });
+      expect(result).toEqual({ appointments: [startingNow, matching, pending, held, nonBookable, farFuture], queriedAt: now, hasMore: false });
     });
 
     it.each([0, 49, 50, 51])("returns at most 50 of %i matching rows with an exact truncation indicator", async (count) => {
       const appointments = Array.from({ length: count }, () => appointment());
       mocks.toArray.mockResolvedValue(appointments);
 
-      const result = await findUpcomingCustomerAppointments({ customerId, eventTypes: ["consultation"] });
+      const result = await findUpcomingCustomerAppointments({ customerId });
 
       expect(result.appointments).toEqual(appointments.slice(0, 50));
       expect(result.hasMore).toBe(count > 50);
     });
 
-    it("uses an empty database allowlist when the agent has no authorized event types", async () => {
-      const result = await findUpcomingCustomerAppointments({ customerId, eventTypes: [] });
+    it("does not apply booking or attendance-confirmation filters to read visibility", async () => {
+      await findUpcomingCustomerAppointments({ customerId });
 
-      expect(mocks.find).toHaveBeenCalledWith(expect.objectContaining({ customerId, eventType: { $in: [] } }));
-      expect(result.appointments).toEqual([]);
+      const query = mocks.find.mock.calls[0][0];
+      expect(query).not.toHaveProperty("eventType");
+      expect(query).not.toHaveProperty("confirmationStatus");
     });
 
     it("fails closed before any appointment query without a customer ID", async () => {
       // @ts-expect-error Exercise an invalid runtime boundary.
-      await expect(findUpcomingCustomerAppointments({ customerId: undefined, eventTypes: ["consultation"] }))
+      await expect(findUpcomingCustomerAppointments({ customerId: undefined }))
         .rejects.toThrow("Cliente da consulta");
       expect(mocks.find).not.toHaveBeenCalled();
     });
@@ -139,6 +145,18 @@ describe("scheduled customer appointment queries", () => {
         startAt: { $gte: new Date("2026-10-23T03:00:00.000Z"), $lte: new Date("2026-10-24T02:59:59.999Z") },
       });
       expect(mocks.limit).toHaveBeenCalledWith(50);
+    });
+
+    it("includes valid holds in authorized rescheduling target lookup only when requested", async () => {
+      await findCustomerAppointments({
+        customerId, fromDate: "2026-10-23", toDate: "2026-10-30",
+        eventTypes: ["consultation"], includeActiveHolds: true,
+      });
+
+      expect(mocks.find).toHaveBeenCalledWith(expect.objectContaining({
+        customerId, eventType: { $in: ["consultation"] },
+        $or: [{ status: "scheduled" }, { status: "held", holdExpiresAt: { $gt: now } }],
+      }));
     });
 });
 
