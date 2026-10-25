@@ -37,6 +37,8 @@ export interface WhatsAppMessageDocument {
   media?: WhatsAppMediaReference;
   replyTo?: WhatsAppReplyReference;
   templateName?: string;
+  templateLanguage?: string;
+  selection?: { type: "button" | "button_reply" | "list_reply"; title: string; id?: string; payload?: string };
   status: MessageStatus;
   sentBy?: string;
   source?: "whatsapp_business_app";
@@ -113,7 +115,7 @@ export async function saveWhatsAppMessageEcho(
         updatedAt: now,
       },
       $max: { "externalActivity.timestamp": activity.timestamp },
-      $unset: { media: "", replyTo: "" },
+      $unset: { media: "", replyTo: "", templateName: "", templateLanguage: "", selection: "" },
     });
     return { inserted: result.upsertedCount === 1 };
   }
@@ -136,10 +138,16 @@ export async function saveWhatsAppMessageEcho(
       updatedAt: now,
       ...(message.media ? { media: message.media } : {}),
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      ...(message.templateName ? { templateName: message.templateName } : {}),
+      ...(message.templateLanguage ? { templateLanguage: message.templateLanguage } : {}),
+      ...(message.selection ? { selection: message.selection } : {}),
     },
     $unset: {
       ...(!message.media ? { media: "" } : {}),
       ...(!message.replyTo ? { replyTo: "" } : {}),
+      ...(!message.templateName ? { templateName: "" } : {}),
+      ...(!message.templateLanguage ? { templateLanguage: "" } : {}),
+      ...(!message.selection ? { selection: "" } : {}),
     },
   });
   return { inserted: result.upsertedCount === 1 };

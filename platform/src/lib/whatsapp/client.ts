@@ -4,6 +4,8 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
 const DEFAULT_GRAPH_VERSION = "v25.0";
+export const SAMPLE_TEMPLATE_NAME = "jaspers_market_order_confirmation_v1";
+export const SAMPLE_TEMPLATE_LANGUAGE = "en_US";
 const MAX_ASSISTANT_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_ASSISTANT_AUDIO_BYTES = 25 * 1024 * 1024;
 const ASSISTANT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -92,8 +94,8 @@ export async function sendSampleTemplate(input: SendTemplateInput) {
     to,
     type: "template",
     template: {
-      name: "jaspers_market_order_confirmation_v1",
-      language: { code: "en_US" },
+      name: SAMPLE_TEMPLATE_NAME,
+      language: { code: SAMPLE_TEMPLATE_LANGUAGE },
       components: [
         {
           type: "body",

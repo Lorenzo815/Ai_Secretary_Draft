@@ -6,6 +6,7 @@ import type { WebhookMessage } from "./message-payload";
 const mocks = vi.hoisted(() => ({
   bindings: vi.fn(), activeCompany: vi.fn(), archive: vi.fn(), pending: vi.fn(), remaining: vi.fn(),
   createIndex: vi.fn(), customer: vi.fn(), reference: vi.fn(), save: vi.fn(),
+  hydrate: vi.fn(),
 }));
 vi.mock("../mongodb", () => ({
   getMongoClient: async () => ({ db: () => ({ collection: (name: string) => {
@@ -24,6 +25,7 @@ vi.mock("../crm/customers", () => ({ findOrCreateCustomerFromWhatsApp: mocks.cus
 vi.mock("./messages", () => ({
   findWhatsAppMessageByMetaId: mocks.reference, saveWhatsAppMessageEcho: mocks.save,
 }));
+vi.mock("./template-context", () => ({ hydrateWhatsAppTemplateContext: mocks.hydrate }));
 
 import { processPendingWhatsAppMessageEchoes, processWhatsAppMessageEchoes } from "./message-echoes";
 import { coexistenceWebhookEventId } from "./embedded-signup";
@@ -98,6 +100,25 @@ describe("WhatsApp Business app echo ingestion", () => {
       body: kind === "edit" ? "Corrected" : "Mensagem removida no WhatsApp.",
       externalActivity: { messageId: echo.id, timestamp },
     }), kind);
+  });
+
+  it("enriches a template echo only when explicit template data is supplied", async () => {
+    const template = { name: "confirmation", language: { code: "pt_BR" }, components: [{ type: "body", parameters: [{ type: "text", text: "26/10" }] }] };
+    mocks.hydrate.mockResolvedValueOnce({ body: "Confirma 26/10?", templateName: "confirmation", templateLanguage: "pt_BR" });
+    await processWhatsAppMessageEchoes(input([{ ...echo, type: "template", template }]));
+    expect(mocks.hydrate).toHaveBeenCalledWith(companyId, "waba-1", template);
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Confirma 26/10?", templateName: "confirmation", templateLanguage: "pt_BR",
+    }), undefined);
+  });
+
+  it("keeps unresolved template echoes unprocessed rather than saving guessed text", async () => {
+    mocks.hydrate.mockRejectedValueOnce(new Error("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA"));
+    await expect(processWhatsAppMessageEchoes(input([{ ...echo, type: "template", template: { name: "confirmation" } }])))
+      .rejects.toThrow("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA");
+    expect(mocks.customer).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.archive).not.toHaveBeenCalled();
   });
 
   it.each(["wrong-waba", "wrong-phone", "foreign-company", "ambiguous", "inactive-company"])(

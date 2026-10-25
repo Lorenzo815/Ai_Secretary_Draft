@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ configuration: vi.fn(), process: vi.fn(), forward: vi.fn(), echoes: vi.fn() }));
+const mocks = vi.hoisted(() => ({ configuration: vi.fn(), process: vi.fn(), forward: vi.fn(), echoes: vi.fn(), templates: vi.fn() }));
 vi.mock("@/lib/assistant/agent", () => ({ getAgentConfiguration: mocks.configuration }));
 vi.mock("@/lib/automation", () => ({ processNextAutomationJob: mocks.process }));
 vi.mock("@/lib/whatsapp/forwarding", () => ({ processForwardingDeliveries: mocks.forward }));
 vi.mock("@/lib/whatsapp/message-echoes", () => ({ processPendingWhatsAppMessageEchoes: mocks.echoes }));
+vi.mock("@/lib/whatsapp/templates", () => ({ refreshWhatsAppTemplateCatalog: mocks.templates }));
 import { POST } from "./route";
 
 function request(authorization?: string) {
@@ -20,6 +21,7 @@ beforeEach(() => {
   mocks.process.mockResolvedValue({ processed: true });
   mocks.forward.mockResolvedValue(2);
   mocks.echoes.mockResolvedValue({ processed: 3, failed: 0, pending: false });
+  mocks.templates.mockResolvedValue({ configured: true, count: 5 });
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
@@ -29,6 +31,7 @@ describe("independent forwarding worker", () => {
     expect(mocks.forward).not.toHaveBeenCalled();
     expect(mocks.process).not.toHaveBeenCalled();
     expect(mocks.echoes).not.toHaveBeenCalled();
+    expect(mocks.templates).not.toHaveBeenCalled();
   });
   it("drains forwarding deliveries even when AI processing is paused", async () => {
     mocks.configuration.mockResolvedValue({ enabled: false });
@@ -40,6 +43,7 @@ describe("independent forwarding worker", () => {
     expect(mocks.forward).toHaveBeenCalledOnce();
     expect(mocks.process).not.toHaveBeenCalled();
     expect(mocks.echoes).toHaveBeenCalledOnce();
+    expect(mocks.templates).toHaveBeenCalledOnce();
   });
   it("does not make AI processing wait for an unavailable forwarding destination", async () => {
     let complete: (value: number) => void = () => undefined;
@@ -73,5 +77,22 @@ describe("independent forwarding worker", () => {
     const response = await POST(request("Bearer worker-secret"));
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ echoesProcessed: 2, echoSyncFailures: 1 });
+  });
+  it("does not make AI processing wait for a template catalog refresh", async () => {
+    let finish: (value: { configured: boolean; count: number }) => void = () => undefined;
+    mocks.templates.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const pending = POST(request("Bearer worker-secret"));
+    await vi.waitFor(() => expect(mocks.process).toHaveBeenCalledOnce());
+    finish({ configured: true, count: 6 });
+    expect(await (await pending).json()).toMatchObject({ processed: 1, templateCatalog: { configured: true, count: 6 } });
+  });
+  it("finishes other tasks and reports catalog failures without disclosing provider errors", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.templates.mockRejectedValue(new Error("private token and catalog details"));
+    const response = await POST(request("Bearer worker-secret"));
+    expect(response.status).toBe(503);
+    expect(mocks.process).toHaveBeenCalledOnce();
+    expect(mocks.forward).toHaveBeenCalledOnce();
+    expect(await response.text()).not.toContain("private token");
   });
 });

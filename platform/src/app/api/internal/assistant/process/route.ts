@@ -4,6 +4,7 @@ import { getAgentConfiguration } from "@/lib/assistant/agent";
 import { processNextAutomationJob } from "@/lib/automation";
 import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 import { processPendingWhatsAppMessageEchoes } from "@/lib/whatsapp/message-echoes";
+import { refreshWhatsAppTemplateCatalog } from "@/lib/whatsapp/templates";
 
 export const maxDuration = 300;
 
@@ -12,14 +13,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  const [forwarding, result] = await Promise.allSettled([
+  const [forwarding, result, templates] = await Promise.allSettled([
     processForwardingDeliveries(),
     processAssistantBatch(),
+    refreshWhatsAppTemplateCatalog(),
   ]);
   if (result.status === "rejected") throw result.reason;
   if (forwarding.status === "rejected") {
     console.error("WhatsApp forwarding worker failed.", { errorType: forwarding.reason instanceof Error ? forwarding.reason.name : "Unknown" });
     return NextResponse.json({ error: "Não foi possível processar os encaminhamentos." }, { status: 503 });
+  }
+  if (templates.status === "rejected") {
+    console.error("WhatsApp template catalog refresh failed.", { errorType: templates.reason instanceof Error ? templates.reason.name : "Unknown" });
+    return NextResponse.json({ error: "Não foi possível atualizar o catálogo de modelos do WhatsApp." }, { status: 503 });
   }
   if (result.value.echoSyncFailures > 0) {
     return NextResponse.json({
@@ -27,7 +33,7 @@ export async function POST(request: Request) {
       error: "Há eventos do WhatsApp pendentes de sincronização. O worker tentará novamente.",
     }, { status: 503 });
   }
-  return NextResponse.json({ ...result.value, forwardingProcessed: forwarding.value });
+  return NextResponse.json({ ...result.value, forwardingProcessed: forwarding.value, templateCatalog: templates.value });
 }
 
 async function processAssistantBatch() {

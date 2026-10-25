@@ -249,6 +249,43 @@ compatíveis com Coexistence; não é um espelho instantâneo/completo do servid
 nem uma importação genérica de todo o histórico anterior. Uma chamada de envio
 ou mutação já iniciada não pode ser cancelada retroativamente.
 
+### Contexto de modelos e respostas a botões
+
+O worker existente consulta proativamente o catálogo da WABA da empresa inicial,
+inclusive com a IA pausada. O cache em memória dura 15 minutos por empresa/WABA/
+versão da Graph API; instâncias novas recarregam o catálogo sob demanda. A listagem
+segue todas as páginas por cursor na mesma origem da Graph API e não trunca
+silenciosamente os primeiros 100 modelos. Criar um modelo na Oria invalida o cache.
+Falhas de atualização são registradas sem tokens/conteúdo e retornam HTTP 503 após
+aguardar os demais trabalhos do worker. Novas consultas ao catálogo aguardam pelo
+menos 60 segundos após uma falha, sem substituir o erro por um catálogo vazio.
+
+Se um evento realmente incluir `type: "template"` e `template` com `id` ou
+`name` + `language.code`, a Oria consulta somente o catálogo da WABA correspondente.
+`components[].parameters` deve conter os valores efetivamente usados no envio:
+texto, `currency.fallback_value` ou `date_time.fallback_value`, com
+`parameter_name` quando o modelo usa variáveis nomeadas. Cabeçalho textual,
+corpo, rodapé e rótulos de botões compõem o texto armazenado e o contexto da IA.
+Cabeçalhos de mídia são identificados pelo formato, sem inventar texto do arquivo.
+Modelos, variáveis ou componentes ausentes/ambíguos/não suportados causam erro
+explícito; exemplos do catálogo nunca substituem valores reais. Ecos que não
+puderem ser enriquecidos permanecem pendentes para recuperação.
+
+Envios pela própria Oria já conhecem os valores e passam pelo mesmo renderizador
+antes de enviar, preservando também as opções no histórico. Isso inclui o endpoint
+legado de demonstração, que agora exige o modelo aprovado correspondente na WABA
+da empresa e não registra uma descrição aproximada como se fosse o texto enviado.
+Respostas recebidas
+de botões/listas guardam rótulo, ID/payload e referência à mensagem original.
+A IA recebe esses dados e não deve adivinhar o contexto quando o original falta.
+
+**Limite importante:** este suporte é condicional à presença desses dados no
+evento; `smb_message_echoes` não garante sua entrega para envios feitos via Cloud
+API por outro provedor. Um `context.id`/`wamid` sozinho não identifica o modelo
+nem permite baixar seu texto final. Ter o modelo na mesma empresa não revela
+quais valores o outro provedor usou. Nenhum endpoint de provedor foi adicionado
+e não há tentativa de reconstruir um envio externo a partir do ID apenas.
+
 ### Ferramentas de migração de propriedade
 
 O CLI `src\scripts\company-ownership.ts` **não executa migração automaticamente**:

@@ -23,7 +23,14 @@ describe("assistant commercial conduct", () => {
         _id: new ObjectId(), customerId: new ObjectId(), metaMessageId: "wamid.manual",
         direction: "outbound", source: "whatsapp_business_app", contactPhone: "5511999999999",
         type: "text", body: "Manual response", status: "sent",
+        templateName: "confirmation", templateLanguage: "pt_BR",
         timestamp: new Date("2026-10-25T17:59:00Z"), updatedAt: new Date(),
+      }, {
+        _id: new ObjectId(), customerId: new ObjectId(), metaMessageId: "wamid.selection",
+        direction: "inbound", contactPhone: "5511999999999", type: "button", body: "Confirmar", status: "received",
+        selection: { type: "button", title: "Confirmar", payload: "confirmation-123" },
+        replyTo: { metaMessageId: "wamid.manual", direction: "outbound", type: "template", body: "Manual response" },
+        timestamp: new Date("2026-10-25T18:00:00Z"), updatedAt: new Date(),
       }],
     });
     const userMessage = messages[2];
@@ -32,7 +39,10 @@ describe("assistant commercial conduct", () => {
       : "";
     expect(text).toContain('"source":"whatsapp_business_app"');
     expect(text).toContain("Manual response");
+    expect(text).toContain('"template":{"name":"confirmation","language":"pt_BR"}');
+    expect(text).toContain('"selection":{"type":"button","title":"Confirmar","payload":"confirmation-123"}');
     expect(AGENT_STRUCTURAL_POLICY).toContain("O histórico atual prevalece sobre resumos antigos");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("não deduza o modelo nem seus parâmetros pelo rótulo do botão");
   });
 
   it("distinguishes existing appointments from available rescheduling candidates", () => {

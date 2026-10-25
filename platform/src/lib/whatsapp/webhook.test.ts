@@ -11,6 +11,7 @@ const {
   saveWhatsAppMessage,
   processWhatsAppMessageEchoes,
   updateWhatsAppMessageStatus,
+  hydrateWhatsAppTemplateContext,
 } = vi.hoisted(() => ({
   captureCoexistenceWebhookEvent: vi.fn(),
   cancelAutomationJob: vi.fn(),
@@ -22,6 +23,7 @@ const {
   saveWhatsAppMessage: vi.fn(),
   processWhatsAppMessageEchoes: vi.fn(),
   updateWhatsAppMessageStatus: vi.fn(),
+  hydrateWhatsAppTemplateContext: vi.fn(),
 }));
 
 vi.mock("../automation", () => ({ cancelAutomationJob, emitAutomationEvent }));
@@ -43,6 +45,7 @@ vi.mock("./messages", () => ({
   updateWhatsAppMessageStatus,
 }));
 vi.mock("./message-echoes", () => ({ processWhatsAppMessageEchoes }));
+vi.mock("./template-context", () => ({ hydrateWhatsAppTemplateContext }));
 
 import { processWhatsAppWebhook } from "./webhook";
 
@@ -94,6 +97,62 @@ describe("WhatsApp webhook isolation", () => {
       object: "whatsapp_business_account",
       entry: [{ id: "2222222222", changes: [{ field: "smb_message_echoes", value: {} }] }],
     }))).rejects.toThrow("WHATSAPP_ECHO_INVALID_PAYLOAD");
+  });
+
+  it("hydrates an explicitly supplied template reference and actual values before storing it", async () => {
+    const reference = { name: "confirmation", language: { code: "pt_BR" }, components: [{ type: "body", parameters: [{ type: "text", text: "26/10" }] }] };
+    hydrateWhatsAppTemplateContext.mockResolvedValueOnce({
+      body: "Confirma a consulta em 26/10?\n\nOpções: Confirmar | Reagendar",
+      templateName: "confirmation", templateLanguage: "pt_BR",
+    });
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: { toString: () => "customer-1" } });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{ id: "wamid.template", from: "5511999999999", type: "template", template: reference }],
+      } }] }],
+    }));
+    expect(hydrateWhatsAppTemplateContext).toHaveBeenCalledWith(expect.anything(), "2222222222", reference);
+    expect(saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "template", templateName: "confirmation", templateLanguage: "pt_BR",
+      body: "Confirma a consulta em 26/10?\n\nOpções: Confirmar | Reagendar",
+    }));
+  });
+
+  it.each([
+    { type: "button", button: { text: "Confirmar", payload: "confirm-appointment-123" }, expected: { type: "button", title: "Confirmar", payload: "confirm-appointment-123" } },
+    { type: "interactive", interactive: { button_reply: { title: "Confirmar", id: "option-1" } }, expected: { type: "button_reply", title: "Confirmar", id: "option-1" } },
+    { type: "interactive", interactive: { list_reply: { title: "10h", id: "slot-1" } }, expected: { type: "list_reply", title: "10h", id: "slot-1" } },
+  ])("preserves actual button/list selection metadata and its original message reference", async item => {
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: { toString: () => "customer-1" }, serviceStatus: "ai_active" });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    findWhatsAppMessageByMetaId.mockResolvedValueOnce({ direction: "outbound", type: "template", body: "Consulta em 26/10. Confirmar ou reagendar?" });
+    await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{ id: "wamid.selection", from: "5511999999999", type: item.type, button: item.button, interactive: item.interactive, context: { id: "wamid.original" } }],
+      } }] }],
+    }));
+    expect(saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      selection: item.expected,
+      replyTo: { metaMessageId: "wamid.original", direction: "outbound", type: "template", body: "Consulta em 26/10. Confirmar ou reagendar?" },
+    }));
+  });
+
+  it("rejects unresolved template context before creating a customer or triggering AI", async () => {
+    hydrateWhatsAppTemplateContext.mockRejectedValueOnce(new Error("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA"));
+    await expect(processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{ id: "wamid.unresolved", from: "5511999999999", type: "template", template: { name: "confirmation" } }],
+      } }] }],
+    }))).rejects.toThrow("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA");
+    expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
+    expect(emitAutomationEvent).not.toHaveBeenCalled();
   });
 
   it("ignores live messages for a phone number that is not operational", async () => {

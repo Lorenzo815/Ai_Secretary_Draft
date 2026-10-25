@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Collection } from "mongodb";
+import type { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { withLegacyCompany } from "../companies/ownership";
 
@@ -48,6 +48,7 @@ interface EncryptedToken {
 
 interface EmbeddedSignupConnection {
   _id: string;
+  companyId?: ObjectId;
   appId: string;
   graphVersion: string;
   accessToken: EncryptedToken;
@@ -316,8 +317,10 @@ export async function activateEmbeddedSignupConnection(connectionId: string) {
   };
 }
 
-export async function getOperationalEmbeddedSignupConfig() {
-  const connection = await (await getConnectionsCollection()).findOne({ status: "operational" });
+export async function getOperationalEmbeddedSignupConfig(companyId?: ObjectId) {
+  const connection = await (await getConnectionsCollection()).findOne({
+    status: "operational", ...(companyId ? { companyId } : {}),
+  });
   if (!connection?.wabaId || !connection.phoneNumberId) return null;
   return {
     accessToken: decryptToken(connection.accessToken),

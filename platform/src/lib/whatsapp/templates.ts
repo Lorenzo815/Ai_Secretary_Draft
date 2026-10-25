@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../companies/ownership";
 import { getWhatsAppConfig, type WhatsAppConfig } from "./client";
 import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
@@ -47,15 +49,69 @@ export interface CreateWhatsAppTemplateInput {
 
 export async function listWhatsAppTemplates() {
   const config = await requireTemplateManagementConfig();
+  return fetchWhatsAppTemplates(config);
+}
+
+async function fetchWhatsAppTemplates(config: WhatsAppConfig & { businessAccountId: string }) {
   const query = new URLSearchParams({
     fields: "id,name,status,category,language,components",
     limit: "100",
   });
-  const result = await requestGraph<{ data?: WhatsAppTemplate[] }>(
-    config,
-    `${config.businessAccountId}/message_templates?${query}`,
-  );
-  return result.data ?? [];
+  const templates = new Map<string, WhatsAppTemplate>();
+  const cursors = new Set<string>();
+  for (let page = 0; page < 100; page += 1) {
+    const result = await requestGraph<{
+      data?: WhatsAppTemplate[];
+      paging?: { next?: string; cursors?: { after?: string } };
+    }>(config, `${config.businessAccountId}/message_templates?${query}`);
+    if (!Array.isArray(result.data)) throw new Error("WHATSAPP_TEMPLATE_CATALOG_INVALID");
+    for (const template of result.data) {
+      if (!template || typeof template.id !== "string" || typeof template.name !== "string" ||
+        typeof template.language !== "string" || !Array.isArray(template.components)) {
+        throw new Error("WHATSAPP_TEMPLATE_CATALOG_INVALID");
+      }
+      templates.set(template.id, template);
+    }
+    if (!result.paging?.next) return [...templates.values()];
+    const after = result.paging.cursors?.after;
+    if (!after || cursors.has(after)) throw new Error("WHATSAPP_TEMPLATE_PAGINATION_INVALID");
+    cursors.add(after);
+    query.set("after", after);
+  }
+  throw new Error("WHATSAPP_TEMPLATE_CATALOG_TOO_LARGE");
+}
+
+const TEMPLATE_CATALOG_TTL_MS = 15 * 60_000;
+let templateCatalog: { key: string; expiresAt: number; promise: Promise<WhatsAppTemplate[]> } | undefined;
+
+function cachedTemplates(companyId: ObjectId, config: WhatsAppConfig & { businessAccountId: string }) {
+  const key = `${companyId.toHexString()}:${config.businessAccountId}:${config.graphVersion}`;
+  if (templateCatalog?.key === key && templateCatalog.expiresAt > Date.now()) return templateCatalog.promise;
+  const entry = {
+    key, expiresAt: Date.now() + TEMPLATE_CATALOG_TTL_MS,
+    promise: fetchWhatsAppTemplates(config),
+  };
+  templateCatalog = entry;
+  void entry.promise.catch(() => {
+    if (templateCatalog === entry) entry.expiresAt = Date.now() + 60_000;
+  });
+  return entry.promise;
+}
+
+export async function getCachedWhatsAppTemplates(companyId: ObjectId, businessAccountId: string) {
+  if (!companyId.equals(legacyCompanyId())) throw new Error("WHATSAPP_TEMPLATE_COMPANY_NOT_OPERATIONAL");
+  const config = await requireTemplateManagementConfig();
+  if (!businessAccountId || config.businessAccountId !== businessAccountId) {
+    throw new Error("WHATSAPP_TEMPLATE_WABA_MISMATCH");
+  }
+  return cachedTemplates(companyId, config);
+}
+
+export async function refreshWhatsAppTemplateCatalog() {
+  const config = await getOperationalEmbeddedSignupConfig(legacyCompanyId()) ?? getWhatsAppConfig();
+  if (!config?.businessAccountId) return { configured: false as const, count: 0 };
+  const templates = await cachedTemplates(legacyCompanyId(), { ...config, businessAccountId: config.businessAccountId });
+  return { configured: true as const, count: templates.length };
 }
 
 export async function createWhatsAppTemplate(input: CreateWhatsAppTemplateInput) {
@@ -72,7 +128,7 @@ export async function createWhatsAppTemplate(input: CreateWhatsAppTemplateInput)
   if (normalized.buttons.length > 0) {
     components.push({ type: "BUTTONS", buttons: normalized.buttons });
   }
-  return requestGraph<{ id: string; status: WhatsAppTemplateStatus; category: string }>(
+  const result = await requestGraph<{ id: string; status: WhatsAppTemplateStatus; category: string }>(
     config,
     `${config.businessAccountId}/message_templates`,
     {
@@ -86,6 +142,8 @@ export async function createWhatsAppTemplate(input: CreateWhatsAppTemplateInput)
       }),
     },
   );
+  templateCatalog = undefined;
+  return result;
 }
 
 function normalizeTemplateInput(input: CreateWhatsAppTemplateInput) {
@@ -182,7 +240,7 @@ function normalizeButtons(buttons: CreateWhatsAppTemplateButton[]): WhatsAppTemp
 }
 
 async function requireTemplateManagementConfig(): Promise<WhatsAppConfig & { businessAccountId: string }> {
-  const config = await getOperationalEmbeddedSignupConfig() ?? getWhatsAppConfig();
+  const config = await getOperationalEmbeddedSignupConfig(legacyCompanyId()) ?? getWhatsAppConfig();
   if (!config) throw new Error("A integração do WhatsApp não está configurada no servidor.");
   if (!config.businessAccountId) throw new Error("A conexão do WhatsApp não possui um WABA ID.");
   return { ...config, businessAccountId: config.businessAccountId };

@@ -6,7 +6,11 @@ import {
   SendTemplateInput,
   sendTextMessage,
   SendTextInput,
+  listWhatsAppTemplates,
+  SAMPLE_TEMPLATE_NAME,
+  SAMPLE_TEMPLATE_LANGUAGE,
 } from "@/lib/whatsapp";
+import { renderSentWhatsAppTemplateContext } from "@/lib/whatsapp/template-context";
 import {
   ensureWhatsAppMessageIndexes,
   listWhatsAppMessages,
@@ -70,6 +74,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const template = (await listWhatsAppTemplates()).find(candidate =>
+      candidate.name === SAMPLE_TEMPLATE_NAME && candidate.language === SAMPLE_TEMPLATE_LANGUAGE);
+    if (!template || template.status !== "APPROVED") {
+      throw new Error("O modelo de demonstração não está disponível na WABA da empresa.");
+    }
+    const rendered = renderSentWhatsAppTemplateContext(template, {
+      header: [], body: [input.customerName, input.orderNumber, input.orderDate], buttonUrls: [],
+    });
     const result = await sendSampleTemplate(input as SendTemplateInput);
     await ensureWhatsAppMessageIndexes();
     await saveWhatsAppMessage({
@@ -78,7 +90,7 @@ export async function POST(request: NextRequest) {
       contactName: input.customerName,
       direction: "outbound",
       type: "template",
-      body: `Confirmação do pedido ${input.orderNumber} para ${input.orderDate}`,
+      ...rendered,
       status: "sent",
       timestamp: new Date(),
     });

@@ -14,8 +14,10 @@ import {
   COEXISTENCE_WEBHOOK_FIELDS,
   isOperationalEmbeddedSignupPhoneNumber,
 } from "./embedded-signup";
-import { getMessageBody, getMessageMedia, type WebhookMessage } from "./message-payload";
+import { getMessageBody, getMessageMedia, getMessageSelection, type WebhookMessage } from "./message-payload";
 import { processWhatsAppMessageEchoes } from "./message-echoes";
+import { hydrateWhatsAppTemplateContext } from "./template-context";
+import { legacyCompanyId } from "../companies/ownership";
 
 interface WebhookValue extends Record<string, unknown> {
   metadata?: { phone_number_id?: string };
@@ -79,6 +81,9 @@ export async function processWhatsAppWebhook(rawBody: string) {
 
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
+        const template = message.type === "template"
+          ? await hydrateWhatsAppTemplateContext(legacyCompanyId(), entry.id ?? "", message.template)
+          : null;
         const timestamp = message.timestamp
           ? new Date(Number(message.timestamp) * 1000)
           : new Date();
@@ -88,9 +93,10 @@ export async function processWhatsAppWebhook(rawBody: string) {
           interactionAt: timestamp,
         });
         const referenced = message.context?.id
-          ? await findWhatsAppMessageByMetaId(message.context.id)
+          ? await findWhatsAppMessageByMetaId(message.context.id, legacyCompanyId())
           : null;
         const media = getMessageMedia(message);
+        const selection = getMessageSelection(message);
         const saved = await saveWhatsAppMessage({
           customerId: customer._id,
           metaMessageId: message.id,
@@ -98,7 +104,9 @@ export async function processWhatsAppWebhook(rawBody: string) {
           contactName: contact?.profile?.name,
           direction: "inbound",
           type: message.type ?? "unknown",
-          body: getMessageBody(message),
+          body: template?.body ?? getMessageBody(message),
+          ...(template ? { templateName: template.templateName, templateLanguage: template.templateLanguage } : {}),
+          ...(selection ? { selection } : {}),
           ...(media ? { media } : {}),
           ...(message.context?.id ? {
             replyTo: {

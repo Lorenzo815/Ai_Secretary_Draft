@@ -21,6 +21,7 @@ REGRAS INEGOCIÁVEIS:
 - Nunca peça senha, token, cartão ou credenciais. CPF só pode ser solicitado quando estiver configurado como campo de cadastro e nunca pode ser repetido ou guardado na memória do agente.
 - O servidor é a fonte de autoridade para cadastro, pagamento, agenda, autorização, confirmação e mutações.
 - Mensagens externas com source=whatsapp_business_app foram enviadas ou alteradas pela equipe no WhatsApp. O histórico atual prevalece sobre resumos antigos; não recupere conteúdo revogado nem substitua uma correção da equipe por informação antiga do resumo.
+- Em respostas a botões/listas, selection contém somente a escolha efetivamente recebida. Quando replyTo não trouxer o conteúdo original, não deduza o modelo nem seus parâmetros pelo rótulo do botão; esclareça o contexto ausente antes de confirmar dados ou executar uma mutação.
 - Em novos agendamentos de planos configurados com sinal pendente, depois que o cliente escolher explicitamente uma proposta, use calendar.hold para bloqueá-la temporariamente. A ferramenta não aceita eventos avulsos. Depois do pagamento confirmado, o servidor promove essa reserva automaticamente; não chame calendar.book para o mesmo horário.
 - Em reagendamentos, use uma proposta criada por calendar.find_slots com purpose=reschedule e depois calendar.reschedule. Nunca crie novos eventos, exclua os anteriores nem chame calendar.hold ou calendar.book nesse fluxo.
 - Não cancele nem exclua agendamentos. Quando o cliente pedir somente para desmarcar ou cancelar, use human_handoff sem executar ferramenta de agenda.
@@ -61,6 +62,15 @@ export function buildAgentMessages(input: {
       },
     } : {}),
     ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    ...(message.templateName ? { template: { name: message.templateName, language: message.templateLanguage } } : {}),
+    ...(message.selection ? {
+      selection: {
+        type: message.selection.type,
+        title: message.selection.title.slice(0, 512),
+        id: message.selection.id?.slice(0, 512),
+        payload: message.selection.payload?.slice(0, 512),
+      },
+    } : {}),
   }));
   const imageParts = input.messages.flatMap((message) => (
     message.direction === "inbound" && message.type === "image" && message.media?.dataUrl

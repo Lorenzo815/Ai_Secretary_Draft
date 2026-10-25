@@ -8,10 +8,10 @@ import { findLatestInboundWhatsAppMessage, saveWhatsAppMessage } from "./message
 import { getWhatsAppServiceWindowStatus } from "./service-window";
 import {
   listWhatsAppTemplates,
-  renderWhatsAppTemplateBody,
   validateWhatsAppTemplateSendParameters,
   type WhatsAppTemplateSendParameters,
 } from "./templates";
+import { renderSentWhatsAppTemplateContext } from "./template-context";
 
 export class ManualWhatsAppMessageError extends Error {
   constructor(
@@ -129,8 +129,10 @@ export async function sendManualCustomerTemplate(input: {
   }
 
   let parameters: WhatsAppTemplateSendParameters;
+  let rendered: ReturnType<typeof renderSentWhatsAppTemplateContext>;
   try {
     parameters = validateWhatsAppTemplateSendParameters(template, input.parameters);
+    rendered = renderSentWhatsAppTemplateContext(template, parameters);
   } catch (error) {
     throw new ManualWhatsAppMessageError(
       error instanceof Error ? error.message : "Os parâmetros do modelo são inválidos.",
@@ -153,7 +155,7 @@ export async function sendManualCustomerTemplate(input: {
     bodyParameters: parameters.body,
     buttonUrlParameters: parameters.buttonUrls,
   });
-  const body = renderWhatsAppTemplateBody(template, parameters.body);
+  const body = rendered.body;
   const timestamp = new Date();
   await saveWhatsAppMessage({
     customerId: input.customerId,
@@ -164,6 +166,7 @@ export async function sendManualCustomerTemplate(input: {
     type: "template",
     body,
     templateName: template.name,
+    templateLanguage: template.language,
     status: "sent",
     sentBy: input.sentBy,
     timestamp,

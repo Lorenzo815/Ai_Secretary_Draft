@@ -28,10 +28,15 @@ vi.mock("./messages", () => ({
 vi.mock("./templates", () => ({
   listWhatsAppTemplates: mocks.listWhatsAppTemplates,
   validateWhatsAppTemplateSendParameters: vi.fn((_template, parameters) => parameters),
-  renderWhatsAppTemplateBody: vi.fn(() => "Olá, Maria. Confirme seu atendimento."),
+}));
+vi.mock("./template-context", () => ({
+  renderSentWhatsAppTemplateContext: vi.fn(() => ({
+    body: "Olá, Maria. Confirme seu atendimento.", templateName: "lembrete_agendamento", templateLanguage: "pt_BR",
+  })),
 }));
 
 import { sendManualCustomerMessage, sendManualCustomerTemplate } from "./manual-messages";
+import { renderSentWhatsAppTemplateContext } from "./template-context";
 
 describe("manual WhatsApp messages", () => {
   const customerId = new ObjectId();
@@ -148,5 +153,21 @@ describe("manual WhatsApp messages", () => {
     })).rejects.toMatchObject({ code: "TEMPLATE_INVALID", status: 409 });
     expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
     expect(mocks.updateCustomerServiceStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not send or transfer service ownership when rendering fails", async () => {
+    mocks.findLatestInboundWhatsAppMessage.mockResolvedValue(null);
+    mocks.listWhatsAppTemplates.mockResolvedValue([{
+      id: "template-1", name: "confirmation", language: "pt_BR", status: "APPROVED", category: "UTILITY", components: [],
+    }]);
+    vi.mocked(renderSentWhatsAppTemplateContext).mockImplementationOnce(() => {
+      throw new Error("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA");
+    });
+    await expect(sendManualCustomerTemplate({
+      customerId, templateId: "template-1", parameters: { header: [], body: [], buttonUrls: [] }, sentBy: "admin@example.com",
+    })).rejects.toMatchObject({ code: "TEMPLATE_INVALID", status: 400 });
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(mocks.updateCustomerServiceStatus).not.toHaveBeenCalled();
+    expect(mocks.cancelAutomationJob).not.toHaveBeenCalled();
   });
 });
