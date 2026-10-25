@@ -110,7 +110,7 @@ export default function WebhookForwardingSettings({ companyName }: { companyName
           </div>
         </div>
       </fieldset>)}
-      <p className="text-xs leading-5 text-stone">Cada entrega faz uma tentativa inicial e até o limite configurado de novas tentativas, com espera progressiva de 30 segundos até 1 hora. O limite salvo vale para novas entregas. Salve antes de testar; o teste funciona mesmo com o destino desativado. Remover, desativar ou alterar a URL cancela entregas antigas ainda não iniciadas.</p>
+      <p className="text-xs leading-5 text-stone">Cada entrega faz uma tentativa inicial e até o limite configurado de novas tentativas, com espera progressiva de 30 segundos até 1 hora. O limite salvo vale para novas entregas. Salve antes de testar; o teste funciona mesmo com o destino desativado. Antes de enviar uma pendência, o worker a cancela se o destino foi removido, está desativado ou está com outra URL.</p>
       <button type="submit" disabled={!dirty || Boolean(busy)} className="inline-flex items-center gap-2 rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy === "save" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{busy === "save" ? "Salvando..." : "Salvar encaminhamentos"}</button>
     </form>}
     {settings && <div className="space-y-3 border-t border-mist pt-4">

@@ -186,8 +186,8 @@ concessão e token de concorrência.
 Somente **HTTP 200** conta como aceitação; outros status, falhas de rede e timeout
 de 8 segundos consomem tentativas. A espera progride de 30 segundos até 1 hora.
 O limite é capturado na criação da entrega: uma tentativa inicial mais o máximo
-de novas tentativas. Destinos removidos, desativados ou com URL alterada cancelam
-entregas antigas ainda não iniciadas. Uma requisição em andamento não pode ser
+de novas tentativas. Antes de enviar, o worker cancela pendências cujo destino
+foi removido, está desativado ou está com outra URL. Uma requisição em andamento não pode ser
 recolhida. A entrega é **pelo menos uma vez**: após uma falha ambígua, o receptor
 deve deduplicar pelo `X-Oria-Delivery-Id`, estável nas novas tentativas.
 
