@@ -163,7 +163,7 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
   return { messageId, to, payload };
 }
 
-export function isValidWebhookSignature(rawBody: string, signature: string | null) {
+export function isValidWebhookSignature(rawBody: string | Uint8Array, signature: string | null) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret) return false;
   if (!signature?.startsWith("sha256=")) return false;

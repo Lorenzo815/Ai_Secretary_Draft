@@ -147,6 +147,70 @@ Não há promoção automática no login nem redefinição da senha existente. E
 continua limitada à empresa inicial: `isolationReady:false`. Não habilite outra
 empresa até concluir o isolamento de todas as consultas operacionais.
 
+### Encaminhamento de webhooks do WhatsApp
+
+Em **Configurações do sistema**, o administrador único da empresa pode salvar até
+**5 destinos**, incluindo os desativados, e configurar **0 a 10 novas tentativas**
+por destino (padrão: 3). A configuração e os testes usam
+`GET/PUT/POST /api/company/webhook-forwarding`, protegidos no proxy e nos handlers:
+permissão de gerenciar Sistema, sem ser administrador, não autoriza essa função.
+O servidor deriva `companyId` da sessão validada, nunca do corpo da solicitação.
+Alterações são serializadas com as demais ações administrativas e usam revisão
+otimista para não sobrescrever outra edição.
+
+Somente POSTs com assinatura válida em `/api/webhooks/whatsapp` são encaminhados.
+Os bytes originais são persistidos e enviados sem reconstruir, filtrar ou enriquecer
+o JSON; isso inclui campos/eventos desconhecidos e referências de mídia, não o
+download dos arquivos. A assinatura original `X-Hub-Signature-256` é preservada.
+Cookies, tokens de login e demais cabeçalhos de entrada não são repassados.
+GETs de verificação da Meta e chamadas ao cron não são encaminhados.
+
+A empresa do evento é resolvida pelos WABA/Phone Number IDs das conexões
+registradas; a configuração em ambiente só associa identificadores explicitamente
+correspondentes à empresa inicial. Nunca há fallback para a configuração de outra
+empresa. A ativação exige antes uma conexão WhatsApp vinculada à empresa ou os
+identificadores explícitos da empresa inicial no ambiente. Quando existem destinos ativos, um payload com propriedade desconhecida
+ou misturando empresas recebe 503, com diagnóstico sanitizado nos logs, em vez de
+vazar dados ou alterar o objeto para dividi-lo. Esta funcionalidade não habilita
+outras empresas nem substitui o isolamento operacional ainda pendente.
+
+O outbox durável em `whatsapp_forwarding_deliveries` é escrito antes do
+processamento local/acknowledgement à Meta. Uma chave única por empresa, destino e
+SHA-256 do corpo evita duplicações na janela de retenção. As primeiras entregas
+rodam após a resposta; novas tentativas são drenadas pelo **mesmo cron autenticado**
+`POST /api/internal/assistant/process`, inclusive com a IA pausada, e sem atrasar
+o início dos jobs de IA. Mantenha esse agendamento ativo; não foi adicionado outro
+serviço de agendamento. Cada execução reivindica até 5 entregas vencidas, com
+concessão e token de concorrência.
+
+Somente **HTTP 200** conta como aceitação; outros status, falhas de rede e timeout
+de 8 segundos consomem tentativas. A espera progride de 30 segundos até 1 hora.
+O limite é capturado na criação da entrega: uma tentativa inicial mais o máximo
+de novas tentativas. Destinos removidos, desativados ou com URL alterada cancelam
+entregas antigas ainda não iniciadas. Uma requisição em andamento não pode ser
+recolhida. A entrega é **pelo menos uma vez**: após uma falha ambígua, o receptor
+deve deduplicar pelo `X-Oria-Delivery-Id`, estável nas novas tentativas.
+
+Os destinos exigem HTTPS público na porta 443, certificado válido e nenhum
+redirecionamento. Endereços locais, privados, reservados, respostas DNS mistas e
+o próprio ambiente são bloqueados. O transporte fixa o IP público validado,
+preservando Host e TLS SNI para impedir troca de DNS durante a conexão.
+`X-Oria-Webhook-Forwarded: 1` identifica encaminhamentos; a entrada rejeita ciclos.
+
+**Testar HTTP 200** envia somente um objeto sintético
+`{"object":"whatsapp_business_account","entry":[]}`, identificado por
+`X-Oria-Webhook-Test: 1`, sem dados reais de clientes e sem novas tentativas.
+O teste funciona com o destino salvo ainda desativado, permitindo verificá-lo antes
+de enviar eventos reais. O status, duração e erro são exibidos. Existe um intervalo mínimo de 5 segundos
+entre testes da empresa. HTTP 200 comprova aceitação, não o processamento interno
+da plataforma de destino; a assinatura do teste usa o app secret quando disponível.
+
+As últimas 25 entregas/testes da própria empresa mostram status, tentativas e
+próximo horário. Corpos e assinaturas são removidos após conclusão, falha terminal
+ou cancelamento; metadados terminais expiram após 7 dias. Pendências mantêm o corpo
+para recuperação pelo worker. A configuração fica em
+`whatsapp_forwarding_config`; ambas as coleções têm propriedade da empresa.
+
 ### Ferramentas de migração de propriedade
 
 O CLI `src\scripts\company-ownership.ts` **não executa migração automaticamente**:

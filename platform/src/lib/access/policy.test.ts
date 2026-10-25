@@ -53,6 +53,15 @@ describe("default-deny access catalog", () => {
     expect(routePolicy("/api/internal/assistant/process", "GET")).toBeNull();
     expect(routePolicy("/api/webhooks/whatsapp/anything", "POST")).toBeNull();
   });
+  it("reserves all forwarding settings and test actions to the company admin", () => {
+    const manager = { ...user, permissions: { ...emptyPermissions(), system: "manage" as const } };
+    for (const method of ["GET", "PUT", "POST"]) {
+      const policy = routePolicy("/api/company/webhook-forwarding", method);
+      expect(allows(manager, policy)).toBe(false);
+      expect(allows({ ...manager, isAdmin: true }, policy)).toBe(true);
+    }
+    expect(routePolicy("/api/company/webhook-forwarding", "DELETE")).toBeNull();
+  });
   it("covers every existing API HTTP handler and dashboard page explicitly", () => {
     const root = path.join(process.cwd(), "src", "app");
     for (const absolute of filesIn(path.join(root, "api")).filter(filename => path.basename(filename) === "route.ts")) {

@@ -30,6 +30,8 @@ export const COMPANY_OWNED_COLLECTIONS = [
   "whatsapp_coexistence_webhook_events",
   "whatsapp_embedded_signup_config",
   "whatsapp_embedded_signup_connections",
+  "whatsapp_forwarding_config",
+  "whatsapp_forwarding_deliveries",
   "whatsapp_messages",
 ] as const;
 

@@ -26,6 +26,7 @@ export function routePolicy(path: string, method: string): RoutePolicy {
   if (path === "/api/company/settings") return method === "GET" ? "session" : method === "PATCH" ? "admin" : null;
   if (path === "/api/company/users") return ["GET", "POST", "PATCH", "DELETE"].includes(method) ? "admin" : null;
   if (path === "/api/company/transfer-admin") return method === "POST" ? "admin" : null;
+  if (path === "/api/company/webhook-forwarding") return ["GET", "PUT", "POST"].includes(method) ? "admin" : null;
   const access = (module: AccessModule, allowed: string[]) =>
     allowed.includes(method) ? [method === "GET" || method === "HEAD" ? read(module) : manage(module)] : null;
   if (path === "/api/customers") return access("customers", ["POST"]);

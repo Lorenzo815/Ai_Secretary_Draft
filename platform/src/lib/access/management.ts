@@ -51,7 +51,7 @@ function scopedCompany(principal: Principal) {
   return objectId(principal.companyId);
 }
 
-async function adminTransaction<T>(
+export async function adminTransaction<T>(
   principal: Principal,
   run: (db: Db, session: ClientSession, company: AccessCompany) => Promise<T>,
 ) {

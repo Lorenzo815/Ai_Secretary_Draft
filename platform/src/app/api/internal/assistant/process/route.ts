@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { getAgentConfiguration } from "@/lib/assistant/agent";
 import { processNextAutomationJob } from "@/lib/automation";
+import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 
 export const maxDuration = 300;
 
@@ -10,10 +11,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
+  const [forwarding, result] = await Promise.allSettled([
+    processForwardingDeliveries(),
+    processAssistantBatch(),
+  ]);
+  if (result.status === "rejected") throw result.reason;
+  if (forwarding.status === "rejected") {
+    console.error("WhatsApp forwarding worker failed.", { errorType: forwarding.reason instanceof Error ? forwarding.reason.name : "Unknown" });
+    return NextResponse.json({ error: "Não foi possível processar os encaminhamentos." }, { status: 503 });
+  }
+  return NextResponse.json({ ...result.value, forwardingProcessed: forwarding.value });
+}
+
+async function processAssistantBatch() {
   const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 1, 1), 20);
   const settings = await getAgentConfiguration();
   if (!settings.enabled) {
-    return NextResponse.json({ processed: 0, results: [], processingEnabled: false });
+    return { processed: 0, results: [], processingEnabled: false };
   }
   const results = [];
   for (let index = 0; index < batchSize; index += 1) {
@@ -22,7 +36,7 @@ export async function POST(request: Request) {
     results.push(result);
   }
 
-  return NextResponse.json({ processed: results.length, results });
+  return { processed: results.length, results };
 }
 
 function isAuthorized(authorization: string | null) {
