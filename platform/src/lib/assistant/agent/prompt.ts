@@ -20,6 +20,7 @@ REGRAS INEGOCIÁVEIS:
 - Não recomende, cite ou compare outras clínicas e não desqualifique outros profissionais. Trate pedidos por concorrentes como type=reply: informe brevemente que só pode responder pela clínica e apresente seus diferenciais autorizados.
 - Nunca peça senha, token, cartão ou credenciais. CPF só pode ser solicitado quando estiver configurado como campo de cadastro e nunca pode ser repetido ou guardado na memória do agente.
 - O servidor é a fonte de autoridade para cadastro, pagamento, agenda, autorização, confirmação e mutações.
+- Mensagens externas com source=whatsapp_business_app foram enviadas ou alteradas pela equipe no WhatsApp. O histórico atual prevalece sobre resumos antigos; não recupere conteúdo revogado nem substitua uma correção da equipe por informação antiga do resumo.
 - Em novos agendamentos de planos configurados com sinal pendente, depois que o cliente escolher explicitamente uma proposta, use calendar.hold para bloqueá-la temporariamente. A ferramenta não aceita eventos avulsos. Depois do pagamento confirmado, o servidor promove essa reserva automaticamente; não chame calendar.book para o mesmo horário.
 - Em reagendamentos, use uma proposta criada por calendar.find_slots com purpose=reschedule e depois calendar.reschedule. Nunca crie novos eventos, exclua os anteriores nem chame calendar.hold ou calendar.book nesse fluxo.
 - Não cancele nem exclua agendamentos. Quando o cliente pedir somente para desmarcar ou cancelar, use human_handoff sem executar ferramenta de agenda.
@@ -45,6 +46,7 @@ export function buildAgentMessages(input: {
 }): ChatCompletionMessageParam[] {
   const transcript = input.messages.map((message) => ({
     direction: message.direction,
+    source: message.source ?? (message.sentBy ? "staff" : message.direction === "outbound" ? "oria" : "customer"),
     timestamp: message.timestamp.toISOString(),
     type: message.type,
     text: message.body.slice(0, 4_096),

@@ -66,6 +66,7 @@ export interface WhatsAppInboxDetail {
     };
     status: WhatsAppMessageDocument["status"];
     sentBy?: string;
+    source?: "whatsapp_business_app";
     timestamp: string;
   }>;
   availability: {
@@ -276,6 +277,7 @@ export async function getWhatsAppInboxDetail(customerId: ObjectId): Promise<What
       replyTo: message.replyTo,
       status: message.status,
       sentBy: message.sentBy,
+      source: message.source,
       timestamp: message.timestamp.toISOString(),
     })),
     availability: {

@@ -525,8 +525,7 @@ export async function captureCoexistenceWebhookEvent(input: {
   value: object;
 }) {
   if (!COEXISTENCE_WEBHOOK_FIELDS.has(input.field)) return false;
-  const serialized = JSON.stringify({ wabaId: input.wabaId, field: input.field, value: input.value });
-  const eventId = createHash("sha256").update(serialized).digest("hex");
+  const eventId = coexistenceWebhookEventId(input);
   const result = await (await getWebhookEventsCollection()).updateOne(
     { _id: eventId },
     {
@@ -542,4 +541,9 @@ export async function captureCoexistenceWebhookEvent(input: {
     { upsert: true },
   );
   return result.upsertedCount === 1;
+}
+
+export function coexistenceWebhookEventId(input: { wabaId: string; field: string; value: object }) {
+  const serialized = JSON.stringify({ wabaId: input.wabaId, field: input.field, value: input.value });
+  return createHash("sha256").update(serialized).digest("hex");
 }

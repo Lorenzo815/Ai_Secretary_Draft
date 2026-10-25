@@ -1,8 +1,9 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+import { legacyCompanyId, withLegacyCompany } from "../companies/ownership";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -38,6 +39,9 @@ export interface WhatsAppMessageDocument {
   templateName?: string;
   status: MessageStatus;
   sentBy?: string;
+  source?: "whatsapp_business_app";
+  externalActivity?: { messageId: string; timestamp: Date };
+  externalOriginalPending?: boolean;
   timestamp: Date;
   updatedAt: Date;
 }
@@ -65,6 +69,95 @@ export async function saveWhatsAppMessage(
   );
 
   return { inserted: result.upsertedCount === 1 };
+}
+
+export async function saveWhatsAppMessageEcho(
+  message: Omit<WhatsAppMessageDocument, "_id" | "updatedAt"> & {
+    customerId: ObjectId;
+    source: "whatsapp_business_app";
+    externalActivity: { messageId: string; timestamp: Date };
+  },
+  change?: "edit" | "revoke",
+) {
+  const messages = await getMessagesCollection();
+  const filter = {
+    companyId: legacyCompanyId(), metaMessageId: message.metaMessageId,
+    customerId: message.customerId, direction: "outbound" as const,
+  };
+  const now = new Date();
+  const result = await messages.updateOne(filter, {
+    $setOnInsert: withLegacyCompany({
+      ...message,
+      _id: new ObjectId(),
+      updatedAt: now,
+      ...(change ? { externalOriginalPending: true } : {}),
+    }),
+  }, { upsert: true });
+
+  if (!change) {
+    // An edit/revoke can arrive before its original message.
+    await messages.updateOne({ ...filter, externalOriginalPending: true }, {
+      $set: { timestamp: message.timestamp },
+      $unset: { externalOriginalPending: "" },
+    });
+    return { inserted: result.upsertedCount === 1 };
+  }
+  const activity = message.externalActivity;
+  if (change === "revoke") {
+    await messages.updateOne({ ...filter, type: { $ne: "revoked" } }, {
+      $set: {
+        body: message.body,
+        type: "revoked",
+        source: "whatsapp_business_app",
+        "externalActivity.messageId": activity.messageId,
+        updatedAt: now,
+      },
+      $max: { "externalActivity.timestamp": activity.timestamp },
+      $unset: { media: "", replyTo: "" },
+    });
+    return { inserted: result.upsertedCount === 1 };
+  }
+  await messages.updateOne({
+    ...filter,
+    customerId: message.customerId,
+    direction: "outbound",
+    type: { $ne: "revoked" },
+    $or: [
+      { externalActivity: { $exists: false } },
+      { "externalActivity.timestamp": { $lt: activity.timestamp } },
+      { "externalActivity.timestamp": activity.timestamp, "externalActivity.messageId": { $lt: activity.messageId } },
+    ],
+  }, {
+    $set: {
+      body: message.body,
+      type: message.type,
+      source: "whatsapp_business_app",
+      externalActivity: activity,
+      updatedAt: now,
+      ...(message.media ? { media: message.media } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    },
+    $unset: {
+      ...(!message.media ? { media: "" } : {}),
+      ...(!message.replyTo ? { replyTo: "" } : {}),
+    },
+  });
+  return { inserted: result.upsertedCount === 1 };
+}
+
+export async function getWhatsAppExternalActivityState(customerId: ObjectId) {
+  const activities = await (await getMessagesCollection()).find({
+    companyId: legacyCompanyId(), customerId, source: "whatsapp_business_app",
+  }, { projection: { _id: 1, externalActivity: 1, timestamp: 1 } }).sort({ _id: 1 }).toArray();
+  let latestAt: Date | null = null;
+  for (const message of activities) {
+    const timestamp = message.externalActivity?.timestamp;
+    if (timestamp && (!latestAt || timestamp > latestAt)) latestAt = timestamp;
+  }
+  return {
+    version: createHash("sha256").update(JSON.stringify(activities)).digest("hex"),
+    latestAt,
+  };
 }
 
 export async function updateWhatsAppMessageStatus(metaMessageId: string, status: MessageStatus) {
@@ -179,6 +272,6 @@ export async function ensureWhatsAppMessageIndexes() {
   ]);
 }
 
-export async function findWhatsAppMessageByMetaId(metaMessageId: string) {
-  return (await getMessagesCollection()).findOne({ metaMessageId });
+export async function findWhatsAppMessageByMetaId(metaMessageId: string, companyId?: ObjectId) {
+  return (await getMessagesCollection()).findOne({ metaMessageId, ...(companyId ? { companyId } : {}) });
 }

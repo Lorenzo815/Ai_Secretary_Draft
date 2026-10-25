@@ -54,6 +54,7 @@ interface Detail {
     replyTo?: { body?: string; direction?: "inbound" | "outbound"; type?: string };
     status: "received" | "sent" | "delivered" | "read" | "failed";
     sentBy?: string;
+    source?: "whatsapp_business_app";
     timestamp: string;
   }>;
   availability: {

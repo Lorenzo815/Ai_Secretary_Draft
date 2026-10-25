@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   customerFindOne: vi.fn(),
   customerToArray: vi.fn(),
   findLatestWhatsAppMessage: vi.fn(),
+  findLatestInboundWhatsAppMessage: vi.fn(),
+  listWhatsAppMessagesForCustomer: vi.fn(),
   messageFind: vi.fn(),
   messageSort: vi.fn(),
   messageToArray: vi.fn(),
@@ -20,13 +22,14 @@ vi.mock("../mongodb", () => ({
 }));
 
 vi.mock("./messages", () => ({
-  findLatestInboundWhatsAppMessage: vi.fn(),
+  findLatestInboundWhatsAppMessage: mocks.findLatestInboundWhatsAppMessage,
   findLatestWhatsAppMessage: mocks.findLatestWhatsAppMessage,
-  listWhatsAppMessagesForCustomer: vi.fn(),
+  listWhatsAppMessagesForCustomer: mocks.listWhatsAppMessagesForCustomer,
 }));
 
 import {
   listActiveWhatsAppInboxConversations,
+  getWhatsAppInboxDetail,
   listWhatsAppInboxConversations,
   resolveWhatsAppInboxAttention,
   WhatsAppInboxConflictError,
@@ -76,6 +79,22 @@ describe("WhatsApp inbox", () => {
     mocks.messageToArray.mockResolvedValue([]);
     mocks.customerToArray.mockResolvedValue([]);
     mocks.aggregateToArray.mockResolvedValue([]);
+  });
+
+  it("preserves the external sender label in the conversation detail API", async () => {
+    const customerId = new ObjectId();
+    mocks.customerFindOne.mockResolvedValue({ _id: customerId, name: "Customer", phones: ["5511999999999"] });
+    mocks.findLatestInboundWhatsAppMessage.mockResolvedValue(null);
+    mocks.listWhatsAppMessagesForCustomer.mockResolvedValue([{
+      ...message({
+        customerId, phone: "5511999999999", metaMessageId: "external-1",
+        direction: "outbound", timestamp: "2026-10-25T18:00:00Z",
+      }),
+      source: "whatsapp_business_app",
+    }]);
+    expect((await getWhatsAppInboxDetail(customerId)).messages[0]).toMatchObject({
+      messageId: "external-1", source: "whatsapp_business_app",
+    });
   });
 
   it("lists only recent conversations, resolves legacy phone aliases, and orders by latest activity", async () => {

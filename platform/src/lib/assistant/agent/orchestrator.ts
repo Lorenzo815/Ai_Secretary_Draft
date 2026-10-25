@@ -3,7 +3,8 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { findCustomerById, updateCustomerServiceStatus } from "../../crm";
 import { sendTextMessage } from "../../whatsapp/client";
-import { isLatestInboundWhatsAppMessage, saveWhatsAppMessage } from "../../whatsapp/messages";
+import { getWhatsAppExternalActivityState, isLatestInboundWhatsAppMessage, saveWhatsAppMessage } from "../../whatsapp/messages";
+import { processPendingWhatsAppMessageEchoes } from "../../whatsapp/message-echoes";
 import type { AutomationJobDocument } from "../../automation/contracts";
 import {
   claimAutomationJob,
@@ -37,6 +38,9 @@ import type { AgentFinalResponse } from "./contracts";
 import type { AgentToolHistoryEntry } from "./prompt";
 import { isEmptyAvailabilityResult } from "./availability-result";
 
+type ReplyBlockReason = "manual_reply_received" | "conversation_changed" | "whatsapp_sync_pending";
+type ReplyGuard = () => Promise<ReplyBlockReason | null>;
+
 export async function processNextAssistantJob() {
   const runtimeConfig = getAssistantConfig();
   const job = await claimAutomationJob(runtimeConfig.leaseMs, "customer_agent");
@@ -55,12 +59,19 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
   let mutationsExecuted = 0;
 
   try {
-    const context = await loadAssistantContext(job.customerId, runtimeConfig.recentMessageLimit);
     const customer = await findCustomerById(job.customerId.toString());
-    const latestInbound = [...context.messages].reverse().find((message) => message.direction === "inbound");
-    if (!configuration.enabled || !customer || !latestInbound) {
+    if (!configuration.enabled || !customer) {
       await completeAutomationJob(job._id, job.revision);
       return { processed: true as const, skipped: !configuration.enabled ? "agent_disabled" : "missing_context" };
+    }
+    const synchronization = await processPendingWhatsAppMessageEchoes(customer.phones);
+    if (synchronization.pending) return blockReply({ job }, "whatsapp_sync_pending");
+    const externalActivity = await getWhatsAppExternalActivityState(job.customerId);
+    const context = await loadAssistantContext(job.customerId, runtimeConfig.recentMessageLimit);
+    const latestInbound = [...context.messages].reverse().find((message) => message.direction === "inbound");
+    if (!latestInbound) {
+      await completeAutomationJob(job._id, job.revision);
+      return { processed: true as const, skipped: "missing_context" };
     }
     if (["waiting_human", "human_active", "closed"].includes(customer.serviceStatus ?? "ai_active")) {
       await completeAutomationJob(job._id, job.revision);
@@ -70,6 +81,16 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
       await completeAutomationJob(job._id, job.revision);
       return { processed: true as const, skipped: "no_routing_data" };
     }
+    const checkReply: ReplyGuard = async () => {
+      const synchronization = await processPendingWhatsAppMessageEchoes(customer.phones);
+      if (synchronization.pending) return "whatsapp_sync_pending";
+      const current = await getWhatsAppExternalActivityState(job.customerId);
+      if (current.latestAt && current.latestAt >= latestInbound.timestamp) return "manual_reply_received";
+      if (current.version !== externalActivity.version) return "conversation_changed";
+      return null;
+    };
+    const initialBlock = await checkReply();
+    if (initialBlock) return blockReply({ job }, initialBlock);
     let followUpInstructions: string | undefined;
     let followUpAttempt: number | undefined;
     if (job.process === "customer_follow_up") {
@@ -115,6 +136,8 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         await completeAutomationJob(job._id, job.revision);
         return { processed: true as const, skipped: "newer_message_arrived" };
       }
+      const blocked = await checkReply();
+      if (blocked) return blockReply({ job, run, modelIterations, toolExecutions, mutationsExecuted }, blocked);
 
       const refreshedCustomer = await findCustomerById(job.customerId.toString());
       if (!refreshedCustomer) throw new Error("Cliente não encontrado durante a execução do agente.");
@@ -164,7 +187,11 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
             customerName: latestInbound.contactName ?? latestInbound.contactPhone,
             contactPhone: latestInbound.contactPhone,
             activeSchedulingOptionId: activeOption?.optionId,
-            isMutationAllowed: () => isAutomationJobCurrent(job._id, job.revision),
+            isMutationAllowed: async () => (
+              await isAutomationJobCurrent(job._id, job.revision) &&
+              await isLatestInboundWhatsAppMessage(job.customerId, latestInbound._id) &&
+              !(await checkReply())
+            ),
           },
         });
         toolExecutions += 1;
@@ -214,6 +241,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
             groundedReply,
             latestInbound,
             context,
+            checkReply,
             job,
             run,
             modelIterations,
@@ -232,6 +260,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
               groundedReply: null,
               latestInbound,
               context,
+              checkReply,
               job,
               run,
               modelIterations,
@@ -254,6 +283,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         groundedReply: getGroundedToolReply(latestToolOutput),
         latestInbound,
         context,
+        checkReply,
         job,
         run,
         modelIterations,
@@ -285,6 +315,7 @@ async function finalize(input: {
   groundedReply: string | null;
   latestInbound: Awaited<ReturnType<typeof loadAssistantContext>>["messages"][number];
   context: Awaited<ReturnType<typeof loadAssistantContext>>;
+  checkReply: ReplyGuard;
   job: AutomationJobDocument;
   run: Awaited<ReturnType<typeof startAgentRun>>;
   modelIterations: number;
@@ -340,8 +371,12 @@ async function finalize(input: {
     return { processed: true as const, skipped: "newer_message_arrived" };
   }
   const body = getAgentFinalMessage(input.response, input.groundedReply);
+  const blocked = await input.checkReply();
+  if (blocked) return blockReply(input, blocked);
   if (input.response.decision === "human_handoff" || input.response.decision === "emergency") {
     await updateCustomerServiceStatus(input.job.customerId, "waiting_human");
+    const blocked = await input.checkReply();
+    if (blocked) return blockReply(input, blocked);
   }
   const sent = await sendTextMessage({ to: input.latestInbound.contactPhone, body });
   await saveWhatsAppMessage({
@@ -396,6 +431,30 @@ async function finalize(input: {
     }
   }
   return { processed: true as const, decision: input.response.decision };
+}
+
+async function blockReply(input: {
+  job: AutomationJobDocument;
+  run?: Awaited<ReturnType<typeof startAgentRun>>;
+  modelIterations?: number;
+  toolExecutions?: number;
+  mutationsExecuted?: number;
+}, reason: ReplyBlockReason) {
+  if (input.run) {
+    await finishAgentRun({
+      runId: input.run._id,
+      status: "superseded",
+      modelIterations: input.modelIterations ?? 0,
+      toolExecutions: input.toolExecutions ?? 0,
+      mutationsExecuted: input.mutationsExecuted ?? 0,
+    });
+  }
+  if (reason === "manual_reply_received") {
+    await completeAutomationJob(input.job._id, input.job.revision);
+  } else {
+    await deferAutomationJob(input.job, new Date(Date.now() + 30_000));
+  }
+  return { processed: true as const, skipped: reason };
 }
 
 function parseToolResult(output: string) {

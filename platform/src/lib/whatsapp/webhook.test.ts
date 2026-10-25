@@ -9,6 +9,7 @@ const {
   findOrCreateCustomerFromWhatsApp,
   isOperationalEmbeddedSignupPhoneNumber,
   saveWhatsAppMessage,
+  processWhatsAppMessageEchoes,
   updateWhatsAppMessageStatus,
 } = vi.hoisted(() => ({
   captureCoexistenceWebhookEvent: vi.fn(),
@@ -19,6 +20,7 @@ const {
   findOrCreateCustomerFromWhatsApp: vi.fn(),
   isOperationalEmbeddedSignupPhoneNumber: vi.fn(),
   saveWhatsAppMessage: vi.fn(),
+  processWhatsAppMessageEchoes: vi.fn(),
   updateWhatsAppMessageStatus: vi.fn(),
 }));
 
@@ -40,6 +42,7 @@ vi.mock("./messages", () => ({
   saveWhatsAppMessage,
   updateWhatsAppMessageStatus,
 }));
+vi.mock("./message-echoes", () => ({ processWhatsAppMessageEchoes }));
 
 import { processWhatsAppWebhook } from "./webhook";
 
@@ -67,6 +70,30 @@ describe("WhatsApp webhook isolation", () => {
     expect(captureCoexistenceWebhookEvent).toHaveBeenCalledOnce();
     expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
     expect(emitAutomationEvent).not.toHaveBeenCalled();
+  });
+
+  it("archives and projects outbound echoes without scheduling an AI reply", async () => {
+    const value = {
+      metadata: { phone_number_id: "1111111111" },
+      message_echoes: [{ id: "wamid.external", to: "5511999999999", type: "text", text: { body: "Manual" } }],
+    };
+    await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "smb_message_echoes", value }] }],
+    }));
+    expect(processWhatsAppMessageEchoes).toHaveBeenCalledWith({ wabaId: "2222222222", value });
+    expect(captureCoexistenceWebhookEvent.mock.invocationCallOrder[0])
+      .toBeLessThan(processWhatsAppMessageEchoes.mock.invocationCallOrder[0]);
+    expect(emitAutomationEvent).not.toHaveBeenCalled();
+    expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it("propagates echo projection failures so Meta can retry", async () => {
+    processWhatsAppMessageEchoes.mockRejectedValueOnce(new Error("WHATSAPP_ECHO_INVALID_PAYLOAD"));
+    await expect(processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "smb_message_echoes", value: {} }] }],
+    }))).rejects.toThrow("WHATSAPP_ECHO_INVALID_PAYLOAD");
   });
 
   it("ignores live messages for a phone number that is not operational", async () => {

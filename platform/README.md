@@ -211,6 +211,44 @@ ou cancelamento; metadados terminais expiram após 7 dias. Pendências mantêm o
 para recuperação pelo worker. A configuração fica em
 `whatsapp_forwarding_config`; ambas as coleções têm propriedade da empresa.
 
+### Conversas do WhatsApp Business/Web
+
+Eventos `smb_message_echoes` recebidos da Meta alimentam o mesmo histórico usado
+pela conversa do cliente e pela IA. O destinatário `to` identifica o cliente;
+WABA e Phone Number ID precisam corresponder a uma conexão registrada da empresa
+ou aos identificadores explícitos da empresa inicial no ambiente. Esta ingestão
+continua restrita à empresa inicial ativa, sem habilitar isolamento multiempresa.
+
+Mensagens externas aparecem como **WhatsApp Business/Web**. IDs da Meta deduplicam
+entregas, preservando mensagens já enviadas pela Oria/equipe. Texto, referências
+de mídia e respostas citadas são preservados. Edições e revogações atualizam a
+mensagem original; uma revogação não restaura conteúdo com uma edição atrasada.
+O evento bruto permanece arquivado. Arquivos de mídia não são copiados da Meta.
+
+O mesmo cron autenticado `POST /api/internal/assistant/process` recupera até
+100 eventos arquivados por execução, inclusive com a IA pausada. Não envia
+mensagens nem dispara automações ao importar ecos antigos. `processedAt` só é
+gravado após a projeção completa; falhas ficam pendentes para nova tentativa,
+com diagnóstico sanitizado e HTTP 503 no worker. A resposta inclui
+`echoesProcessed` e `echoSyncFailures`. Não é necessário outro agendamento,
+re-onboarding ou uma chamada de histórico por contato à Meta.
+Falhas aguardam pelo menos 60 segundos entre tentativas; eventos ainda não
+tentados têm prioridade para que um evento problemático não bloqueie o restante
+do arquivo.
+
+Antes de carregar o contexto e antes de mutações/envio, o agente reconcilia
+pendências do contato e verifica alterações externas. Se houver resposta manual
+desde a última mensagem recebida, descarta a resposta/follow-up pendente e
+aguarda a próxima mensagem do cliente, sem alterar permanentemente `serviceStatus`.
+Outras alterações de contexto adiam o job para releitura; falhas de sincronização
+impedem uma resposta baseada em histórico incompleto. O atendimento humano já
+ativado na Oria mantém suas regras atuais.
+
+A sincronização depende dos eventos entregues pela Meta e dos dispositivos
+compatíveis com Coexistence; não é um espelho instantâneo/completo do servidor
+nem uma importação genérica de todo o histórico anterior. Uma chamada de envio
+ou mutação já iniciada não pode ser cancelada retroativamente.
+
 ### Ferramentas de migração de propriedade
 
 O CLI `src\scripts\company-ownership.ts` **não executa migração automaticamente**:

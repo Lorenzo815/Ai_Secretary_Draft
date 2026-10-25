@@ -203,6 +203,7 @@ export default async function CustomerPage({
               } : undefined,
               status: message.status,
               sentBy: message.sentBy,
+              source: message.source,
               timestamp: message.timestamp.toISOString(),
             }))}
             availability={{

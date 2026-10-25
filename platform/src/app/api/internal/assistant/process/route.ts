@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getAgentConfiguration } from "@/lib/assistant/agent";
 import { processNextAutomationJob } from "@/lib/automation";
 import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
+import { processPendingWhatsAppMessageEchoes } from "@/lib/whatsapp/message-echoes";
 
 export const maxDuration = 300;
 
@@ -20,14 +21,22 @@ export async function POST(request: Request) {
     console.error("WhatsApp forwarding worker failed.", { errorType: forwarding.reason instanceof Error ? forwarding.reason.name : "Unknown" });
     return NextResponse.json({ error: "Não foi possível processar os encaminhamentos." }, { status: 503 });
   }
+  if (result.value.echoSyncFailures > 0) {
+    return NextResponse.json({
+      ...result.value, forwardingProcessed: forwarding.value,
+      error: "Há eventos do WhatsApp pendentes de sincronização. O worker tentará novamente.",
+    }, { status: 503 });
+  }
   return NextResponse.json({ ...result.value, forwardingProcessed: forwarding.value });
 }
 
 async function processAssistantBatch() {
+  const synchronization = await processPendingWhatsAppMessageEchoes();
+  const echoResults = { echoesProcessed: synchronization.processed, echoSyncFailures: synchronization.failed };
   const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 1, 1), 20);
   const settings = await getAgentConfiguration();
   if (!settings.enabled) {
-    return { processed: 0, results: [], processingEnabled: false };
+    return { processed: 0, results: [], processingEnabled: false, ...echoResults };
   }
   const results = [];
   for (let index = 0; index < batchSize; index += 1) {
@@ -36,7 +45,7 @@ async function processAssistantBatch() {
     results.push(result);
   }
 
-  return { processed: results.length, results };
+  return { processed: results.length, results, ...echoResults };
 }
 
 function isAuthorized(authorization: string | null) {

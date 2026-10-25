@@ -13,6 +13,7 @@ vi.mock("../mongodb", () => ({
 }));
 
 import { findOrCreateCustomerFromWhatsApp, revealCustomerCpf, updateCustomer, updateCustomerProfile } from "./customers";
+import { legacyCompanyId } from "../companies/ownership";
 
 describe("updateCustomerProfile address updates", () => {
   beforeEach(() => {
@@ -21,6 +22,26 @@ describe("updateCustomerProfile address updates", () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("scopes exact, alias and insert lookups when ingesting company-validated echoes", async () => {
+    const companyId = legacyCompanyId();
+    const customer = { _id: new ObjectId() };
+    findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce(customer);
+    await expect(findOrCreateCustomerFromWhatsApp({
+      phone: "5542988076200", interactionAt: new Date(), companyId,
+    })).resolves.toBe(customer);
+    expect(findOneAndUpdate).toHaveBeenCalledTimes(3);
+    for (const [filter] of findOneAndUpdate.mock.calls) {
+      expect(filter).toMatchObject({ companyId });
+    }
+  });
+
+  it("does not enable a different company through the scoped ingestion helper", async () => {
+    await expect(findOrCreateCustomerFromWhatsApp({
+      phone: "5542988076200", interactionAt: new Date(), companyId: new ObjectId(),
+    })).rejects.toThrow("não pode ser substituída");
+    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  });
 
   it("reuses a customer stored with the legacy Brazilian mobile number", async () => {
     const customer = {

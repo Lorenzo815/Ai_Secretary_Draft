@@ -171,7 +171,9 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
   phone: string;
   name?: string;
   interactionAt: Date;
+  companyId?: ObjectId;
 }) {
+  const scope = input.companyId ? withLegacyCompany({ companyId: input.companyId }) : {};
   const customers = await getCustomersCollection();
   await ensureCustomerIndexes();
 
@@ -199,6 +201,7 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
   };
   const exactCustomer = await customers.findOneAndUpdate(
     {
+      ...scope,
       identifiers: {
         $elemMatch: { kind: "whatsapp_phone", value: phone },
       },
@@ -211,6 +214,7 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
   if (legacyPhoneAliases.length > 0) {
     const legacyCustomer = await customers.findOneAndUpdate(
       {
+        ...scope,
         identifiers: {
           $elemMatch: { kind: "whatsapp_phone", value: { $in: legacyPhoneAliases } },
         },
@@ -223,6 +227,7 @@ export async function findOrCreateCustomerFromWhatsApp(input: {
 
   const customer = await customers.findOneAndUpdate(
     {
+      ...scope,
       identifiers: {
         $elemMatch: { kind: "whatsapp_phone", value: phone },
       },

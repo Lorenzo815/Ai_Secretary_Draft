@@ -4,6 +4,37 @@ import { createDefaultAgentConfiguration } from "./defaults";
 import { AGENT_STRUCTURAL_POLICY, buildAgentDeveloperPrompt, buildAgentMessages } from "./prompt";
 
 describe("assistant commercial conduct", () => {
+  it("distinguishes WhatsApp Business/Web messages from Oria in AI context", () => {
+    const configuration = createDefaultAgentConfiguration();
+    const messages = buildAgentMessages({
+      configuration,
+      runtime: {
+        time: { nowUtc: "2026-10-25T18:00:00Z", clinicLocalNow: "2026-10-25T15:00:00-03:00", clinicTimezone: "America/Sao_Paulo", customerTimezone: null },
+        customer: {},
+        operations: { serviceStatus: "ai_active", paymentStatus: null, paymentProvider: "manual", activeSchedulingOption: null },
+        clinic: { eventTypes: [], resources: [], schedulingPlans: [] },
+        execution: { trigger: "inbound_message", iteration: 1, remainingModelIterations: 1 },
+        followUp: null,
+      },
+      previousSummary: "Old summary",
+      toolHistory: [],
+      finalIteration: false,
+      messages: [{
+        _id: new ObjectId(), customerId: new ObjectId(), metaMessageId: "wamid.manual",
+        direction: "outbound", source: "whatsapp_business_app", contactPhone: "5511999999999",
+        type: "text", body: "Manual response", status: "sent",
+        timestamp: new Date("2026-10-25T17:59:00Z"), updatedAt: new Date(),
+      }],
+    });
+    const userMessage = messages[2];
+    const text = Array.isArray(userMessage.content)
+      ? userMessage.content.find(part => part.type === "text")?.text
+      : "";
+    expect(text).toContain('"source":"whatsapp_business_app"');
+    expect(text).toContain("Manual response");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("O histórico atual prevalece sobre resumos antigos");
+  });
+
   it("distinguishes existing appointments from available rescheduling candidates", () => {
     const configuration = createDefaultAgentConfiguration();
     const prompt = buildAgentDeveloperPrompt(configuration, false);

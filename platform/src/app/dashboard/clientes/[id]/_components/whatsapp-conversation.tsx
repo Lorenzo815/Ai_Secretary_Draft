@@ -27,6 +27,7 @@ interface ConversationMessage {
   };
   status: MessageStatus;
   sentBy?: string;
+  source?: "whatsapp_business_app";
   timestamp: string;
 }
 
@@ -156,7 +157,7 @@ export default function WhatsAppConversation({
               )}
               {message.type === "template" && <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-white/70"><FileText className="size-3" />{message.templateName ?? "Modelo aprovado"}</p>}
               <div className={`mt-1.5 flex items-center justify-end gap-1.5 text-[10px] ${message.direction === "outbound" ? "text-white/70" : "text-stone"}`}>
-                {message.direction === "outbound" && <span>{message.sentBy ? "Equipe" : "Oria"}</span>}
+                {message.direction === "outbound" && <span>{message.source === "whatsapp_business_app" ? "WhatsApp Business/Web" : message.sentBy ? "Equipe" : "Oria"}</span>}
                 <span>{formatDateTime(message.timestamp)}</span>
                 {message.direction === "outbound" && <DeliveryStatus status={message.status} />}
               </div>

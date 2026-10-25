@@ -11,6 +11,8 @@ import {
   type ForwardingDeliveryStatus, type ForwardingEndpoint, type ForwardingResult, type ForwardingSettings,
 } from "./forwarding-contracts";
 import { ForwardingAddressError, forwardingUrl, sendForwardedWebhook } from "./forwarding-http";
+import { ForwardingRoutingError, resolveWhatsAppCompany, type WhatsAppCompanyBinding as Binding } from "./company-routing";
+export { ForwardingRoutingError, resolveWhatsAppCompany as resolveForwardingCompany } from "./company-routing";
 
 interface Configuration {
   _id: ObjectId;
@@ -42,20 +44,6 @@ interface Delivery {
   lastStatus?: number | null;
   lastError?: string | null;
   isTest: boolean;
-}
-
-interface Binding {
-  _id: string;
-  companyId: ObjectId;
-  wabaId?: string;
-  phoneNumberId?: string;
-  status: string;
-}
-
-export class ForwardingRoutingError extends Error {
-  constructor(readonly code: "WHATSAPP_FORWARDING_COMPANY_UNRESOLVED" | "WHATSAPP_FORWARDING_MIXED_COMPANIES" | "WHATSAPP_FORWARDING_COMPANY_INACTIVE") {
-    super(code);
-  }
 }
 
 const configurationCollection = (db: Db) => db.collection<Configuration>("whatsapp_forwarding_config");
@@ -173,38 +161,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-export function resolveForwardingCompany(payload: unknown, bindings: Binding[]): ObjectId {
-  const object = record(payload);
-  if (!object || object.object !== "whatsapp_business_account" || !Array.isArray(object.entry) || !object.entry.length) {
-    throw new ForwardingRoutingError("WHATSAPP_FORWARDING_COMPANY_UNRESOLVED");
-  }
-  const owners = new Set<string>();
-  for (const rawEntry of object.entry) {
-    const entry = record(rawEntry);
-    if (!entry || typeof entry.id !== "string" || !Array.isArray(entry.changes) || !entry.changes.length) {
-      throw new ForwardingRoutingError("WHATSAPP_FORWARDING_COMPANY_UNRESOLVED");
-    }
-    for (const rawChange of entry.changes) {
-      const change = record(rawChange);
-      const metadata = record(record(change?.value)?.metadata);
-      const phone = metadata?.phone_number_id;
-      const matches = bindings.filter(binding =>
-        binding.companyId instanceof ObjectId && binding.wabaId === entry.id &&
-        (typeof phone !== "string" || binding.phoneNumberId === phone),
-      );
-      const candidates = new Set(matches.map(binding => binding.companyId.toHexString()));
-      if (entry.id === process.env.WHATSAPP_BUSINESS_ACCOUNT_ID &&
-        (typeof phone !== "string" || phone === process.env.WHATSAPP_PHONE_NUMBER_ID)) {
-        candidates.add(legacyCompanyId().toHexString());
-      }
-      if (candidates.size !== 1) throw new ForwardingRoutingError("WHATSAPP_FORWARDING_COMPANY_UNRESOLVED");
-      for (const owner of candidates) owners.add(owner);
-    }
-  }
-  if (owners.size !== 1) throw new ForwardingRoutingError("WHATSAPP_FORWARDING_MIXED_COMPANIES");
-  return new ObjectId([...owners][0]);
-}
-
 export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: string): Promise<number> {
   const db = await database();
   if (!await configurationCollection(db).findOne({ "endpoints.enabled": true }, { projection: { _id: 1 } })) return 0;
@@ -220,7 +176,7 @@ export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: str
   const bindings = await db.collection<Binding>("whatsapp_embedded_signup_connections").find({
     wabaId: { $in: wabas }, status: { $in: ["operational", "connected"] },
   }, { projection: { companyId: 1, wabaId: 1, phoneNumberId: 1, status: 1 } }).toArray();
-  const scope = resolveForwardingCompany(payload, bindings);
+  const scope = resolveWhatsAppCompany(payload, bindings);
   if (!await db.collection("companies").findOne({ _id: scope, status: "active" })) {
     throw new ForwardingRoutingError("WHATSAPP_FORWARDING_COMPANY_INACTIVE");
   }
