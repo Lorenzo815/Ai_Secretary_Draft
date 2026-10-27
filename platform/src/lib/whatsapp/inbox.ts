@@ -52,6 +52,7 @@ export interface WhatsAppInboxDetail {
     direction: "inbound" | "outbound";
     type: string;
     templateName?: string;
+    referral?: WhatsAppMessageDocument["referral"];
     body: string;
     media?: {
       mimeType?: string;
@@ -267,6 +268,7 @@ export async function getWhatsAppInboxDetail(customerId: ObjectId): Promise<What
       direction: message.direction,
       type: message.type,
       templateName: message.templateName,
+      referral: message.referral,
       body: message.body,
       media: message.media ? {
         mimeType: message.media.mimeType,

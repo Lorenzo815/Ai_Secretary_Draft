@@ -204,6 +204,7 @@ export default async function CustomerPage({
               status: message.status,
               sentBy: message.sentBy,
               source: message.source,
+              referral: message.referral,
               timestamp: message.timestamp.toISOString(),
             }))}
             availability={{

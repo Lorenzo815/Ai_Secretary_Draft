@@ -14,7 +14,7 @@ import {
   COEXISTENCE_WEBHOOK_FIELDS,
   isOperationalEmbeddedSignupPhoneNumber,
 } from "./embedded-signup";
-import { getMessageBody, getMessageMedia, getMessageSelection, type WebhookMessage } from "./message-payload";
+import { getMessageBody, getMessageMedia, getMessageReferral, getMessageSelection, type WebhookMessage } from "./message-payload";
 import { processWhatsAppMessageEchoes } from "./message-echoes";
 import { hydrateWhatsAppTemplateContext } from "./template-context";
 import { legacyCompanyId } from "../companies/ownership";
@@ -81,6 +81,7 @@ export async function processWhatsAppWebhook(rawBody: string) {
 
       for (const message of value.messages ?? []) {
         if (!message.id || !message.from) continue;
+        const referral = getMessageReferral(message);
         const template = message.type === "template"
           ? await hydrateWhatsAppTemplateContext(legacyCompanyId(), entry.id ?? "", message.template)
           : null;
@@ -107,6 +108,7 @@ export async function processWhatsAppWebhook(rawBody: string) {
           body: template?.body ?? getMessageBody(message),
           ...(template ? { templateName: template.templateName, templateLanguage: template.templateLanguage } : {}),
           ...(selection ? { selection } : {}),
+          ...(referral ? { referral } : {}),
           ...(media ? { media } : {}),
           ...(message.context?.id ? {
             replyTo: {

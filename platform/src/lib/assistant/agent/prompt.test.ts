@@ -31,6 +31,17 @@ describe("assistant commercial conduct", () => {
         selection: { type: "button", title: "Confirmar", payload: "confirmation-123" },
         replyTo: { metaMessageId: "wamid.manual", direction: "outbound", type: "template", body: "Manual response" },
         timestamp: new Date("2026-10-25T18:00:00Z"), updatedAt: new Date(),
+      }, {
+        _id: new ObjectId(), customerId: new ObjectId(), metaMessageId: "wamid.ad",
+        direction: "inbound", contactPhone: "5511999999999", type: "text",
+        body: "Oi quero saber mais sobre o projeto verão", status: "received",
+        referral: {
+          sourceType: "ad", sourceId: "ad-123", sourceUrl: "https://www.instagram.com/p/example/",
+          headline: "Projeto verão", body: "Conheça o projeto.".repeat(1_000),
+          welcomeMessage: "Oi! Como podemos ajudar?", mediaType: "image",
+          imageUrl: "https://cdn.example/ad.jpg", ctwaClid: "attribution-not-for-ai", ref: "sequence-ref",
+        },
+        timestamp: new Date("2026-10-27T15:29:00Z"), updatedAt: new Date(),
       }],
     });
     const userMessage = messages[2];
@@ -43,6 +54,20 @@ describe("assistant commercial conduct", () => {
     expect(text).toContain('"selection":{"type":"button","title":"Confirmar","payload":"confirmation-123"}');
     expect(AGENT_STRUCTURAL_POLICY).toContain("O histórico atual prevalece sobre resumos antigos");
     expect(AGENT_STRUCTURAL_POLICY).toContain("não deduza o modelo nem seus parâmetros pelo rótulo do botão");
+    const transcript = JSON.parse(text ?? "").recentMessages;
+    expect(transcript).toHaveLength(3);
+    expect(transcript[2]).toMatchObject({
+      direction: "inbound", source: "customer", text: "Oi quero saber mais sobre o projeto verão",
+      referral: {
+        sourceType: "ad", sourceId: "ad-123", sourceUrl: "https://www.instagram.com/p/example/",
+        headline: "Projeto verão", welcomeMessage: "Oi! Como podemos ajudar?", mediaType: "image",
+      },
+    });
+    expect(transcript[2].referral.body).toHaveLength(4_096);
+    expect(text).not.toContain("attribution-not-for-ai");
+    expect(text).not.toContain("https://cdn.example/ad.jpg");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("não uma resposta da equipe/Oria");
+    expect(AGENT_STRUCTURAL_POLICY).toContain("Não infira conteúdo de imagens/vídeos");
   });
 
   it("distinguishes existing appointments from available rescheduling candidates", () => {

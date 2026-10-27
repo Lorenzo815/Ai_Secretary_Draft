@@ -112,6 +112,15 @@ describe("WhatsApp Business app echo ingestion", () => {
     }), undefined);
   });
 
+  it("preserves referral context when an echo actually supplies it", async () => {
+    await processWhatsAppMessageEchoes(input([{
+      ...echo, referral: { source_type: "ad", source_id: "ad-123", welcome_message: { text: "Hello" } },
+    }]));
+    expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Manual answer", referral: { sourceType: "ad", sourceId: "ad-123", welcomeMessage: "Hello" },
+    }), undefined);
+  });
+
   it("keeps unresolved template echoes unprocessed rather than saving guessed text", async () => {
     mocks.hydrate.mockRejectedValueOnce(new Error("WHATSAPP_TEMPLATE_PARAMETERS_MISSING_OR_EXTRA"));
     await expect(processWhatsAppMessageEchoes(input([{ ...echo, type: "template", template: { name: "confirmation" } }])))

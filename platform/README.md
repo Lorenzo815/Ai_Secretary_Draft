@@ -249,6 +249,34 @@ compatíveis com Coexistence; não é um espelho instantâneo/completo do servid
 nem uma importação genérica de todo o histórico anterior. Uma chamada de envio
 ou mutação já iniciada não pode ser cancelada retroativamente.
 
+### Contexto de anúncios do Instagram/Facebook
+
+Mensagens recebidas por anúncios Click-to-WhatsApp preservam o objeto `referral`
+enviado pela Meta junto à mensagem do cliente: origem/ID/link, título, texto,
+tipo e links de mídia, `ctwa_clid`, `ref` e a saudação em
+`welcome_message.text`, quando presentes. Esses dados ficam no campo `referral`
+da mensagem, com nomes camelCase; a saudação é `welcomeMessage`.
+
+O histórico do cliente e a caixa de conversas mostram um cartão de origem com
+texto, saudação e detalhes expansíveis. A mensagem digitada pelo cliente permanece
+inalterada. A saudação do anúncio não é criada como uma mensagem fictícia da
+equipe/Oria, nem um segundo gatilho de automação. Links de mídia ficam disponíveis
+para abertura manual; não são baixados automaticamente.
+
+A IA recebe o título/texto/saudação e a referência de origem, com limites de
+tamanho, como dados externos de contexto. Isso ajuda a entender pedidos como
+“quero saber mais sobre o projeto verão”, sem tratar anúncios como autorização
+de preços, promessas clínicas ou alterações de cadastro/agenda/pagamento. Não há
+leitura automática de imagens/vídeos nem inferência de detalhes ausentes.
+
+Esse suporte depende dos campos efetivamente entregues pela Meta. Não exige um
+modelo aprovado da WABA nem busca na Marketing API. Mensagens antigas cujo
+`referral` não foi salvo não são reconstruídas por `wamid`, e a interface não
+presume Instagram em vez de Facebook quando a origem não informa isso.
+
+Referência oficial:
+[Text messages webhook](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages/text).
+
 ### Contexto de modelos e respostas a botões
 
 O worker existente consulta proativamente o catálogo da WABA da empresa inicial,

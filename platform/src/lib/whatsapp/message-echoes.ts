@@ -7,7 +7,7 @@ import { findOrCreateCustomerFromWhatsApp } from "../crm/customers";
 import { getWhatsAppPhoneAliases } from "../crm/validation";
 import { coexistenceWebhookEventId } from "./embedded-signup";
 import { resolveWhatsAppCompany, type WhatsAppCompanyBinding } from "./company-routing";
-import { getMessageBody, getMessageMedia, getMessageSelection, type WebhookMessage } from "./message-payload";
+import { getMessageBody, getMessageMedia, getMessageReferral, getMessageSelection, type WebhookMessage } from "./message-payload";
 import { findWhatsAppMessageByMetaId, saveWhatsAppMessageEcho } from "./messages";
 import { hydrateWhatsAppTemplateContext } from "./template-context";
 
@@ -64,6 +64,7 @@ export async function processWhatsAppMessageEchoes(input: { wabaId: string; valu
     if (change && (!targetId || (change === "edit" && !content?.type))) {
       throw new Error("WHATSAPP_ECHO_INVALID_CHANGE");
     }
+    const referral = change !== "revoke" && content ? getMessageReferral(content) : null;
     const template = change !== "revoke" && content?.type === "template"
       ? await hydrateWhatsAppTemplateContext(companyId, input.wabaId, content.template)
       : null;
@@ -84,6 +85,7 @@ export async function processWhatsAppMessageEchoes(input: { wabaId: string; valu
       body: change === "revoke" ? "Mensagem removida no WhatsApp." : template?.body ?? getMessageBody(content ?? echo),
       ...(template ? { templateName: template.templateName, templateLanguage: template.templateLanguage } : {}),
       ...(selection ? { selection } : {}),
+      ...(referral ? { referral } : {}),
       ...(media ? { media } : {}),
       ...(content?.context?.id ? {
         replyTo: {
@@ -125,7 +127,7 @@ export async function processPendingWhatsAppMessageEchoes(phones?: string[]) {
     } catch (error) {
       failed += 1;
       const errorType = error instanceof Error ? error.name : "Unknown";
-      const code = error instanceof Error && /^WHATSAPP_(ECHO|FORWARDING|TEMPLATE)_[A-Z_]+$/.test(error.message)
+      const code = error instanceof Error && /^WHATSAPP_(ECHO|FORWARDING|TEMPLATE|REFERRAL)_[A-Z_]+$/.test(error.message)
         ? error.message : errorType;
       console.error("WhatsApp echo could not be synchronized.", { eventId: event._id, errorType, code });
       await events.updateOne({ _id: event._id, companyId: legacyCompanyId() }, {

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
 import { legacyCompanyId, withLegacyCompany } from "../companies/ownership";
+import type { WhatsAppReferral } from "./message-payload";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -39,6 +40,7 @@ export interface WhatsAppMessageDocument {
   templateName?: string;
   templateLanguage?: string;
   selection?: { type: "button" | "button_reply" | "list_reply"; title: string; id?: string; payload?: string };
+  referral?: WhatsAppReferral;
   status: MessageStatus;
   sentBy?: string;
   source?: "whatsapp_business_app";
@@ -115,7 +117,7 @@ export async function saveWhatsAppMessageEcho(
         updatedAt: now,
       },
       $max: { "externalActivity.timestamp": activity.timestamp },
-      $unset: { media: "", replyTo: "", templateName: "", templateLanguage: "", selection: "" },
+      $unset: { media: "", replyTo: "", templateName: "", templateLanguage: "", selection: "", referral: "" },
     });
     return { inserted: result.upsertedCount === 1 };
   }
@@ -141,6 +143,7 @@ export async function saveWhatsAppMessageEcho(
       ...(message.templateName ? { templateName: message.templateName } : {}),
       ...(message.templateLanguage ? { templateLanguage: message.templateLanguage } : {}),
       ...(message.selection ? { selection: message.selection } : {}),
+      ...(message.referral ? { referral: message.referral } : {}),
     },
     $unset: {
       ...(!message.media ? { media: "" } : {}),
@@ -148,6 +151,7 @@ export async function saveWhatsAppMessageEcho(
       ...(!message.templateName ? { templateName: "" } : {}),
       ...(!message.templateLanguage ? { templateLanguage: "" } : {}),
       ...(!message.selection ? { selection: "" } : {}),
+      ...(!message.referral ? { referral: "" } : {}),
     },
   });
   return { inserted: result.upsertedCount === 1 };

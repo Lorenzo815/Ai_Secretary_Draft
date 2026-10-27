@@ -97,6 +97,25 @@ describe("WhatsApp inbox", () => {
     });
   });
 
+  it("serializes the ad copy and greeting without replacing the customer message", async () => {
+    const customerId = new ObjectId();
+    const referral = { sourceType: "ad", headline: "Projeto verão", body: "Conheça o projeto.", welcomeMessage: "Oi! Como podemos ajudar?" };
+    mocks.customerFindOne.mockResolvedValue({ _id: customerId, name: "Customer", phones: ["5511999999999"] });
+    mocks.findLatestInboundWhatsAppMessage.mockResolvedValue(null);
+    mocks.listWhatsAppMessagesForCustomer.mockResolvedValue([{
+      ...message({
+        customerId, phone: "5511999999999", metaMessageId: "ad-1",
+        direction: "inbound", timestamp: "2026-10-27T15:29:00Z",
+      }),
+      body: "Oi quero saber mais sobre o projeto verão", referral,
+    }]);
+    const detail = await getWhatsAppInboxDetail(customerId);
+    expect(detail.messages).toHaveLength(1);
+    expect(detail.messages[0]).toMatchObject({
+      direction: "inbound", body: "Oi quero saber mais sobre o projeto verão", referral,
+    });
+  });
+
   it("lists only recent conversations, resolves legacy phone aliases, and orders by latest activity", async () => {
     const now = new Date("2026-09-29T15:00:00.000Z");
     const directId = new ObjectId();

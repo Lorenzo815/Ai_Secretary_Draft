@@ -5,6 +5,8 @@ import { AudioLines, Check, CheckCheck, CircleAlert, FileText, ImageIcon, Messag
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
 import WhatsAppTemplateComposer from "./whatsapp-template-composer";
+import WhatsAppReferralCard from "./whatsapp-referral-card";
+import type { WhatsAppReferral } from "@/lib/whatsapp/message-payload";
 
 type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
 
@@ -14,6 +16,7 @@ interface ConversationMessage {
   type?: string;
   templateName?: string;
   body: string;
+  referral?: WhatsAppReferral;
   media?: {
     mimeType?: string;
     caption?: string;
@@ -150,10 +153,11 @@ export default function WhatsAppConversation({
               key={message.messageId}
               className={`max-w-[88%] rounded-lg px-3.5 py-2.5 shadow-sm sm:max-w-[70%] ${message.direction === "outbound" ? "self-end rounded-br-sm bg-deep-teal text-white" : "self-start rounded-bl-sm border border-mist bg-white text-slate-ink"}`}
             >
+              {message.referral && <WhatsAppReferralCard referral={message.referral} />}
               {message.replyTo && <QuotedMessage replyTo={message.replyTo} outbound={message.direction === "outbound"} />}
               {message.media && <MessageMedia message={message} />}
               {message.body && message.body !== message.media?.filename && message.body !== `[${message.type}]` && (
-                <p className={`${message.media || message.replyTo ? "mt-2" : ""} whitespace-pre-wrap break-words text-sm leading-5`}>{message.body}</p>
+                <p className={`${message.media || message.replyTo || message.referral ? "mt-2" : ""} whitespace-pre-wrap break-words text-sm leading-5`}>{message.body}</p>
               )}
               {message.type === "template" && <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-white/70"><FileText className="size-3" />{message.templateName ?? "Modelo aprovado"}</p>}
               <div className={`mt-1.5 flex items-center justify-end gap-1.5 text-[10px] ${message.direction === "outbound" ? "text-white/70" : "text-stone"}`}>

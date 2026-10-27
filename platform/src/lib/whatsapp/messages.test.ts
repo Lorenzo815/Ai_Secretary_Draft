@@ -200,6 +200,29 @@ describe("WhatsApp message ordering", () => {
       expect((await getWhatsAppExternalActivityState(customerId)).latestAt).toEqual(editAt);
     });
 
+    it("updates and clears referral context with edits and terminal revocations", async () => {
+      const referral = { sourceType: "ad", body: "Original ad", welcomeMessage: "Hello" };
+      await saveWhatsAppMessageEcho({ ...message(), referral });
+      expect(stored[0].referral).toEqual(referral);
+      await saveWhatsAppMessageEcho({
+        ...message(), referral: { ...referral, body: "Corrected ad" },
+        externalActivity: { messageId: "edit-1", timestamp: new Date(originalAt.getTime() + 1_000) },
+      }, "edit");
+      expect(stored[0].referral?.body).toBe("Corrected ad");
+      await saveWhatsAppMessageEcho({
+        ...message(), externalActivity: { messageId: "edit-2", timestamp: new Date(originalAt.getTime() + 2_000) },
+      }, "edit");
+      expect(stored[0].referral).toBeUndefined();
+      await saveWhatsAppMessageEcho({
+        ...message(), referral, externalActivity: { messageId: "edit-3", timestamp: new Date(originalAt.getTime() + 3_000) },
+      }, "edit");
+      await saveWhatsAppMessageEcho({
+        ...message(), type: "revoked", body: "Removed",
+        externalActivity: { messageId: "revoke-1", timestamp: new Date(originalAt.getTime() + 4_000) },
+      }, "revoke");
+      expect(stored[0].referral).toBeUndefined();
+    });
+
     it("detects late older messages and edits without treating duplicate deliveries as context changes", async () => {
       await saveWhatsAppMessageEcho(message());
       const first = await getWhatsAppExternalActivityState(customerId);

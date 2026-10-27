@@ -121,6 +121,54 @@ describe("WhatsApp webhook isolation", () => {
     }));
   });
 
+  it("stores an ad greeting and referral with the customer's actual message, triggering automation only once", async () => {
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: { toString: () => "customer-1" }, serviceStatus: "ai_active" });
+    saveWhatsAppMessage.mockResolvedValueOnce({ inserted: true }).mockResolvedValueOnce({ inserted: false });
+    const raw = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{
+          id: "wamid.ad", from: "5511999999999", type: "text",
+          text: { body: "Oi quero saber mais sobre o projeto verão" },
+          referral: {
+            source_type: "ad", source_id: "ad-123", source_url: "https://www.instagram.com/p/example/",
+            headline: "Projeto verão", body: "Conheça o projeto.",
+            welcome_message: { text: "Oi! Como podemos ajudar?" },
+            media_type: "image", image_url: "https://cdn.example/ad.jpg", ctwa_clid: "click-123",
+          },
+        }],
+      } }] }],
+    });
+    expect((await processWhatsAppWebhook(raw)).receivedMessages).toBe(1);
+    expect(saveWhatsAppMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      metaMessageId: "wamid.ad", direction: "inbound", type: "text",
+      body: "Oi quero saber mais sobre o projeto verão",
+      referral: {
+        sourceType: "ad", sourceId: "ad-123", sourceUrl: "https://www.instagram.com/p/example/",
+        headline: "Projeto verão", body: "Conheça o projeto.", welcomeMessage: "Oi! Como podemos ajudar?",
+        mediaType: "image", imageUrl: "https://cdn.example/ad.jpg", ctwaClid: "click-123",
+      },
+    }));
+    await processWhatsAppWebhook(raw);
+    expect(emitAutomationEvent).toHaveBeenCalledOnce();
+    expect(cancelAutomationJob).toHaveBeenCalledOnce();
+    expect(hydrateWhatsAppTemplateContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed referral context before customer or automation mutations", async () => {
+    await expect(processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{ id: "wamid.bad-ad", from: "5511999999999", type: "text", referral: { welcome_message: { text: 123 } } }],
+      } }] }],
+    }))).rejects.toThrow("WHATSAPP_REFERRAL_INVALID_PAYLOAD");
+    expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
+    expect(saveWhatsAppMessage).not.toHaveBeenCalled();
+    expect(emitAutomationEvent).not.toHaveBeenCalled();
+  });
+
   it.each([
     { type: "button", button: { text: "Confirmar", payload: "confirm-appointment-123" }, expected: { type: "button", title: "Confirmar", payload: "confirm-appointment-123" } },
     { type: "interactive", interactive: { button_reply: { title: "Confirmar", id: "option-1" } }, expected: { type: "button_reply", title: "Confirmar", id: "option-1" } },
