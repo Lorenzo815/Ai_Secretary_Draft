@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Ban, CalendarPlus, Pencil, Plus, RefreshCw, Repeat2, Search, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
+import { Ban, CalendarPlus, Pencil, Plus, RefreshCw, Repeat2, Settings2, ShieldCheck, Trash2, X } from "lucide-react";
 import WeekCalendar from "./_components/week-calendar";
-import CustomerFormButton from "../clientes/_components/customer-form-button";
+import CustomerPicker, { type CustomerOption } from "./_components/customer-picker";
 
 interface DayAvailability {
   weekday: number;
@@ -73,15 +73,13 @@ interface CalendarAccessEvent {
   resourceIds: string[];
 }
 
-interface CustomerOption { id: string; name: string; phone: string; createdAt?: string }
 type CalendarEventType = string;
 
 const dayNames = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
 export default function CalendarPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [accessEvents, setAccessEvents] = useState<CalendarAccessEvent[]>([]);
-  const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [customerId, setCustomerId] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerOption | null>(null);
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [eventType, setEventType] = useState<CalendarEventType>("consultation");
@@ -121,13 +119,10 @@ export default function CalendarPage() {
   const [accessEndTime, setAccessEndTime] = useState("18:00");
   const [accessResourceIds, setAccessResourceIds] = useState<string[]>([]);
   const [activeResourceId, setActiveResourceId] = useState("doctor");
-  const [customerQuery, setCustomerQuery] = useState("");
-  const [customerSort, setCustomerSort] = useState<"recent" | "alphabetical">("recent");
-  const deferredCustomerQuery = useDeferredValue(customerQuery);
   const backgroundRefreshInFlight = useRef(false);
   const whatsappWindowRef = useRef<Window | null>(null);
   const interactionBlocked = useRef(false);
-  interactionBlocked.current = busy || settingsOpen || eventOpen || accessOpen || Boolean(pendingSeriesAction);
+  interactionBlocked.current = !settings || busy || settingsOpen || eventOpen || accessOpen || Boolean(pendingSeriesAction);
 
   async function refreshCalendar(successMessage?: string) {
     setBusy(true);
@@ -135,7 +130,6 @@ export default function CalendarPage() {
       const data = await requestCalendarData();
       setSettings(data.settings);
       setAccessEvents(data.accessEvents ?? []);
-      setCustomers(data.customers ?? []);
       setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
       setFeedback(successMessage ?? "Agenda atualizada.");
       setCalendarRefreshKey((current) => current + 1);
@@ -148,19 +142,19 @@ export default function CalendarPage() {
 
   useEffect(() => {
     let active = true;
-    void requestCalendarData()
+    const controller = new AbortController();
+    void requestCalendarData(controller.signal)
       .then((data) => {
         if (!active) return;
         setSettings(data.settings);
         setAccessEvents(data.accessEvents ?? []);
-        setCustomers(data.customers ?? []);
         setEventType(data.settings.eventTypes[0]?.key ?? "");
       })
       .catch((loadError) => {
-        if (!active) return;
+        if (!active || controller.signal.aborted) return;
         setFeedback(loadError instanceof Error ? loadError.message : "Não foi possível carregar a agenda.");
       });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, []);
 
   useEffect(() => {
@@ -179,11 +173,10 @@ export default function CalendarPage() {
         if (!active || document.visibilityState !== "visible" || interactionBlocked.current) return;
         setSettings(data.settings);
         setAccessEvents(data.accessEvents ?? []);
-        setCustomers(data.customers ?? []);
         setEventType((current) => data.settings.eventTypes.some((item) => item.key === current) ? current : data.settings.eventTypes[0]?.key ?? "");
         setCalendarRefreshKey((current) => current + 1);
-      } catch {
-        // A later poll retries without replacing useful user feedback.
+      } catch (refreshError) {
+        console.error("Failed to refresh calendar.", refreshError);
       } finally {
         backgroundRefreshInFlight.current = false;
       }
@@ -235,8 +228,7 @@ export default function CalendarPage() {
     setRepeatEndMode("count");
     setRepeatCount(4);
     setRepeatUntilDate("");
-    setCustomerId("");
-    setCustomerQuery("");
+    setSelectedCustomer(null);
     setDate(nextDate);
     setTime(targetTime ?? "");
     setCustomTitle("");
@@ -262,8 +254,11 @@ export default function CalendarPage() {
         : appointment.recurrence?.frequency ?? "weekly",
     );
     setRepeatInterval(appointment.recurrence?.interval ?? 1);
-    setCustomerId(appointment.customerId ?? "");
-    setCustomerQuery("");
+    setSelectedCustomer(appointment.customerId ? {
+      id: appointment.customerId,
+      name: appointment.customerName,
+      phone: appointment.contactPhone ?? "",
+    } : null);
     setEventType(appointment.eventType ?? settings?.eventTypes[0]?.key ?? "");
     setCustomTitle(appointment.customTitle ?? "");
     setCustomDurationMinutes(appointment.durationMinutes ?? 30);
@@ -276,15 +271,6 @@ export default function CalendarPage() {
     setEventOpen(true);
   }, [settings]);
 
-  function selectCreatedCustomer(customer: CustomerOption) {
-    setCustomers((current) => [
-      ...current.filter((item) => item.id !== customer.id),
-      { ...customer, createdAt: new Date().toISOString() },
-    ]);
-    setCustomerId(customer.id);
-    setCustomerQuery("");
-  }
-
   async function saveAppointment() {
     if (!eventType || !date || !time) return;
     setBusy(true);
@@ -293,7 +279,7 @@ export default function CalendarPage() {
       method: editingAppointmentId ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        customerId,
+        customerId: selectedCustomer?.id ?? "",
         startAt: `${date}T${time}`,
         eventType,
         notes,
@@ -318,7 +304,7 @@ export default function CalendarPage() {
     if (response.ok && data.appointment) {
       setTime("");
       setNotes("");
-      setCustomerId("");
+      setSelectedCustomer(null);
       setEditingAppointmentId("");
       setEventOpen(false);
       await refreshCalendar(editingAppointmentId
@@ -514,10 +500,9 @@ export default function CalendarPage() {
           if (!response.ok || !data.customer) {
             throw new Error(data.error ?? "Não foi possível consultar o cadastro atual do cliente.");
           }
-          phone = data.customer.phone;
-          setCustomers((current) => current.map((customer) => (
-            customer.id === data.customer!.id ? data.customer! : customer
-          )));
+          const currentCustomer = data.customer;
+          phone = currentCustomer.phone;
+          setSelectedCustomer((current) => current?.id === currentCustomer.id ? currentCustomer : current);
         }
         const normalizedPhone = phone.replace(/\D/g, "");
         if (!normalizedPhone) {
@@ -673,25 +658,6 @@ export default function CalendarPage() {
     setEventType((current) => current === key ? "" : current);
   }
 
-  const visibleCustomerOptions = useMemo(() => {
-    const normalizedQuery = normalizeSearch(deferredCustomerQuery);
-    const options = customers
-      .filter((customer) => !normalizedQuery || normalizeSearch(customer.name).includes(normalizedQuery))
-      .sort((first, second) => {
-        if (customerSort === "recent") {
-          const dateDifference = (Date.parse(second.createdAt ?? "") || 0) - (Date.parse(first.createdAt ?? "") || 0);
-          if (dateDifference) return dateDifference;
-        }
-        return first.name.localeCompare(second.name, "pt-BR", { sensitivity: "base" })
-          || first.phone.localeCompare(second.phone);
-      });
-    const selectedCustomer = customerId ? customers.find((customer) => customer.id === customerId) : undefined;
-    if (selectedCustomer && !options.some((customer) => customer.id === selectedCustomer.id)) {
-      options.unshift(selectedCustomer);
-    }
-    return options;
-  }, [customerId, customerSort, customers, deferredCustomerQuery]);
-
   if (!settings) {
     return <p className="py-20 text-center text-sm text-stone">{feedback || "Carregando agenda..."}</p>;
   }
@@ -819,27 +785,7 @@ export default function CalendarPage() {
               </select>
               {selectedEventResource && <span className="mt-1.5 block font-normal text-stone">{selectedEventResource.name}</span>}
             </label>
-            <div>
-              <span className="text-xs font-semibold text-slate-ink">Cliente</span>
-              <div className="mt-1.5 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                <label className="relative">
-                  <span className="sr-only">Pesquisar cliente por nome</span>
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone" />
-                  <input value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Pesquisar por nome" className="w-full rounded-lg border border-mist bg-white py-2.5 pl-9 pr-3 text-sm font-normal outline-none focus:border-deep-teal" />
-                </label>
-                <select value={customerSort} onChange={(event) => setCustomerSort(event.target.value as typeof customerSort)} aria-label="Ordenar clientes" className="rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-deep-teal">
-                  <option value="recent">Recentes</option>
-                  <option value="alphabetical">A–Z</option>
-                </select>
-              </div>
-              <label className="sr-only" htmlFor="calendar-customer">Selecionar cliente</label>
-              <select id="calendar-customer" value={customerId} onChange={(event) => setCustomerId(event.target.value)} className="mt-2 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal">
-                  <option value="">Sem cliente</option>
-                  {visibleCustomerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customer.name} · +{customer.phone}</option>)}
-              </select>
-              {customerQuery.trim() && visibleCustomerOptions.length === 0 && <p className="mt-1.5 text-xs text-stone">Nenhum cliente encontrado.</p>}
-              <div className="mt-2"><CustomerFormButton compact onCreated={selectCreatedCustomer} /></div>
-            </div>
+            <CustomerPicker value={selectedCustomer} onChange={setSelectedCustomer} />
             <label className="text-xs font-semibold text-slate-ink">Data
               <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-1.5 w-full rounded-lg border border-mist bg-white px-3 py-2.5 text-sm font-normal" />
             </label>
@@ -1146,10 +1092,6 @@ function buildWhatsAppUrl(appointment: Appointment, settings: Settings, phone: s
   return `https://web.whatsapp.com/send?phone=${phone.replace(/\D/g, "")}&text=${encodeURIComponent(message)}`;
 }
 
-function normalizeSearch(value: string) {
-  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("pt-BR").trim();
-}
-
 function formatDateInput(value: string, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
     year: "numeric",
@@ -1170,13 +1112,11 @@ function formatTimeInput(value: string, timezone: string) {
   }).format(new Date(value));
 }
 
-async function requestCalendarData() {
-  const response = await fetch("/api/calendar", { cache: "no-store" });
+async function requestCalendarData(signal?: AbortSignal) {
+  const response = await fetch("/api/calendar?mode=configuration", { cache: "no-store", signal });
   const data = await response.json() as {
     settings?: Settings;
-    appointments?: Appointment[];
     accessEvents?: CalendarAccessEvent[];
-    customers?: CustomerOption[];
     error?: string;
   };
   if (!response.ok || !data.settings) {
@@ -1184,9 +1124,7 @@ async function requestCalendarData() {
   }
   return {
     settings: data.settings,
-    appointments: data.appointments,
     accessEvents: data.accessEvents,
-    customers: data.customers,
   };
 }
 

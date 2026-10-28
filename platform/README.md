@@ -26,6 +26,28 @@ controla a distância entre os horários de início sugeridos; a duração deter
 o tempo ocupado pelo evento. Os dois valores são independentes.
 Podem ser configurados até **50 tipos de evento**, incluindo os tipos padrão.
 
+A abertura e a atualização automática da agenda carregam configurações e regras
+sem buscar a lista completa de clientes nem agendamentos fora do período exibido.
+Os clientes são carregados ao abrir o formulário de evento. A API do período
+consulta em lote somente os clientes vinculados aos agendamentos.
+
+O seletor de clientes pesquisa no servidor após **300 ms** sem digitação e
+retorna **25 clientes por página**, com navegação, ordenação por recentes ou A–Z
+e busca por partes do nome sem distinguir maiúsculas ou acentos. Requisições
+substituídas são canceladas, e o cliente selecionado permanece disponível mesmo
+fora da página atual. O campo de pesquisa é isolado para não redesenhar a agenda
+a cada tecla. Os índices de ordenação são inicializados uma vez por processo.
+
+A tabela de eventos renderiza **50 agendamentos por página**, sem limitar os
+filtros nem os contadores do período completo. Texto de pesquisa e datas locais
+são preparados uma vez por atualização dos dados; formatadores de data e hora
+são reutilizados por fuso horário, reduzindo trabalho em computadores modestos.
+
+O nome exibido nos eventos vem de `customer.name` do CRM, tanto para agendamentos
+da IA quanto da equipe, e não de `profile.fullName` ou do nome no WhatsApp.
+A IA também usa `customer.name` ao salvar novos agendamentos. Eventos sem cliente
+vinculado, ou cujo cliente foi excluído, preservam o nome salvo no evento.
+
 ## Pagamentos
 
 O **Valor do sinal** é editado somente em **Configurações do sistema → Pagamentos
@@ -93,6 +115,49 @@ a retomada precisar ocorrer próxima do horário configurado.
 
 Tokens e chaves permanecem em variáveis somente de servidor; nunca use o
 prefixo `NEXT_PUBLIC_*` para segredos.
+
+### Webhook de integração do WhatsApp
+
+O webhook oficial da Meta, `POST /api/webhooks/whatsapp`, continua exigindo
+`X-Hub-Signature-256` calculado com `WHATSAPP_APP_SECRET`. Não substitua essa
+assinatura por um Bearer token e não compartilhe o App Secret com integrações.
+
+Para integrações servidor a servidor, use
+`POST /api/webhooks/whatsapp/integration` com um token independente:
+
+1. Gere um token aleatório de 32 bytes:
+   `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
+2. Configure `WHATSAPP_INTEGRATION_WEBHOOK_TOKEN` somente no servidor
+   (`.env.local` no desenvolvimento ou variáveis do projeto na Vercel).
+   Na Vercel, faça um novo deploy após configurar ou trocar o token.
+3. Configure o mesmo token no servidor da integração e envie os headers:
+
+   ```http
+   Content-Type: application/json
+   Authorization: Bearer <TOKEN_DA_INTEGRACAO>
+   ```
+
+O corpo usa o mesmo envelope de evento WhatsApp, com
+`object: "whatsapp_business_account"`, `entry[].id` (WABA),
+`entry[].changes[].field` e `entry[].changes[].value`. Use a WABA e o
+`metadata.phone_number_id` da conexão configurada, não o número de telefone
+no lugar desses IDs. Não é necessário enviar `X-Hub-Signature-256` nesta rota.
+O token dá acesso à ingestão operacional da empresa inicial; não é uma
+credencial de usuário do dashboard nem uma liberação para múltiplas empresas.
+
+A resposta de sucesso é HTTP 200 com `received: true`, `receivedMessages`,
+`statusUpdates`, `coexistenceEvents` e `processingRequests`. Token ausente ou
+inválido retorna 401; token não configurado no servidor retorna 503. JSON
+inválido ou objeto de evento não suportado retorna 400. Outros erros de
+processamento não são convertidos em sucesso.
+
+Os eventos são processados pelo mesmo fluxo de persistência e automação do
+webhook oficial, podendo criar mensagens e acionar respostas reais. Eles não
+entram na fila de encaminhamento dos webhooks originais da Meta e não recebem
+uma assinatura Meta fabricada. Um teste sem mensagens não valida o fluxo de
+atendimento completo. O Bearer token não é enviado na resposta e deve permanecer
+fora do navegador, URLs, logs e repositório. Para revogá-lo, remova ou troque a
+variável no servidor e faça um novo deploy.
 
 ## Verificação
 

@@ -20,6 +20,7 @@ export function pagePolicy(path: string): RoutePolicy {
 export function routePolicy(path: string, method: string): RoutePolicy {
   if (path === "/api/auth" || path.startsWith("/api/auth/")) return "public";
   if ((path === "/api/webhooks/whatsapp" && ["GET", "POST"].includes(method)) ||
+    (path === "/api/webhooks/whatsapp/integration" && method === "POST") ||
     (path === "/api/webhooks/mercado-pago" && method === "POST") ||
     (path === "/api/internal/assistant/process" && method === "POST")) return "public";
   if (path === "/dashboard" || path.startsWith("/dashboard/")) return method === "GET" || method === "HEAD" ? pagePolicy(path) : null;

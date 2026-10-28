@@ -1,11 +1,10 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import {
   isValidWebhookSignature,
-  processWhatsAppWebhook,
-  WhatsAppWebhookError,
 } from "@/lib/whatsapp";
 import { enqueueWhatsAppForwarding, ForwardingRoutingError, processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 import { ManagementError } from "@/lib/access/management";
+import { handleWhatsAppWebhook } from "./handler";
 
 export async function GET(request: NextRequest) {
   const mode = request.nextUrl.searchParams.get("hub.mode");
@@ -56,38 +55,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Não foi possível registrar os encaminhamentos. Tente novamente.", code: "WEBHOOK_FORWARDING_UNAVAILABLE" }, { status: 503 });
   }
 
-  try {
-    const result = await processWhatsAppWebhook(rawBody);
-    if (result.processingRequests > 0) {
-      after(async () => {
-        const secret = process.env.ASSISTANT_WORKER_SECRET;
-        if (!secret) {
-          console.error("WhatsApp processing trigger skipped: ASSISTANT_WORKER_SECRET is not configured.");
-          return;
-        }
-        const endpoint = new URL("/api/internal/assistant/process", request.nextUrl.origin);
-        await Promise.all(Array.from({ length: result.processingRequests }, async () => {
-          try {
-            const response = await fetch(endpoint, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${secret}` },
-              cache: "no-store",
-              signal: AbortSignal.timeout(210_000),
-            });
-            if (!response.ok) {
-              console.error(`WhatsApp processing trigger failed with HTTP ${response.status}.`);
-            }
-          } catch (error) {
-            console.error("WhatsApp processing trigger failed", error);
-          }
-        }));
-      });
-    }
-    return NextResponse.json({ received: true, ...result });
-  } catch (error) {
-    if (error instanceof WhatsAppWebhookError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-    throw error;
-  }
+  return handleWhatsAppWebhook(rawBody, request.nextUrl.origin);
 }

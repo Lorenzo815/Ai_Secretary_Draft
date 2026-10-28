@@ -245,12 +245,72 @@ export async function listCustomers() {
   return customers.find({}).sort({ lastInteractionAt: -1 }).toArray();
 }
 
-export async function listCustomerOptions() {
+export async function listCustomerOptions(ids?: ObjectId[]) {
+  if (ids?.length === 0) return [];
   const customers = await getCustomersCollection();
-  return customers.find(
-    {},
+  return customers.find<Pick<CustomerDocument, "_id" | "name" | "phones" | "createdAt">>(
+    ids ? { _id: { $in: ids } } : {},
     { projection: { name: 1, phones: 1, createdAt: 1 } },
   ).sort({ name: 1 }).toArray();
+}
+
+let customerOptionIndexesPromise: Promise<string[]> | undefined;
+
+export async function listCustomerOptionsPage(input: {
+  query?: string;
+  sort?: "recent" | "alphabetical";
+  page?: number;
+} = {}) {
+  const query = input.query?.trim() ?? "";
+  const page = input.page ?? 1;
+  const pageSize = 25;
+  if (query.length > 160) throw new RangeError("Pesquise com até 160 caracteres.");
+  if (!Number.isSafeInteger(page) || page < 1 || page > Math.floor(Number.MAX_SAFE_INTEGER / pageSize)) {
+    throw new RangeError("Informe uma página válida.");
+  }
+  if (input.sort !== undefined && input.sort !== "recent" && input.sort !== "alphabetical") {
+    throw new RangeError("Ordenação de clientes inválida.");
+  }
+  const customers = await getCustomersCollection();
+  const collation = { locale: "pt", strength: 1 };
+  customerOptionIndexesPromise ??= Promise.all([
+    customers.createIndex(
+      { name: 1, _id: 1 },
+      { name: "customer_options_alphabetical", collation },
+    ),
+    customers.createIndex(
+      { createdAt: -1, name: 1, _id: 1 },
+      { name: "customer_options_recent", collation },
+    ),
+  ]).catch((error) => {
+    customerOptionIndexesPromise = undefined;
+    throw error;
+  });
+  await customerOptionIndexesPromise;
+  const sort: Record<string, 1 | -1> = input.sort === "alphabetical"
+    ? { name: 1, _id: 1 }
+    : { createdAt: -1, name: 1, _id: 1 };
+  const matches = await customers.find<Pick<CustomerDocument, "_id" | "name" | "phones" | "createdAt">>(
+    query ? { name: { $regex: customerNameSearchPattern(query), $options: "i" } } : {},
+    { projection: { name: 1, phones: 1, createdAt: 1 }, collation },
+  ).sort(sort).skip((page - 1) * pageSize).limit(pageSize + 1).toArray();
+  return { customers: matches.slice(0, pageSize), page, pageSize, hasMore: matches.length > pageSize };
+}
+
+function customerNameSearchPattern(query: string) {
+  const variants: Record<string, string> = {
+    a: "[a\u00e0\u00e1\u00e2\u00e3\u00e4\u00e5]",
+    c: "[c\u00e7]",
+    e: "[e\u00e8\u00e9\u00ea\u00eb]",
+    i: "[i\u00ec\u00ed\u00ee\u00ef]",
+    n: "[n\u00f1]",
+    o: "[o\u00f2\u00f3\u00f4\u00f5\u00f6]",
+    u: "[u\u00f9\u00fa\u00fb\u00fc]",
+    y: "[y\u00fd\u00ff]",
+  };
+  return [...query.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("pt-BR")]
+    .map((character) => `${variants[character] ?? escapeRegularExpression(character)}[\\p{M}]*`)
+    .join("");
 }
 
 export async function findCustomerById(id: string) {

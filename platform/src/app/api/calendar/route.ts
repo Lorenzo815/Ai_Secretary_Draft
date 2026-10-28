@@ -15,8 +15,9 @@ import {
   CalendarEventTypeDefinition,
   CalendarResourceDefinition,
   AppointmentRecurrenceInput,
+  type AppointmentDocument,
 } from "@/lib/calendar";
-import { findCustomerById, listCustomerOptions } from "@/lib/crm";
+import { findCustomerById, listCustomerOptions, listCustomerOptionsPage, type CustomerDocument } from "@/lib/crm";
 
 async function isAuthenticated() {
   return Boolean(await getServerSession(authOptions));
@@ -27,6 +28,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
   const mode = request.nextUrl.searchParams.get("mode");
+  if (mode === "customers") {
+    const sort = request.nextUrl.searchParams.get("sort") ?? "recent";
+    if (sort !== "recent" && sort !== "alphabetical") {
+      return NextResponse.json({ error: "Ordenação de clientes inválida." }, { status: 400 });
+    }
+    try {
+      const result = await listCustomerOptionsPage({
+        query: request.nextUrl.searchParams.get("query") ?? "",
+        sort,
+        page: Number(request.nextUrl.searchParams.get("page") ?? "1"),
+      });
+      return NextResponse.json({ ...result, customers: serializeCustomerOptions(result.customers) });
+    } catch (error) {
+      if (error instanceof RangeError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      console.error("Failed to load calendar client options.", error);
+      return NextResponse.json({ error: "Não foi possível carregar os clientes." }, { status: 500 });
+    }
+  }
   if (mode === "slots") {
     try {
       const fromDate = request.nextUrl.searchParams.get("fromDate") ?? "";
@@ -55,6 +76,10 @@ export async function GET(request: NextRequest) {
   }
 
   const settings = await getCalendarSettings();
+  if (mode === "configuration") {
+    const accessEvents = await listCalendarAccessEvents();
+    return NextResponse.json({ settings, accessEvents });
+  }
   if (mode === "period") {
     try {
       const fromDate = request.nextUrl.searchParams.get("fromDate") ?? "";
@@ -68,7 +93,7 @@ export async function GET(request: NextRequest) {
         listAppointments(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
         listCalendarAccessEvents(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
       ]);
-      return NextResponse.json({ appointments, accessEvents });
+      return NextResponse.json({ appointments: await resolveAppointmentCustomerNames(appointments), accessEvents });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Falha ao carregar o período." },
@@ -89,7 +114,7 @@ export async function GET(request: NextRequest) {
         listAppointments(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
         listCalendarAccessEvents(from.toUTC().toJSDate(), to.toUTC().toJSDate()),
       ]);
-      return NextResponse.json({ appointments, accessEvents });
+      return NextResponse.json({ appointments: await resolveAppointmentCustomerNames(appointments), accessEvents });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Falha ao carregar a semana." },
@@ -107,15 +132,36 @@ export async function GET(request: NextRequest) {
   ]);
   return NextResponse.json({
     settings,
-    appointments,
+    appointments: await resolveAppointmentCustomerNames(appointments, customers),
     accessEvents,
-    customers: customers.map((customer) => ({
-      id: customer._id.toString(),
-      name: customer.name,
-      phone: customer.phones[0] ?? "",
-      createdAt: customer.createdAt?.toISOString() ?? "",
-    })),
+    customers: serializeCustomerOptions(customers),
   });
+}
+
+function serializeCustomerOptions(customers: Awaited<ReturnType<typeof listCustomerOptions>>) {
+  return customers.map((customer) => ({
+    id: customer._id.toString(),
+    name: customer.name,
+    phone: customer.phones[0] ?? "",
+    createdAt: customer.createdAt?.toISOString() ?? "",
+  }));
+}
+
+async function resolveAppointmentCustomerNames(
+  appointments: AppointmentDocument[],
+  customers?: Pick<CustomerDocument, "_id" | "name">[],
+) {
+  const ids = [...new Set(appointments.flatMap((appointment) => (
+    appointment.customerId ? [appointment.customerId.toHexString()] : []
+  )))].map((id) => new ObjectId(id));
+  const linkedCustomers = customers ?? (ids.length > 0 ? await listCustomerOptions(ids) : []);
+  const names = new Map(linkedCustomers.map((customer) => [customer._id.toHexString(), customer.name]));
+  return appointments.map((appointment) => ({
+    ...appointment,
+    customerName: appointment.customerId
+      ? names.get(appointment.customerId.toHexString()) ?? appointment.customerName
+      : appointment.customerName,
+  }));
 }
 
 export async function PUT(request: Request) {

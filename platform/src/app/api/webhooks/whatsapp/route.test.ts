@@ -47,6 +47,25 @@ describe("Meta webhook forwarding integration", () => {
     expect(mocks.process).not.toHaveBeenCalled();
     expect(mocks.after).not.toHaveBeenCalled();
   });
+  it("does not allow an integration Bearer token to replace Meta signature validation", async () => {
+    vi.stubEnv("WHATSAPP_INTEGRATION_WEBHOOK_TOKEN", "integration-token");
+    mocks.valid.mockReturnValue(false);
+    expect((await POST(request({ authorization: "Bearer integration-token" }))).status).toBe(401);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.process).not.toHaveBeenCalled();
+  });
+  it("rejects missing signatures even when the signature verifier is not called", async () => {
+    expect((await POST(request({ "x-hub-signature-256": "" }))).status).toBe(401);
+    expect(mocks.valid).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.process).not.toHaveBeenCalled();
+  });
+  it("fails closed when the Meta app secret is missing", async () => {
+    vi.stubEnv("WHATSAPP_APP_SECRET", "");
+    expect((await POST(request())).status).toBe(503);
+    expect(mocks.valid).not.toHaveBeenCalled();
+    expect(mocks.process).not.toHaveBeenCalled();
+  });
   it("persists exact bytes before internal processing and schedules outbound work after acknowledgement", async () => {
     const response = await POST(request());
     expect(response.status).toBe(200);

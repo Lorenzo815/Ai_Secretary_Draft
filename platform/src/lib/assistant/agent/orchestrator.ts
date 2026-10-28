@@ -184,7 +184,7 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
           configuration,
           context: {
             customerId: job.customerId,
-            customerName: latestInbound.contactName ?? latestInbound.contactPhone,
+            customerName: refreshedCustomer.name,
             contactPhone: latestInbound.contactPhone,
             activeSchedulingOptionId: activeOption?.optionId,
             isMutationAllowed: async () => (

@@ -49,6 +49,11 @@ describe("default-deny access catalog", () => {
   });
   it("permits only the existing machine-authenticated webhook/worker endpoints", () => {
     expect(routePolicy("/api/webhooks/whatsapp", "POST")).toBe("public");
+    expect(routePolicy("/api/webhooks/whatsapp/integration", "POST")).toBe("public");
+    for (const method of ["GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]) {
+      expect(routePolicy("/api/webhooks/whatsapp/integration", method)).toBeNull();
+    }
+    expect(routePolicy("/api/webhooks/whatsapp/integration/anything", "POST")).toBeNull();
     expect(routePolicy("/api/internal/assistant/process", "POST")).toBe("public");
     expect(routePolicy("/api/internal/assistant/process", "GET")).toBeNull();
     expect(routePolicy("/api/webhooks/whatsapp/anything", "POST")).toBeNull();

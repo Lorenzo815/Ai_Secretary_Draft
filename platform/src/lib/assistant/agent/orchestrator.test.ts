@@ -80,6 +80,31 @@ beforeEach(() => {
   mocks.eligibility.mockResolvedValue({ eligible: true, instructions: "Follow up", attempt: 1 });
 });
 
+describe("AI appointment client names", () => {
+  it.each(["calendar.hold", "calendar.book"])("passes the refreshed CRM name to %s rather than the WhatsApp or profile name", async (tool) => {
+    const customer = {
+      _id: customerId,
+      name: "Current CRM name",
+      phones: ["5511999999999"],
+      serviceStatus: "ai_active",
+      profile: { fullName: "Different full name" },
+    };
+    mocks.customer.mockResolvedValueOnce({ ...customer, name: "Previous CRM name" }).mockResolvedValue(customer);
+    mocks.generate
+      .mockResolvedValueOnce({
+        value: { type: "tool_request", reasonCode: "need_authoritative_data", toolCall: { tool, arguments: {} } },
+      })
+      .mockResolvedValueOnce({ value: final });
+    mocks.execute.mockResolvedValue({ output: "{}", mutation: false, retryable: false });
+
+    await processCustomerAgentJob(job());
+
+    expect(mocks.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      context: expect.objectContaining({ customerId, customerName: "Current CRM name" }),
+    }));
+  });
+});
+
 describe("AI synchronization with external WhatsApp replies", () => {
   it("reconciles echoes before reading AI history", async () => {
     expect(await processCustomerAgentJob(job())).toMatchObject({ decision: "reply" });

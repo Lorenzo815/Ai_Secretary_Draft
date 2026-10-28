@@ -1,19 +1,146 @@
 import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { collection, createIndex, findOne, findOneAndUpdate } = vi.hoisted(() => ({
+const { collection, createIndex, findOne, findOneAndUpdate, find, sort, skip, limit, toArray } = vi.hoisted(() => ({
   collection: vi.fn(),
   createIndex: vi.fn().mockResolvedValue("index"),
   findOne: vi.fn(),
   findOneAndUpdate: vi.fn(),
+  find: vi.fn(),
+  sort: vi.fn(),
+  skip: vi.fn(),
+  limit: vi.fn(),
+  toArray: vi.fn(),
 }));
 
 vi.mock("../mongodb", () => ({
   default: Promise.resolve({ db: () => ({ collection }) }),
 }));
 
-import { findOrCreateCustomerFromWhatsApp, revealCustomerCpf, updateCustomer, updateCustomerProfile } from "./customers";
+import { findOrCreateCustomerFromWhatsApp, listCustomerOptions, listCustomerOptionsPage, revealCustomerCpf, updateCustomer, updateCustomerProfile } from "./customers";
 import { legacyCompanyId } from "../companies/ownership";
+
+describe("client option queries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    collection.mockReturnValue({ find });
+    find.mockReturnValue({ sort });
+    sort.mockReturnValue({ toArray });
+    toArray.mockResolvedValue([]);
+  });
+
+  it("restricts appointment name lookups to linked client IDs without fetching profiles", async () => {
+    const ids = [new ObjectId(), new ObjectId()];
+
+    await listCustomerOptions(ids);
+
+    expect(find).toHaveBeenCalledExactlyOnceWith(
+      { _id: { $in: ids } },
+      { projection: { name: 1, phones: 1, createdAt: 1 } },
+    );
+  });
+
+  it("does not turn an empty list of IDs into a directory-wide query", async () => {
+    expect(await listCustomerOptions([])).toEqual([]);
+    expect(collection).not.toHaveBeenCalled();
+    expect(find).not.toHaveBeenCalled();
+  });
+
+  it("preserves the directory lookup for the event form", async () => {
+    await listCustomerOptions();
+
+    expect(find).toHaveBeenCalledExactlyOnceWith(
+      {},
+      { projection: { name: 1, phones: 1, createdAt: 1 } },
+    );
+    expect(sort).toHaveBeenCalledExactlyOnceWith({ name: 1 });
+  });
+});
+
+describe("bounded calendar client search", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const cursor = { sort, skip, limit, toArray };
+    collection.mockReturnValue({ find, createIndex });
+    find.mockReturnValue(cursor);
+    sort.mockReturnValue(cursor);
+    skip.mockReturnValue(cursor);
+    limit.mockReturnValue(cursor);
+    toArray.mockResolvedValue([]);
+  });
+
+  it("initializes locale-aware sort indexes once and reuses them for subsequent searches", async () => {
+    await listCustomerOptionsPage();
+    await listCustomerOptionsPage({ query: "Maria" });
+
+    expect(createIndex).toHaveBeenCalledTimes(2);
+    expect(createIndex).toHaveBeenCalledWith(
+      { name: 1, _id: 1 },
+      { name: "customer_options_alphabetical", collation: { locale: "pt", strength: 1 } },
+    );
+    expect(createIndex).toHaveBeenCalledWith(
+      { createdAt: -1, name: 1, _id: 1 },
+      { name: "customer_options_recent", collation: { locale: "pt", strength: 1 } },
+    );
+  });
+
+  it.each([0, 24, 25, 26])("returns at most 25 of %i matches with an exact hasMore flag", async (count) => {
+    const customers = Array.from({ length: count }, () => ({ _id: new ObjectId(), name: "Client" }));
+    toArray.mockResolvedValue(customers);
+
+    expect(await listCustomerOptionsPage()).toEqual({
+      customers: customers.slice(0, 25), page: 1, pageSize: 25, hasMore: count > 25,
+    });
+    expect(limit).toHaveBeenCalledExactlyOnceWith(26);
+    expect(skip).toHaveBeenCalledExactlyOnceWith(0);
+    expect(sort).toHaveBeenCalledExactlyOnceWith({ createdAt: -1, name: 1, _id: 1 });
+    expect(find).toHaveBeenCalledExactlyOnceWith(
+      {},
+      { projection: { name: 1, phones: 1, createdAt: 1 }, collation: { locale: "pt", strength: 1 } },
+    );
+  });
+
+  it("paginates alphabetical results with stable ordering instead of loading the whole directory", async () => {
+    await listCustomerOptionsPage({ page: 3, sort: "alphabetical" });
+
+    expect(skip).toHaveBeenCalledExactlyOnceWith(50);
+    expect(sort).toHaveBeenCalledExactlyOnceWith({ name: 1, _id: 1 });
+    expect(limit).toHaveBeenCalledExactlyOnceWith(26);
+  });
+
+  it.each([
+    ["joao", "Jo\u00e3o da Silva"],
+    ["JO\u00c3O", "Joao da Silva"],
+    ["lucia", "Lu\u0301cia Souza"],
+    ["conceicao", "Maria Concei\u00e7\u00e3o"],
+    ["silva", "Maria Silva Santos"],
+  ])("preserves case- and accent-insensitive substring matching for %s", async (query, name) => {
+    await listCustomerOptionsPage({ query });
+
+    const filter = find.mock.calls[0][0];
+    expect(new RegExp(filter.name.$regex, "iu").test(name)).toBe(true);
+    expect(Object.keys(filter)).toEqual(["name"]);
+  });
+
+  it("treats regex characters literally rather than allowing wildcard searches", async () => {
+    await listCustomerOptionsPage({ query: " Ana.* (VIP) " });
+
+    const filter = find.mock.calls[0][0];
+    const pattern = new RegExp(filter.name.$regex, "iu");
+    expect(pattern.test("Ana.* (VIP)")).toBe(true);
+    expect(pattern.test("Ana anything VIP")).toBe(false);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER])("rejects invalid page %s before accessing the database", async (page) => {
+    await expect(listCustomerOptionsPage({ page })).rejects.toThrow("página válida");
+    expect(collection).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized searches before accessing the database", async () => {
+    await expect(listCustomerOptionsPage({ query: "a".repeat(161) })).rejects.toThrow("160 caracteres");
+    expect(collection).not.toHaveBeenCalled();
+  });
+});
 
 describe("updateCustomerProfile address updates", () => {
   beforeEach(() => {

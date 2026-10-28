@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   Check,
@@ -16,6 +16,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { getEffectiveDayWindows, type EffectiveDayInterval } from "@/lib/calendar/effective-windows";
+import { createCalendarFormatters } from "@/lib/calendar/presentation";
 
 interface Appointment {
   _id: string;
@@ -68,6 +69,7 @@ interface AccessEvent {
 }
 
 type ViewMode = "week" | "month";
+const APPOINTMENTS_PER_PAGE = 50;
 interface ResourceDayWindows {
   resourceId: string;
   resourceName: string;
@@ -109,17 +111,21 @@ export default function WeekCalendar({
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [listPage, setListPage] = useState({ filters: "", page: 1 });
+  const tableRef = useRef<HTMLDivElement>(null);
   const deferredQuery = useDeferredValue(query);
   const period = useMemo(() => getVisiblePeriod(cursor, viewMode), [cursor, viewMode]);
+  const formatters = useMemo(() => createCalendarFormatters(timezone), [timezone]);
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const parameters = new URLSearchParams({
       mode: "period",
       fromDate: toDateKey(period.start),
       toDate: toDateKey(period.end),
     });
-    void fetch(`/api/calendar?${parameters}`, { cache: "no-store" })
+    void fetch(`/api/calendar?${parameters}`, { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         const data = await response.json() as {
           appointments?: Appointment[];
@@ -133,42 +139,51 @@ export default function WeekCalendar({
         setError("");
       })
       .catch((loadError) => {
-        if (active) setError(loadError instanceof Error ? loadError.message : "Falha ao carregar o período.");
+        if (active && !controller.signal.aborted) setError(loadError instanceof Error ? loadError.message : "Falha ao carregar o período.");
       })
       .finally(() => {
         if (active) setLoading(false);
       });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [period.end, period.start, refreshKey]);
 
   const normalizedQuery = normalize(deferredQuery);
-  const filteredAppointments = useMemo(() => appointments
-    .filter((appointment) => !selectedDate || dateKeyInTimezone(appointment.startAt, timezone) === selectedDate)
-    .filter((appointment) => !resourceId || appointment.providerId === resourceId)
-    .filter((appointment) => !eventType || appointment.eventType === eventType)
-    .filter((appointment) => matchesStatus(appointment, status))
-    .filter((appointment) => {
-      if (!normalizedQuery) return true;
-      return normalize([
+  const preparedAppointments = useMemo(() => appointments.map((appointment) => ({
+    appointment,
+    dateKey: formatters.dateKey(appointment.startAt),
+    startMillis: Date.parse(appointment.startAt),
+    searchText: normalize([
         appointment.customerName,
         appointment.contactPhone,
         appointment.notes,
         appointment.customTitle,
         eventTypes.find((item) => item.key === appointment.eventType)?.name,
-      ].filter(Boolean).join(" ")).includes(normalizedQuery);
-    })
-    .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt)),
-  [appointments, eventType, eventTypes, normalizedQuery, resourceId, selectedDate, status, timezone]);
+    ].filter(Boolean).join(" ")),
+  })).sort((left, right) => left.startMillis - right.startMillis), [appointments, eventTypes, formatters]);
+  const filteredAppointments = useMemo(() => preparedAppointments
+    .filter(({ appointment, dateKey, searchText }) => (
+      (!selectedDate || dateKey === selectedDate)
+      && (!resourceId || appointment.providerId === resourceId)
+      && (!eventType || appointment.eventType === eventType)
+      && matchesStatus(appointment, status)
+      && (!normalizedQuery || searchText.includes(normalizedQuery))
+    ))
+    .map(({ appointment }) => appointment),
+  [preparedAppointments, eventType, normalizedQuery, resourceId, selectedDate, status]);
+  const listFilters = JSON.stringify([toDateKey(period.start), viewMode, selectedDate, normalizedQuery, resourceId, eventType, status]);
+  const pageCount = Math.max(1, Math.ceil(filteredAppointments.length / APPOINTMENTS_PER_PAGE));
+  const currentPage = listPage.filters === listFilters ? Math.min(listPage.page, pageCount) : 1;
+  const firstAppointment = (currentPage - 1) * APPOINTMENTS_PER_PAGE;
+  const visibleAppointments = filteredAppointments.slice(firstAppointment, firstAppointment + APPOINTMENTS_PER_PAGE);
 
   const countsByDay = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const appointment of appointments) {
+    for (const { appointment, dateKey } of preparedAppointments) {
       if (appointment.status === "cancelled") continue;
-      const key = dateKeyInTimezone(appointment.startAt, timezone);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      counts.set(dateKey, (counts.get(dateKey) ?? 0) + 1);
     }
     return counts;
-  }, [appointments, timezone]);
+  }, [preparedAppointments]);
   const windowsByDay = useMemo(() => new Map(period.days.map((day) => {
     const key = toDateKey(day);
     const resourceWindows: ResourceDayWindows[] = resources.map((resource) => ({
@@ -178,10 +193,15 @@ export default function WeekCalendar({
     }));
     return [key, resourceWindows] as const;
   })), [accessEvents, period.days, resources, timezone]);
-  const todayKey = dateKeyInTimezone(new Date().toISOString(), timezone);
+  const todayKey = formatters.dateKey(new Date().toISOString());
   const detailDateKey = selectedDate || (windowsByDay.has(todayKey) ? todayKey : toDateKey(cursor));
   const detailWindows = windowsByDay.get(detailDateKey) ?? [];
   const hasListFilters = Boolean(query || resourceId || eventType || status);
+
+  function changeListPage(page: number) {
+    setListPage({ filters: listFilters, page });
+    tableRef.current?.scrollTo({ top: 0 });
+  }
 
   function movePeriod(direction: -1 | 1) {
     setLoading(true);
@@ -212,7 +232,7 @@ export default function WeekCalendar({
         <div>
           <p className="text-xs font-semibold uppercase text-deep-teal">Agenda compacta</p>
           <h2 id="compact-calendar-title" className="mt-1 font-heading text-lg font-semibold text-slate-ink">
-            {formatPeriodTitle(cursor, viewMode)}
+            {viewMode === "month" ? formatters.monthTitle(cursor) : formatters.weekTitle(period.start, period.end)}
           </h2>
           <p className="mt-1 text-xs text-stone">Selecione um dia para focar a tabela. Os números indicam eventos não cancelados.</p>
         </div>
@@ -247,7 +267,7 @@ export default function WeekCalendar({
                     key={key}
                     type="button"
                     onClick={() => setSelectedDate((current) => current === key ? "" : key)}
-                    aria-label={`${formatCalendarDayLabel(key)}: ${canAttend ? "há janela efetiva de atendimento" : "sem janela efetiva"}${count > 0 ? `, ${count} eventos` : ""}`}
+                    aria-label={`${formatters.dayLabel(key)}: ${canAttend ? "há janela efetiva de atendimento" : "sem janela efetiva"}${count > 0 ? `, ${count} eventos` : ""}`}
                     title={canAttend ? "Há janela efetiva de atendimento" : "Sem janela efetiva de atendimento"}
                     className={`relative flex min-h-14 flex-col items-center justify-center rounded-md border text-xs transition ${selected ? "border-deep-teal bg-deep-teal text-white" : canAttend ? "border-emerald-200 bg-emerald-50 text-emerald-950 hover:bg-emerald-100" : "border-red-100 bg-red-50 text-red-900 hover:bg-red-100"} ${outsideMonth && !selected ? "opacity-45" : ""} ${isToday ? "outline outline-2 outline-offset-1 outline-deep-teal" : ""}`}
                   >
@@ -267,7 +287,7 @@ export default function WeekCalendar({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-bold uppercase text-deep-teal">Janelas efetivas</p>
-                <h3 id="effective-windows-title" className="mt-0.5 text-xs font-semibold text-slate-ink">{formatCalendarDayLabel(detailDateKey)}</h3>
+                <h3 id="effective-windows-title" className="mt-0.5 text-xs font-semibold text-slate-ink">{formatters.dayLabel(detailDateKey)}</h3>
               </div>
               {selectedDate && selectedDate !== todayKey && <button type="button" onClick={focusToday} className="inline-flex items-center gap-1 text-[10px] font-semibold text-deep-teal hover:underline"><CalendarDays className="h-3 w-3" />Ir para hoje</button>}
             </div>
@@ -317,7 +337,7 @@ export default function WeekCalendar({
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-mist px-4 py-2.5 text-xs text-stone">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5"><ListFilter className="h-3.5 w-3.5" />{filteredAppointments.length} eventos</span>
-              {selectedDate && <span className="rounded-full bg-deep-teal/10 px-2 py-1 font-semibold text-deep-teal">{formatShortDate(selectedDate)}</span>}
+              {selectedDate && <span className="rounded-full bg-deep-teal/10 px-2 py-1 font-semibold text-deep-teal">{formatters.shortDate(selectedDate)}</span>}
             </div>
             <div className="flex items-center gap-3">
               {selectedDate && <button type="button" onClick={() => setSelectedDate("")} className="font-semibold text-deep-teal hover:underline">Mostrar período</button>}
@@ -325,7 +345,7 @@ export default function WeekCalendar({
               {loading && <span>Atualizando…</span>}
             </div>
           </div>
-          <div className="max-h-[560px] overflow-auto">
+          <div ref={tableRef} className="max-h-[560px] overflow-auto">
             <table className="w-full min-w-[720px] table-fixed text-left text-sm xl:min-w-[860px]">
               <colgroup>
                 <col className="w-32" />
@@ -339,8 +359,8 @@ export default function WeekCalendar({
                 <tr><th className="px-3 py-3">Data e hora</th><th className="px-3 py-3">Cliente</th><th className="px-3 py-3">Evento</th><th className="hidden px-3 py-3 xl:table-cell">Profissional</th><th className="px-3 py-3">Situação</th><th className="sticky right-0 z-20 bg-soft-ivory px-3 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">Ações</th></tr>
               </thead>
               <tbody className="divide-y divide-mist">
-                {filteredAppointments.map((appointment) => {
-                  const appointmentRange = formatAppointmentRange(appointment.startAt, appointment.endAt, timezone);
+                {visibleAppointments.map((appointment) => {
+                  const appointmentRange = formatters.appointmentRange(appointment.startAt, appointment.endAt);
                   return <tr key={appointment._id} className="group hover:bg-soft-ivory/50">
                     <td className="px-3 py-3 text-slate-ink" title={appointmentRange.fullLabel}>
                       <span className="block whitespace-nowrap font-semibold">{appointmentRange.dateLabel}</span>
@@ -373,6 +393,16 @@ export default function WeekCalendar({
             </table>
             {!loading && filteredAppointments.length === 0 && <p className="px-5 py-12 text-center text-sm text-stone">Nenhum evento corresponde ao período e aos filtros.</p>}
           </div>
+          {filteredAppointments.length > 0 && (
+            <nav aria-label="Paginação de eventos" className="flex flex-wrap items-center justify-between gap-3 border-t border-mist px-4 py-3 text-xs text-stone">
+              <span>Exibindo {firstAppointment + 1}–{firstAppointment + visibleAppointments.length} de {filteredAppointments.length} eventos</span>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => changeListPage(currentPage - 1)} disabled={currentPage === 1} className="font-semibold text-deep-teal disabled:opacity-40">Anterior</button>
+                <span>{currentPage} de {pageCount}</span>
+                <button type="button" onClick={() => changeListPage(currentPage + 1)} disabled={currentPage === pageCount} className="font-semibold text-deep-teal disabled:opacity-40">Próxima</button>
+              </div>
+            </nav>
+          )}
         </div>
       </div>
     </section>
@@ -412,78 +442,6 @@ function addMonths(value: Date, amount: number) {
 
 function toDateKey(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-}
-
-function dateKeyInTimezone(value: string, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: timezone,
-  }).formatToParts(new Date(value));
-  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-function formatPeriodTitle(cursor: Date, mode: ViewMode) {
-  if (mode === "month") {
-    return new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(cursor);
-  }
-  const start = startOfWeek(cursor);
-  const end = addDays(start, 6);
-  return `${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(start)} – ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", year: "numeric" }).format(end)}`;
-}
-
-function formatCalendarDayLabel(dateKey: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    timeZone: "UTC",
-  }).format(new Date(`${dateKey}T12:00:00Z`));
-}
-
-function formatShortDate(dateKey: string) {
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: "UTC",
-  }).format(new Date(`${dateKey}T12:00:00Z`));
-}
-
-function formatAppointmentRange(startValue: string, endValue: string, timezone: string) {
-  const start = new Date(startValue);
-  const end = new Date(endValue);
-  const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
-    weekday: "short",
-    day: "2-digit",
-    month: "2-digit",
-    timeZone: timezone,
-  });
-  const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone,
-  });
-  const sameDay = dateKeyInTimezone(startValue, timezone) === dateKeyInTimezone(endValue, timezone);
-  const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60_000));
-  const startDate = dateFormatter.format(start);
-  const endDate = dateFormatter.format(end);
-  const startTime = timeFormatter.format(start);
-  const endTime = timeFormatter.format(end);
-  return {
-    dateLabel: sameDay ? startDate : `${startDate} ${startTime}`,
-    timeLabel: sameDay ? `${startTime}–${endTime}` : `→ ${endDate} ${endTime}`,
-    durationLabel: formatDuration(durationMinutes),
-    fullLabel: `${startDate} ${startTime} até ${endDate} ${endTime} (${formatDuration(durationMinutes)})`,
-  };
-}
-
-function formatDuration(minutes: number) {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const remainder = minutes % 60;
-  return remainder > 0 ? `${hours}h${String(remainder).padStart(2, "0")}` : `${hours}h`;
 }
 
 function matchesStatus(appointment: Appointment, status: string) {
