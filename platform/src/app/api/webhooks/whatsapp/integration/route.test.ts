@@ -1,135 +1,122 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ process: vi.fn(), after: vi.fn(), enqueue: vi.fn() }));
-vi.mock("next/server", async importOriginal => ({
-  ...await importOriginal<typeof import("next/server")>(), after: mocks.after,
-}));
-vi.mock("@/lib/whatsapp", () => ({
-  processWhatsAppWebhook: mocks.process,
-  WhatsAppWebhookError: class extends Error {
-    constructor(message: string, readonly status: number) { super(message); }
+const mocks = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock("@/lib/whatsapp/integration-templates", () => ({
+  sendIntegrationTemplate: mocks.send,
+  IntegrationWhatsAppTemplateError: class extends Error {
+    constructor(message: string, readonly code: string, readonly status: number) { super(message); }
   },
 }));
-vi.mock("@/lib/whatsapp/forwarding", () => ({ enqueueWhatsAppForwarding: mocks.enqueue }));
+vi.mock("@/lib/whatsapp/template-messages", () => ({
+  WhatsAppTemplatePersistenceError: class extends Error {
+    constructor(readonly messageId: string) { super("Envio aceito; histórico não salvo. Não repita automaticamente."); }
+  },
+}));
 
-import { WhatsAppWebhookError } from "@/lib/whatsapp";
+import { IntegrationWhatsAppTemplateError } from "@/lib/whatsapp/integration-templates";
+import { WhatsAppTemplatePersistenceError } from "@/lib/whatsapp/template-messages";
 import { POST } from "./route";
 
-const integrationToken = "test-integration-token-with-independent-secret";
-const raw = '{\n "object": "whatsapp_business_account", "entry": [], "extra": "Olá 😀"\n}';
-const result = { receivedMessages: 1, statusUpdates: 0, coexistenceEvents: 0, processingRequests: 0 };
-const fetchMock = vi.fn<typeof fetch>();
+const token = "test-integration-token-with-independent-secret";
+const payload = {
+  messaging_product: "whatsapp", to: "5542988076200", type: "template",
+  template: {
+    name: "lead_contato", language: { code: "pt_BR" },
+    components: [{ type: "body", parameters: [{ type: "text", text: "mais informações da consulta" }] }],
+  },
+};
 
-function request(authorization: string | null = `Bearer ${integrationToken}`, body = raw, extraHeaders: Record<string, string> = {}) {
-  const headers = new Headers({ "Content-Type": "application/json", ...extraHeaders });
+function request(authorization: string | null = `Bearer ${token}`, body = JSON.stringify(payload), contentType = "application/json") {
+  const headers = new Headers({ "content-type": contentType });
   if (authorization !== null) headers.set("authorization", authorization);
-  return new NextRequest("https://oria.example/api/webhooks/whatsapp/integration", {
-    method: "POST", body, headers,
-  });
+  return new NextRequest("https://oria.example/api/webhooks/whatsapp/integration", { method: "POST", headers, body });
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.stubGlobal("fetch", fetchMock);
-  vi.stubEnv("WHATSAPP_INTEGRATION_WEBHOOK_TOKEN", integrationToken);
+  vi.stubEnv("WHATSAPP_INTEGRATION_WEBHOOK_TOKEN", token);
   vi.stubEnv("WHATSAPP_APP_SECRET", "");
-  vi.stubEnv("ASSISTANT_WORKER_SECRET", "test-worker-secret");
-  mocks.process.mockResolvedValue(result);
+  mocks.send.mockResolvedValue({
+    messageId: "wamid.sent-template", contactPhone: payload.to, body: "Texto renderizado",
+    templateName: "lead_contato", templateLanguage: "pt_BR", status: "sent",
+    timestamp: new Date("2026-10-28T15:00:00Z"),
+  });
 });
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-});
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-describe("Bearer-authenticated WhatsApp integration webhook", () => {
+describe("Bearer-authenticated integration template sending", () => {
   it("fails closed without its dedicated token", async () => {
     vi.stubEnv("WHATSAPP_INTEGRATION_WEBHOOK_TOKEN", "");
-    const response = await POST(request());
-    expect(response.status).toBe(503);
-    expect(mocks.process).not.toHaveBeenCalled();
-    expect(mocks.after).not.toHaveBeenCalled();
+    expect((await POST(request())).status).toBe(503);
+    expect(mocks.send).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalled();
   });
 
-  it.each([
-    null,
-    "",
-    "Bearer ",
-    "Basic test-integration-token-with-independent-secret",
-    "Bearer wrong",
-    `Bearer ${"x".repeat(integrationToken.length)}`,
-  ])("rejects missing, malformed or incorrect authorization: %s", async authorization => {
-    const response = await POST(request(authorization));
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Não autorizado." });
-    expect(mocks.process).not.toHaveBeenCalled();
-    expect(mocks.after).not.toHaveBeenCalled();
-    expect(mocks.enqueue).not.toHaveBeenCalled();
+  it.each([null, "", "Bearer ", "Basic invalid", "Bearer wrong", `Bearer ${"x".repeat(token.length)}`])(
+    "rejects invalid authorization before reading or sending: %s", async authorization => {
+      const response = await POST(request(authorization, "invalid json"));
+      expect(response.status).toBe(401);
+      expect(mocks.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not accept a Meta signature instead of a Bearer token", async () => {
+    const input = request(null);
+    input.headers.set("x-hub-signature-256", "sha256=signed");
+    expect((await POST(input)).status).toBe(401);
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("does not accept a Meta signature instead of the integration token", async () => {
-    const response = await POST(request(null, raw, { "x-hub-signature-256": "sha256=signed" }));
-    expect(response.status).toBe(401);
-    expect(mocks.process).not.toHaveBeenCalled();
+  it("requires JSON content type", async () => {
+    expect((await POST(request(undefined, undefined, "text/plain"))).status).toBe(415);
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("accepts its Bearer token without a Meta app secret or signature and preserves the payload", async () => {
-    const response = await POST(request());
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ received: true, ...result });
-    expect(mocks.process).toHaveBeenCalledExactlyOnceWith(raw);
-    expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(mocks.after).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it.each(["JSON inválido.", "Evento não suportado."])("preserves payload validation errors: %s", async message => {
-    mocks.process.mockRejectedValue(new WhatsAppWebhookError(message, 400));
-    const response = await POST(request());
+  it("returns 400 for invalid JSON without sending", async () => {
+    const response = await POST(request(undefined, "{"));
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: message });
-    expect(mocks.after).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({ error: "JSON inválido." });
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("does not hide unexpected processing failures behind a successful acknowledgement", async () => {
-    mocks.process.mockRejectedValue(new Error("storage unavailable"));
-    await expect(POST(request())).rejects.toThrow("storage unavailable");
-    expect(mocks.after).not.toHaveBeenCalled();
+  it("accepts the exact provider payload without WABA, wamid, timestamp or Meta signature", async () => {
+    const response = await POST(request(undefined, undefined, "application/json; charset=utf-8"));
+    expect(response.status).toBe(201);
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(payload);
+    expect(await response.json()).toEqual({
+      messaging_product: "whatsapp", messages: [{ id: "wamid.sent-template" }], historySaved: true,
+      message: {
+        messageId: "wamid.sent-template", contactPhone: payload.to, body: "Texto renderizado",
+        templateName: "lead_contato", templateLanguage: "pt_BR", status: "sent",
+        timestamp: "2026-10-28T15:00:00.000Z", type: "template", direction: "outbound",
+      },
+    });
   });
 
-  it("triggers the existing assistant worker after acknowledgement when processing was requested", async () => {
-    mocks.process.mockResolvedValue({ ...result, processingRequests: 2 });
-    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
-    expect((await POST(request())).status).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(mocks.after).toHaveBeenCalledOnce();
-    await mocks.after.mock.calls[0][0]();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL("https://oria.example/api/internal/assistant/process"),
-      expect.objectContaining({ method: "POST", headers: { Authorization: "Bearer test-worker-secret" } }),
-    );
-    expect(mocks.enqueue).not.toHaveBeenCalled();
+  it.each([400, 409, 502])("preserves explicit template failure status %s", async status => {
+    mocks.send.mockRejectedValue(new IntegrationWhatsAppTemplateError("Falha de envio", "TEMPLATE_ERROR", status));
+    const response = await POST(request());
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error: "Falha de envio", code: "TEMPLATE_ERROR" });
   });
 
-  it("logs an unavailable assistant worker secret without leaking the integration token", async () => {
-    vi.stubEnv("ASSISTANT_WORKER_SECRET", "");
-    mocks.process.mockResolvedValue({ ...result, processingRequests: 1 });
-    expect((await POST(request())).status).toBe(200);
-    await mocks.after.mock.calls[0][0]();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("ASSISTANT_WORKER_SECRET"));
-    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(integrationToken);
+  it("reports the real wamid if sending succeeded but history persistence failed", async () => {
+    mocks.send.mockRejectedValue(new WhatsAppTemplatePersistenceError("wamid.accepted", new Error("storage")));
+    const response = await POST(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "TEMPLATE_HISTORY_SAVE_FAILED", messageId: "wamid.accepted",
+      acceptedByMeta: true, historySaved: false,
+    });
   });
 
-  it("logs a failed assistant trigger instead of silently ignoring it", async () => {
-    mocks.process.mockResolvedValue({ ...result, processingRequests: 1 });
-    fetchMock.mockResolvedValue(new Response(null, { status: 503 }));
-    expect((await POST(request())).status).toBe(200);
-    await mocks.after.mock.calls[0][0]();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("HTTP 503"));
+  it("logs unexpected failures without leaking private details or acknowledging success", async () => {
+    mocks.send.mockRejectedValue(new Error("private connection details"));
+    const response = await POST(request());
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain("private connection details");
+    expect(console.error).toHaveBeenCalled();
   });
 });

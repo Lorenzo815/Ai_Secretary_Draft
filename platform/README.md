@@ -116,7 +116,7 @@ a retomada precisar ocorrer próxima do horário configurado.
 Tokens e chaves permanecem em variáveis somente de servidor; nunca use o
 prefixo `NEXT_PUBLIC_*` para segredos.
 
-### Webhook de integração do WhatsApp
+### Envio de templates pela integração do WhatsApp
 
 O webhook oficial da Meta, `POST /api/webhooks/whatsapp`, continua exigindo
 `X-Hub-Signature-256` calculado com `WHATSAPP_APP_SECRET`. Não substitua essa
@@ -137,27 +137,95 @@ Para integrações servidor a servidor, use
    Authorization: Bearer <TOKEN_DA_INTEGRACAO>
    ```
 
-O corpo usa o mesmo envelope de evento WhatsApp, com
-`object: "whatsapp_business_account"`, `entry[].id` (WABA),
-`entry[].changes[].field` e `entry[].changes[].value`. Use a WABA e o
-`metadata.phone_number_id` da conexão configurada, não o número de telefone
-no lugar desses IDs. Não é necessário enviar `X-Hub-Signature-256` nesta rota.
-O token dá acesso à ingestão operacional da empresa inicial; não é uma
-credencial de usuário do dashboard nem uma liberação para múltiplas empresas.
+Endpoint completo:
+`https://ai-secretary-draft.vercel.app/api/webhooks/whatsapp/integration`.
+Esta rota agora recebe um **comando de envio**, não um aviso anterior ao envio
+nem um envelope de webhook. A alteração substitui o contrato anterior
+`object/entry/changes`: esses envelopes passam a retornar 400 nesta rota.
+O webhook oficial da Meta permanece inalterado.
 
-A resposta de sucesso é HTTP 200 com `received: true`, `receivedMessages`,
-`statusUpdates`, `coexistenceEvents` e `processingRequests`. Token ausente ou
-inválido retorna 401; token não configurado no servidor retorna 503. JSON
-inválido ou objeto de evento não suportado retorna 400. Outros erros de
-processamento não são convertidos em sucesso.
+Envie `Content-Type: application/json` com este corpo:
 
-Os eventos são processados pelo mesmo fluxo de persistência e automação do
-webhook oficial, podendo criar mensagens e acionar respostas reais. Eles não
-entram na fila de encaminhamento dos webhooks originais da Meta e não recebem
-uma assinatura Meta fabricada. Um teste sem mensagens não valida o fluxo de
-atendimento completo. O Bearer token não é enviado na resposta e deve permanecer
-fora do navegador, URLs, logs e repositório. Para revogá-lo, remova ou troque a
-variável no servidor e faça um novo deploy.
+```json
+{
+  "messaging_product": "whatsapp",
+  "to": "5542988076200",
+  "type": "template",
+  "template": {
+    "name": "lead_contato",
+    "language": { "code": "pt_BR" },
+    "components": [
+      {
+        "type": "body",
+        "parameters": [
+          { "type": "text", "text": "mais informações da consulta" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+O telefone deve conter somente dígitos, com código do país. Nome e idioma
+devem corresponder a um único template **APPROVED** no catálogo configurado da
+Oria. São suportados parâmetros posicionais de texto em `body`/`header` e
+botões de URL dinâmica (`type: "button"`, `sub_type: "url"`, `index` como string
+de 0 a 9 e um parâmetro `text`). Botões fixos do template não precisam ser
+repetidos. Componentes podem ser omitidos se o template não tiver variáveis.
+Cabeçalhos de mídia, parâmetros nomeados e outros componentes não suportados
+são rejeitados explicitamente antes do envio.
+
+O provider **não deve enviar a mesma mensagem por conta própria**: a Oria
+valida e renderiza o template, encontra/cria o lead e faz o envio pela conexão
+WhatsApp configurada no servidor. Não é necessário informar WABA, Phone Number
+ID, timestamp ou `wamid`, nem enviar `X-Hub-Signature-256`. O token é exclusivo
+da operação da empresa inicial; não habilita múltiplas empresas.
+
+A Oria salva o texto completo, os botões, o destinatário e o `wamid` retornado
+pela Meta em `ai_secretary.whatsapp_messages` antes de responder HTTP **201**:
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "messages": [{ "id": "wamid.ID_RETORNADO_PELA_META" }],
+  "historySaved": true,
+  "message": {
+    "messageId": "wamid.ID_RETORNADO_PELA_META",
+    "contactPhone": "5542988076200",
+    "body": "Texto completo renderizado do template",
+    "templateName": "lead_contato",
+    "templateLanguage": "pt_BR",
+    "status": "sent",
+    "timestamp": "2026-10-28T15:00:00.000Z",
+    "type": "template",
+    "direction": "outbound"
+  }
+}
+```
+
+Esse retorno confirma aceitação pela Meta e persistência, não entrega/leitura
+pelo destinatário. O envio não transfere o atendimento para modo humano,
+não dispara o agente como se fosse uma mensagem recebida do cliente e não
+entra na fila de encaminhamento de eventos originais da Meta. Respostas do
+cliente continuam chegando ao webhook oficial e referenciam o `wamid` salvo.
+Enviar e salvar são operações separadas; isso não garante ordem absoluta
+entre a chegada de um clique muito rápido e a persistência do envio.
+
+Erros: 400 para JSON/payload/parâmetros inválidos; 401 para Bearer ausente ou
+inválido; 409 para template indisponível/não aprovado/ambíguo; 415 para
+Content-Type diferente de JSON; 503 se o token do servidor não estiver
+configurado; 502 para falhas de preparação ou envio não confirmado.
+Se a Meta aceitou o envio mas o histórico falhou, o retorno é 503 com
+`code: "TEMPLATE_HISTORY_SAVE_FAILED"`, `messageId`, `acceptedByMeta: true`
+e `historySaved: false`. Não repita o envio automaticamente nesse caso.
+Timeouts/falhas de rede também podem deixar a aceitação do envio incerta.
+Esta rota não implementa idempotência de comandos: repetir um POST válido pode
+enviar outra mensagem. Desative retries automáticos do provider e confira os
+logs antes de repetir uma chamada com resultado incerto.
+
+O Bearer token não é enviado na resposta e deve permanecer fora do navegador,
+URLs, logs e repositório. Para revogá-lo, remova ou troque a variável no servidor
+e faça um novo deploy.
 
 ## Verificação
 
@@ -376,8 +444,9 @@ A IA recebe esses dados e não deve adivinhar o contexto quando o original falta
 evento; `smb_message_echoes` não garante sua entrega para envios feitos via Cloud
 API por outro provedor. Um `context.id`/`wamid` sozinho não identifica o modelo
 nem permite baixar seu texto final. Ter o modelo na mesma empresa não revela
-quais valores o outro provedor usou. Nenhum endpoint de provedor foi adicionado
-e não há tentativa de reconstruir um envio externo a partir do ID apenas.
+quais valores o outro provedor usou. A integração de templates descrita acima
+resolve o envio pela própria Oria com os parâmetros informados pelo provider;
+não tenta reconstruir um envio externo a partir do ID apenas.
 
 ### Ferramentas de migração de propriedade
 

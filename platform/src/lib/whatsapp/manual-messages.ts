@@ -3,7 +3,7 @@ import "server-only";
 import type { ObjectId } from "mongodb";
 import { cancelAutomationJob } from "../automation/queue";
 import { findCustomerById, updateCustomerServiceStatus } from "../crm";
-import { sendTextMessage, sendWhatsAppTemplate } from "./client";
+import { sendTextMessage } from "./client";
 import { findLatestInboundWhatsAppMessage, saveWhatsAppMessage } from "./messages";
 import { getWhatsAppServiceWindowStatus } from "./service-window";
 import {
@@ -12,6 +12,7 @@ import {
   type WhatsAppTemplateSendParameters,
 } from "./templates";
 import { renderSentWhatsAppTemplateContext } from "./template-context";
+import { sendAndStoreCustomerTemplate } from "./template-messages";
 
 export class ManualWhatsAppMessageError extends Error {
   constructor(
@@ -147,38 +148,12 @@ export async function sendManualCustomerTemplate(input: {
     cancelAutomationJob("customer_follow_up", input.customerId),
   ]);
 
-  const sent = await sendWhatsAppTemplate({
+  return sendAndStoreCustomerTemplate({
+    customer,
     to: recipientPhone,
-    name: template.name,
-    language: template.language,
-    headerParameters: parameters.header,
-    bodyParameters: parameters.body,
-    buttonUrlParameters: parameters.buttonUrls,
-  });
-  const body = rendered.body;
-  const timestamp = new Date();
-  await saveWhatsAppMessage({
-    customerId: input.customerId,
-    metaMessageId: sent.messageId,
-    contactPhone: sent.to,
-    contactName: customer.name,
-    direction: "outbound",
-    type: "template",
-    body,
-    templateName: template.name,
-    templateLanguage: template.language,
-    status: "sent",
+    template,
+    parameters,
+    body: rendered.body,
     sentBy: input.sentBy,
-    timestamp,
   });
-
-  return {
-    messageId: sent.messageId,
-    contactPhone: sent.to,
-    body,
-    templateName: template.name,
-    status: "sent" as const,
-    sentBy: input.sentBy,
-    timestamp,
-  };
 }

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { handleWhatsAppWebhook } from "../handler";
+import { IntegrationWhatsAppTemplateError, sendIntegrationTemplate } from "@/lib/whatsapp/integration-templates";
+import { WhatsAppTemplatePersistenceError } from "@/lib/whatsapp/template-messages";
 
 export async function POST(request: NextRequest) {
   const secret = process.env.WHATSAPP_INTEGRATION_WEBHOOK_TOKEN;
@@ -16,5 +17,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  return handleWhatsAppWebhook(await request.text(), request.nextUrl.origin);
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
+    return NextResponse.json({ error: "Envie Content-Type: application/json." }, { status: 415 });
+  }
+  let input: unknown;
+  try {
+    input = await request.json();
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
+  }
+  try {
+    const message = await sendIntegrationTemplate(input);
+    return NextResponse.json({
+      messaging_product: "whatsapp",
+      messages: [{ id: message.messageId }],
+      historySaved: true,
+      message: { ...message, type: "template", direction: "outbound", timestamp: message.timestamp.toISOString() },
+    }, { status: 201 });
+  } catch (error) {
+    if (error instanceof IntegrationWhatsAppTemplateError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    if (error instanceof WhatsAppTemplatePersistenceError) {
+      return NextResponse.json({
+        error: error.message, code: "TEMPLATE_HISTORY_SAVE_FAILED",
+        messageId: error.messageId, acceptedByMeta: true, historySaved: false,
+      }, { status: 503 });
+    }
+    console.error("WhatsApp integration template request failed.", {
+      errorType: error instanceof Error ? error.name : "Unknown",
+    });
+    return NextResponse.json({
+      error: "Não foi possível preparar o envio do template. Verifique a conexão e o catálogo configurados.",
+      code: "TEMPLATE_INTEGRATION_UNAVAILABLE",
+    }, { status: 502 });
+  }
 }
