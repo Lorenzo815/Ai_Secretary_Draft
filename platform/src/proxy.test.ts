@@ -54,6 +54,16 @@ describe("server request authorization", () => {
     expect(result.status).toBe(200);
     expect(result.headers.get("Cache-Control")).toBe("private, no-store");
   });
+  it("accepts the configured public origin behind a TLS-terminating ingress", async () => {
+    mocks.resolveToken.mockResolvedValue({ ...user, isAdmin: true });
+    vi.stubEnv("NEXTAUTH_URL", "https://oria.example");
+    const request = (origin: string) => new NextRequest("http://oria.example/api/company/users", {
+      method: "POST", headers: { Origin: origin },
+    });
+    expect((await proxy(request("https://oria.example"))).status).toBe(200);
+    expect((await proxy(request("https://attacker.example"))).status).toBe(403);
+    vi.unstubAllEnvs();
+  });
   it("leaves signed machine/webhook handlers responsible for their existing authentication", async () => {
     const result = await proxy(new NextRequest("http://localhost:3000/api/webhooks/whatsapp", { method: "POST" }));
     expect(result.status).toBe(200);

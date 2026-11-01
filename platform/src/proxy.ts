@@ -31,7 +31,7 @@ export async function proxy(request: NextRequest) {
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
       const origin = request.headers.get("origin");
-      if (origin !== request.nextUrl.origin) return NextResponse.json({ error: "Origem não permitida." }, { status: 403 });
+      if (!origin || !allowedOrigins(request).has(origin)) return NextResponse.json({ error: "Origem não permitida." }, { status: 403 });
     }
     const response = NextResponse.next();
     response.headers.set("Cache-Control", "private, no-store");
@@ -42,6 +42,18 @@ export async function proxy(request: NextRequest) {
     console.error("Access control validation failed.", { errorType, failure });
     return NextResponse.json({ error: "Não foi possível validar o acesso. Tente novamente.", code: failure }, { status: 503 });
   }
+}
+
+// Behind a TLS-terminating ingress (e.g. Azure Container Apps) the request URL may be
+// http:// while the browser origin is https://, so the configured public URL is also trusted.
+function allowedOrigins(request: NextRequest) {
+  const origins = new Set([request.nextUrl.origin]);
+  try {
+    if (process.env.NEXTAUTH_URL) origins.add(new URL(process.env.NEXTAUTH_URL).origin);
+  } catch {
+    console.error("NEXTAUTH_URL is not a valid URL.");
+  }
+  return origins;
 }
 
 export const config = { matcher: ["/dashboard/:path*", "/api/:path*"] };

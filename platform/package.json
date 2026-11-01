@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "node src/scripts/run-app.mjs start",
     "start:next": "next start",
+    "start:standalone": "node src/scripts/run-app.mjs standalone",
     "worker:assistant": "node src/scripts/assistant-worker.mjs",
     "audit:conversations": "node src/scripts/export-conversation-audit.mjs",
     "lint": "eslint",

@@ -3,19 +3,29 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const mode = process.argv[2];
-if (mode !== "dev" && mode !== "start") {
-  console.error("Usage: node src/scripts/run-app.mjs <dev|start>");
+if (mode !== "dev" && mode !== "start" && mode !== "standalone") {
+  console.error("Usage: node src/scripts/run-app.mjs <dev|start|standalone>");
   process.exit(1);
 }
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const nextBin = resolve(scriptDirectory, "../../node_modules/next/dist/bin/next");
+const appRoot = resolve(scriptDirectory, "../..");
+const nextBin = resolve(appRoot, "node_modules/next/dist/bin/next");
 const workerScript = resolve(scriptDirectory, "assistant-worker.mjs");
 const workerEnabled = (process.env.ASSISTANT_WORKER_ENABLED ?? "true").toLowerCase() === "true";
 const children = [];
 let shuttingDown = false;
 
-const nextProcess = startChild("Next.js", [nextBin, mode]);
+if (mode === "standalone") {
+  // Container runtimes set HOSTNAME to the container name; bind to all interfaces instead.
+  process.env.HOSTNAME = process.env.BIND_HOSTNAME ?? "0.0.0.0";
+  process.env.PORT ??= "3000";
+  process.env.ASSISTANT_WORKER_URL ??= `http://127.0.0.1:${process.env.PORT}`;
+}
+
+const nextProcess = mode === "standalone"
+  ? startChild("Next.js", [resolve(appRoot, "server.js")])
+  : startChild("Next.js", [nextBin, mode]);
 if (workerEnabled) {
   startChild("assistant worker", [workerScript]);
 } else {
@@ -24,7 +34,7 @@ if (workerEnabled) {
 
 function startChild(name, args) {
   const child = spawn(process.execPath, args, {
-    cwd: resolve(scriptDirectory, "../.."),
+    cwd: appRoot,
     env: process.env,
     stdio: "inherit",
   });

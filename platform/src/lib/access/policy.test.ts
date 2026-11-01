@@ -58,6 +58,11 @@ describe("default-deny access catalog", () => {
     expect(routePolicy("/api/internal/assistant/process", "GET")).toBeNull();
     expect(routePolicy("/api/webhooks/whatsapp/anything", "POST")).toBeNull();
   });
+  it("exposes only read-only health probes publicly", () => {
+    expect(routePolicy("/api/health", "GET")).toBe("public");
+    expect(routePolicy("/api/health", "HEAD")).toBe("public");
+    expect(routePolicy("/api/health", "POST")).toBeNull();
+  });
   it("reserves all forwarding settings and test actions to the company admin", () => {
     const manager = { ...user, permissions: { ...emptyPermissions(), system: "manage" as const } };
     for (const method of ["GET", "PUT", "POST"]) {

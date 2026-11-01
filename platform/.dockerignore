@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+coverage
+.vercel
+.env*
+*.tsbuildinfo
+npm-debug.log*
+docs
+refs
+ideias_to_implement
+Dockerfile
+.dockerignore

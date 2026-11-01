@@ -116,6 +116,30 @@ a retomada precisar ocorrer próxima do horário configurado.
 Tokens e chaves permanecem em variáveis somente de servidor; nunca use o
 prefixo `NEXT_PUBLIC_*` para segredos.
 
+### Contêiner (Azure Container Apps, branch `release-official`)
+
+A branch `release-official` é implantada somente no Azure; o
+[vercel.json](vercel.json) desativa implantações da Vercel para ela. O
+artefato é uma imagem Docker gerada localmente a partir do build `standalone`
+do Next.js e enviada ao GitHub Container Registry:
+
+```bash
+docker buildx build --platform linux/amd64 -t ghcr.io/<owner>/oria-platform:<git-sha> .
+docker push ghcr.io/<owner>/oria-platform:<git-sha>
+```
+
+O contêiner executa `node src/scripts/run-app.mjs standalone`, que inicia o
+servidor Next.js e o worker do assistente no mesmo processo pai. O worker
+chama o servidor local (`ASSISTANT_WORKER_URL`, padrão
+`http://127.0.0.1:$PORT`). Nenhum segredo entra na imagem: configure as mesmas
+variáveis de ambiente do `.env.local` como segredos do Container App.
+`NEXTAUTH_URL` deve ser a URL pública HTTPS; ela também é aceita como origem
+válida nas mutações quando o ingress encerra o TLS.
+
+`GET /api/health` é a sonda de liveness e não acessa o banco.
+`GET /api/health?db=1` também executa `ping` no MongoDB e retorna 503 quando o
+banco está indisponível.
+
 ### Envio de templates pela integração do WhatsApp
 
 O webhook oficial da Meta, `POST /api/webhooks/whatsapp`, continua exigindo

@@ -11,7 +11,7 @@ export async function handleWhatsAppWebhook(rawBody: string, origin: string) {
           console.error("WhatsApp processing trigger skipped: ASSISTANT_WORKER_SECRET is not configured.");
           return;
         }
-        const endpoint = new URL("/api/internal/assistant/process", origin);
+        const endpoint = new URL("/api/internal/assistant/process", process.env.ASSISTANT_WORKER_URL || origin);
         await Promise.all(Array.from({ length: result.processingRequests }, async () => {
           try {
             const response = await fetch(endpoint, {

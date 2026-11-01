@@ -22,7 +22,8 @@ export function routePolicy(path: string, method: string): RoutePolicy {
   if ((path === "/api/webhooks/whatsapp" && ["GET", "POST"].includes(method)) ||
     (path === "/api/webhooks/whatsapp/integration" && method === "POST") ||
     (path === "/api/webhooks/mercado-pago" && method === "POST") ||
-    (path === "/api/internal/assistant/process" && method === "POST")) return "public";
+    (path === "/api/internal/assistant/process" && method === "POST") ||
+    (path === "/api/health" && ["GET", "HEAD"].includes(method))) return "public";
   if (path === "/dashboard" || path.startsWith("/dashboard/")) return method === "GET" || method === "HEAD" ? pagePolicy(path) : null;
   if (path === "/api/company/settings") return method === "GET" ? "session" : method === "PATCH" ? "admin" : null;
   if (path === "/api/company/users") return ["GET", "POST", "PATCH", "DELETE"].includes(method) ? "admin" : null;

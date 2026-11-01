@@ -11,6 +11,6 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ...await getWhatsAppPublicStatus(),
-    webhookUrl: new URL("/api/webhooks/whatsapp", request.nextUrl.origin).toString(),
+    webhookUrl: new URL("/api/webhooks/whatsapp", process.env.NEXTAUTH_URL || request.nextUrl.origin).toString(),
   });
 }
