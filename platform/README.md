@@ -120,12 +120,17 @@ prefixo `NEXT_PUBLIC_*` para segredos.
 
 A branch `release-official` é implantada somente no Azure; o
 [vercel.json](vercel.json) desativa implantações da Vercel para ela. O
-artefato é uma imagem Docker gerada localmente a partir do build `standalone`
-do Next.js e enviada ao GitHub Container Registry:
+artefato é uma imagem Docker gerada a partir do build `standalone` do Next.js
+e publicada no GitHub Container Registry pelo workflow
+[platform-image.yml](../.github/workflows/platform-image.yml). Cada push em
+`release-official` que altera `platform/` executa lint e testes e, se passarem,
+publica `ghcr.io/<owner>/oria-platform:<sha-curto>` e
+`ghcr.io/<owner>/oria-platform:release-official`. A implantação no Azure é um
+passo manual separado. Para gerar a imagem fora do CI, em uma rede com acesso
+ao registro público do npm:
 
 ```bash
 docker buildx build --platform linux/amd64 -t ghcr.io/<owner>/oria-platform:<git-sha> .
-docker push ghcr.io/<owner>/oria-platform:<git-sha>
 ```
 
 O contêiner executa `node src/scripts/run-app.mjs standalone`, que inicia o

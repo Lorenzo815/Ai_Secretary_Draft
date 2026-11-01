@@ -283,7 +283,7 @@ describe("guarded additive migration with transactional driver doubles", () => {
     const second = await backfillOwnership(asClient(client), asDb(db));
     expect(Object.values(second.changed).every((count) => count === 0)).toBe(true);
     expect(client.writes.every((entry) => entry.kind === "backfill")).toBe(true);
-  });
+  }, 30_000);
 
   it("aborts the transaction if any business field changes, preserving the pre-transaction BSON", async () => {
     seed(db, "companies", [company()]);

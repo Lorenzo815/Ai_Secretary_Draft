@@ -55,7 +55,7 @@ describe("assistant audio context", () => {
     const context = await loadAssistantContext(customerId, 40);
 
     expect(context.messages[0].media?.transcription).toBe("Quero agendar uma consulta.");
-    expect(fetchAndTranscribeWhatsAppAudio).toHaveBeenCalledWith("audio-123");
+    expect(fetchAndTranscribeWhatsAppAudio).toHaveBeenCalledWith("audio-123", customerId);
     expect(updateWhatsAppMediaTranscription).toHaveBeenCalledWith(
       "wamid.audio",
       "Quero agendar uma consulta.",
