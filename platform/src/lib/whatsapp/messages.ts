@@ -3,9 +3,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import { legacyCompanyId } from "../companies/ownership";
 import type { WhatsAppReferral } from "./message-payload";
-import { withCurrentCompany } from "../companies/context";
+import { currentCompanyId, withCurrentCompany } from "../companies/context";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -86,7 +85,7 @@ export async function saveWhatsAppMessageEcho(
 ) {
   const messages = await getMessagesCollection();
   const filter = {
-    companyId: legacyCompanyId(), metaMessageId: message.metaMessageId,
+    companyId: await currentCompanyId(), metaMessageId: message.metaMessageId,
     customerId: message.customerId, direction: "outbound" as const,
   };
   const now = new Date();
@@ -160,7 +159,7 @@ export async function saveWhatsAppMessageEcho(
 
 export async function getWhatsAppExternalActivityState(customerId: ObjectId) {
   const activities = await (await getMessagesCollection()).find({
-    companyId: legacyCompanyId(), customerId, source: "whatsapp_business_app",
+    companyId: await currentCompanyId(), customerId, source: "whatsapp_business_app",
   }, { projection: { _id: 1, externalActivity: 1, timestamp: 1 } }).sort({ _id: 1 }).toArray();
   let latestAt: Date | null = null;
   for (const message of activities) {

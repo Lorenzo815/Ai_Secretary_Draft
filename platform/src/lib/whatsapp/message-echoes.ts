@@ -2,7 +2,8 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 import { getMongoClient } from "../mongodb";
-import { legacyCompanyId } from "../companies/ownership";
+import { runWithCompany } from "../companies/context";
+import { isCompanyOperational } from "../companies/status";
 import { findOrCreateCustomerFromWhatsApp } from "../crm/customers";
 import { getWhatsAppPhoneAliases } from "../crm/validation";
 import { coexistenceWebhookEventId } from "./embedded-signup";
@@ -45,13 +46,18 @@ export async function processWhatsAppMessageEchoes(input: { wabaId: string; valu
     object: "whatsapp_business_account",
     entry: [{ id: input.wabaId, changes: [{ field: "smb_message_echoes", value: input.value }] }],
   }, bindings);
-  // Operational reads remain restricted to the initial company until tenant isolation is complete.
-  if (!companyId.equals(legacyCompanyId()) ||
-    !await db.collection("companies").findOne({ _id: companyId, status: "active" })) {
+  if (!await isCompanyOperational(companyId)) {
     throw new Error("WHATSAPP_ECHO_COMPANY_NOT_OPERATIONAL");
   }
+  await runWithCompany(companyId, () => saveEchoes(companyId, input));
+  await db.collection<EchoEvent>("whatsapp_coexistence_webhook_events").updateOne({
+    _id: coexistenceWebhookEventId({ ...input, field: "smb_message_echoes" }),
+    field: "smb_message_echoes",
+  }, { $set: { processedAt: new Date() }, $unset: { processingError: "", nextAttemptAt: "" } });
+}
 
-  for (const echo of input.value.message_echoes) {
+async function saveEchoes(companyId: ObjectId, input: { wabaId: string; value: EchoValue }) {
+  for (const echo of input.value.message_echoes ?? []) {
     const timestamp = new Date(Number(echo.timestamp) * 1000);
     if (!echo.id || !echo.to || !/^\d{5,15}$/.test(echo.to) || !echo.type ||
       !echo.timestamp || !Number.isFinite(timestamp.getTime()) || timestamp.getTime() <= 0) {
@@ -99,18 +105,14 @@ export async function processWhatsAppMessageEchoes(input: { wabaId: string; valu
       timestamp,
     }, change);
   }
-  await db.collection<EchoEvent>("whatsapp_coexistence_webhook_events").updateOne({
-    _id: coexistenceWebhookEventId({ ...input, field: "smb_message_echoes" }),
-    companyId,
-    field: "smb_message_echoes",
-  }, { $set: { processedAt: new Date() }, $unset: { processingError: "", nextAttemptAt: "" } });
 }
 
+/** Retries pending phone-app events of every company; each event resolves its own company. */
 export async function processPendingWhatsAppMessageEchoes(phones?: string[]) {
   const db = await database();
   const events = db.collection<EchoEvent>("whatsapp_coexistence_webhook_events");
   const filter = {
-    companyId: legacyCompanyId(), field: "smb_message_echoes", processedAt: null,
+    field: "smb_message_echoes", processedAt: null,
     ...(phones ? { "value.message_echoes.to": { $in: [...new Set(phones.flatMap(getWhatsAppPhoneAliases))] } } : {}),
   };
   await events.createIndex({ companyId: 1, field: 1, processedAt: 1, nextAttemptAt: 1, receivedAt: 1 });
@@ -130,7 +132,7 @@ export async function processPendingWhatsAppMessageEchoes(phones?: string[]) {
       const code = error instanceof Error && /^WHATSAPP_(ECHO|FORWARDING|TEMPLATE|REFERRAL)_[A-Z_]+$/.test(error.message)
         ? error.message : errorType;
       console.error("WhatsApp echo could not be synchronized.", { eventId: event._id, errorType, code });
-      await events.updateOne({ _id: event._id, companyId: legacyCompanyId() }, {
+      await events.updateOne({ _id: event._id }, {
         $set: { processingError: code, nextAttemptAt: new Date(Date.now() + 60_000) },
       });
     }

@@ -1,6 +1,9 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
+import type { ObjectId } from "mongodb";
+import { currentCompanyId } from "../companies/context";
+import { legacyCompanyId } from "../companies/ownership";
 import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
 
 const DEFAULT_GRAPH_VERSION = "v25.0";
@@ -67,9 +70,21 @@ export function getWhatsAppConfig(): WhatsAppConfig | null {
   };
 }
 
+/**
+ * WhatsApp credentials for a company: its operational Embedded Signup number, or — only for the
+ * original clinic — the number configured in environment variables. Other companies never fall back
+ * to the environment number, so they can't send from the original clinic's phone.
+ */
+export async function getCompanyWhatsAppConfig(companyId?: ObjectId): Promise<WhatsAppConfig | null> {
+  const owner = companyId ?? await currentCompanyId();
+  const operational = await getOperationalEmbeddedSignupConfig(owner);
+  if (operational) return operational;
+  return owner.equals(legacyCompanyId()) ? getWhatsAppConfig() : null;
+}
+
 export async function getWhatsAppPublicStatus(): Promise<WhatsAppPublicStatus> {
   const operationalConfig = await getOperationalEmbeddedSignupConfig();
-  const config = operationalConfig ?? getWhatsAppConfig();
+  const config = await getCompanyWhatsAppConfig();
   const missingVariables = operationalConfig ? [] : [
     !process.env.WHATSAPP_ACCESS_TOKEN && "WHATSAPP_ACCESS_TOKEN",
     !process.env.WHATSAPP_PHONE_NUMBER_ID && "WHATSAPP_PHONE_NUMBER_ID",
@@ -178,7 +193,7 @@ export function isValidWebhookSignature(rawBody: string | Uint8Array, signature:
 }
 
 async function requireWhatsAppConfig() {
-  const config = await getOperationalEmbeddedSignupConfig() ?? getWhatsAppConfig();
+  const config = await getCompanyWhatsAppConfig();
   if (!config) throw new Error("A integração do WhatsApp não está configurada no servidor.");
   return config;
 }

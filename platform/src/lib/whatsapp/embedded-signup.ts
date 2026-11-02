@@ -1,11 +1,11 @@
 import "server-only";
 
 import type { Collection, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
-
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
-import { withCurrentCompany } from "../companies/context";
+import clientPromise from "../mongodb";
+import { legacyCompanyId, withCompany, withLegacyCompany } from "../companies/ownership";
+import { currentCompanyId, withCurrentCompany } from "../companies/context";
+
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "whatsapp_embedded_signup_config";
 const DEFAULT_GRAPH_VERSION = "v25.0";
@@ -87,7 +87,7 @@ export async function updateEmbeddedSignupConfiguration(input: {
 
 export async function getEmbeddedSignupConnectionStatus(): Promise<EmbeddedSignupPublicConnection | null> {
   const connection = await (await getConnectionsCollection()).findOne(
-    { status: { $in: ["operational", "connected"] } },
+    { companyId: await currentCompanyId(), status: { $in: ["operational", "connected"] } },
     { sort: { status: -1, updatedAt: -1 } },
   );
   if (!connection?.wabaId || !connection.phoneNumberId) return null;
@@ -189,7 +189,8 @@ export async function finalizeEmbeddedSignupConnection(input: {
   }
   const wabaId = validateMetaId(input.wabaId, "WABA ID");
   const connections = await getConnectionsCollection();
-  const connection = await connections.findOne({ _id: connectionId });
+  const companyId = await currentCompanyId();
+  const connection = await connections.findOne({ _id: connectionId, companyId });
   if (!connection) throw new Error("Conexão temporária não encontrada.");
   if (connection.status === "connected" || connection.status === "operational") {
     return { connectionId, wabaId: connection.wabaId, phoneNumberId: connection.phoneNumberId };
@@ -221,7 +222,7 @@ export async function finalizeEmbeddedSignupConnection(input: {
 
   const updatedAt = new Date();
   await connections.updateOne(
-    { _id: connectionId },
+    { _id: connectionId, companyId },
     { $set: { status: "connected", wabaId, phoneNumberId, updatedAt } },
   );
   return { connectionId, wabaId, phoneNumberId };
@@ -243,7 +244,7 @@ export async function recoverEmbeddedSignupConnection(input: {
     throw new Error("Conexão temporária inválida.");
   }
 
-  const connection = await (await getConnectionsCollection()).findOne({ _id: connectionId });
+  const connection = await (await getConnectionsCollection()).findOne({ _id: connectionId, companyId: await currentCompanyId() });
   if (!connection) throw new Error("Conexão temporária não encontrada.");
   if (
     (connection.status === "connected" || connection.status === "operational")
@@ -297,17 +298,19 @@ export async function recoverEmbeddedSignupConnection(input: {
 
 export async function activateEmbeddedSignupConnection(connectionId: string) {
   const connections = await getConnectionsCollection();
-  const connection = await connections.findOne({ _id: connectionId });
+  const companyId = await currentCompanyId();
+  const connection = await connections.findOne({ _id: connectionId, companyId });
   if (!connection?.wabaId || !connection.phoneNumberId || connection.status === "token_exchanged") {
     throw new Error("Conexão de coexistência ainda não está pronta.");
   }
   const updatedAt = new Date();
+  // Only this company's previous number is demoted; other companies keep their own operational numbers.
   await connections.updateMany(
-    { _id: { $ne: connectionId }, status: "operational" },
+    { companyId, _id: { $ne: connectionId }, status: "operational" },
     { $set: { status: "connected", updatedAt } },
   );
   await connections.updateOne(
-    { _id: connectionId },
+    { _id: connectionId, companyId },
     { $set: { status: "operational", updatedAt } },
   );
   return {
@@ -320,7 +323,7 @@ export async function activateEmbeddedSignupConnection(connectionId: string) {
 
 export async function getOperationalEmbeddedSignupConfig(companyId?: ObjectId) {
   const connection = await (await getConnectionsCollection()).findOne({
-    status: "operational", ...(companyId ? { companyId } : {}),
+    status: "operational", companyId: companyId ?? await currentCompanyId(),
   });
   if (!connection?.wabaId || !connection.phoneNumberId) return null;
   return {
@@ -331,9 +334,25 @@ export async function getOperationalEmbeddedSignupConfig(companyId?: ObjectId) {
   };
 }
 
-export async function isOperationalEmbeddedSignupPhoneNumber(phoneNumberId: string | undefined) {
-  const connection = await (await getConnectionsCollection()).findOne({ status: "operational" });
-  return connection ? phoneNumberId === connection.phoneNumberId : null;
+/**
+ * Finds the company that owns an incoming Meta event's phone number: the company with that number
+ * operational, or the original clinic for its environment-configured number when it has no
+ * operational connection. Returns null for numbers no company owns.
+ */
+export async function resolveCompanyForPhoneNumber(phoneNumberId: string | undefined) {
+  const connections = await getConnectionsCollection();
+  if (phoneNumberId) {
+    const owner = await connections.findOne(
+      { status: "operational", phoneNumberId },
+      { projection: { companyId: 1 } },
+    );
+    if (owner) return owner.companyId ?? legacyCompanyId();
+  }
+  const legacy = legacyCompanyId();
+  if (await connections.findOne({ status: "operational", companyId: legacy }, { projection: { _id: 1 } })) return null;
+  const legacyPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (legacyPhoneNumberId && phoneNumberId !== legacyPhoneNumberId) return null;
+  return legacy;
 }
 
 async function resolveCoexistencePhoneNumber(input: {
@@ -530,17 +549,21 @@ export async function captureCoexistenceWebhookEvent(input: {
 }) {
   if (!COEXISTENCE_WEBHOOK_FIELDS.has(input.field)) return false;
   const eventId = coexistenceWebhookEventId(input);
+  const owner = await (await getConnectionsCollection()).findOne(
+    { wabaId: input.wabaId, status: { $in: ["operational", "connected"] } },
+    { projection: { companyId: 1 }, sort: { status: -1, updatedAt: -1 } },
+  );
   const result = await (await getWebhookEventsCollection()).updateOne(
     { _id: eventId },
     {
-      $setOnInsert: await withCurrentCompany({
+      $setOnInsert: withCompany({
         _id: eventId,
         wabaId: input.wabaId,
         field: input.field,
         value: input.value,
         receivedAt: new Date(),
         processedAt: null,
-      }),
+      }, owner?.companyId ?? legacyCompanyId()),
     },
     { upsert: true },
   );

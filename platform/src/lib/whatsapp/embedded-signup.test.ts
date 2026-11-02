@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../companies/ownership";
 
 const { findOne, insertOne, replaceOne, updateMany, updateOne } = vi.hoisted(() => ({
   findOne: vi.fn(),
@@ -21,6 +23,7 @@ import {
   finalizeEmbeddedSignupConnection,
   getEmbeddedSignupConfiguration,
   recoverEmbeddedSignupConnection,
+  resolveCompanyForPhoneNumber,
   updateEmbeddedSignupConfiguration,
 } from "./embedded-signup";
 
@@ -124,12 +127,12 @@ describe("Embedded Signup configuration", () => {
       }),
     );
     expect(updateOne).toHaveBeenCalledWith(
-      { _id: exchanged.connectionId },
+      { _id: exchanged.connectionId, companyId: legacyCompanyId() },
       { $set: expect.objectContaining({ status: "connected", phoneNumberId: "9988776655" }) },
     );
   });
 
-  it("makes a connected number operational only through an explicit setting", async () => {
+  it("makes a connected number operational only through an explicit setting, demoting only the same company's number", async () => {
     findOne.mockResolvedValueOnce({
       _id: "11111111-1111-4111-8111-111111111111",
       status: "connected",
@@ -139,12 +142,13 @@ describe("Embedded Signup configuration", () => {
 
     await expect(activateEmbeddedSignupConnection("11111111-1111-4111-8111-111111111111"))
       .resolves.toMatchObject({ status: "operational", phoneNumberId: "9988776655" });
+    expect(findOne).toHaveBeenCalledWith({ _id: "11111111-1111-4111-8111-111111111111", companyId: legacyCompanyId() });
     expect(updateMany).toHaveBeenCalledWith(
-      { _id: { $ne: "11111111-1111-4111-8111-111111111111" }, status: "operational" },
+      { companyId: legacyCompanyId(), _id: { $ne: "11111111-1111-4111-8111-111111111111" }, status: "operational" },
       { $set: expect.objectContaining({ status: "connected" }) },
     );
     expect(updateOne).toHaveBeenCalledWith(
-      { _id: "11111111-1111-4111-8111-111111111111" },
+      { _id: "11111111-1111-4111-8111-111111111111", companyId: legacyCompanyId() },
       { $set: expect.objectContaining({ status: "operational" }) },
     );
   });
@@ -286,7 +290,7 @@ describe("Embedded Signup configuration", () => {
     expect(debugUrl.searchParams.get("input_token")).toBe("business-token");
     expect(debugUrl.searchParams.get("access_token")).toBe("1234567890|test-app-secret");
     expect(updateOne).toHaveBeenCalledWith(
-      { _id: exchanged.connectionId },
+      { _id: exchanged.connectionId, companyId: legacyCompanyId() },
       { $set: expect.objectContaining({ status: "connected", wabaId: "1122334455" }) },
     );
   });
@@ -408,5 +412,28 @@ describe("Embedded Signup configuration", () => {
       { $setOnInsert: expect.objectContaining(input) },
       { upsert: true },
     );
+  });
+});
+
+describe("incoming number routing", () => {
+  beforeEach(() => {
+    findOne.mockReset();
+    vi.stubEnv("WHATSAPP_PHONE_NUMBER_ID", "1111111111");
+  });
+
+  it("routes a number to the company that has it operational", async () => {
+    const clinic = new ObjectId();
+    findOne.mockResolvedValueOnce({ companyId: clinic });
+    await expect(resolveCompanyForPhoneNumber("2222222222")).resolves.toEqual(clinic);
+    expect(findOne).toHaveBeenCalledWith({ status: "operational", phoneNumberId: "2222222222" }, { projection: { companyId: 1 } });
+  });
+
+  it("keeps today's original-clinic rules for numbers no company has operational", async () => {
+    findOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ _id: "legacy-connection" });
+    await expect(resolveCompanyForPhoneNumber("3333333333")).resolves.toBeNull();
+    findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    await expect(resolveCompanyForPhoneNumber("1111111111")).resolves.toEqual(legacyCompanyId());
+    findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    await expect(resolveCompanyForPhoneNumber("3333333333")).resolves.toBeNull();
   });
 });

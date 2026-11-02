@@ -1,12 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getOperationalEmbeddedSignupConfig, getWhatsAppConfig } = vi.hoisted(() => ({
-  getOperationalEmbeddedSignupConfig: vi.fn(),
-  getWhatsAppConfig: vi.fn(),
+const { getCompanyWhatsAppConfig } = vi.hoisted(() => ({
+  getCompanyWhatsAppConfig: vi.fn(),
 }));
 
-vi.mock("./embedded-signup", () => ({ getOperationalEmbeddedSignupConfig }));
-vi.mock("./client", () => ({ getWhatsAppConfig }));
+vi.mock("./client", () => ({ getCompanyWhatsAppConfig }));
 
 import {
   createWhatsAppTemplate,
@@ -26,8 +24,7 @@ describe("WhatsApp template management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
-    getOperationalEmbeddedSignupConfig.mockResolvedValue(config);
-    getWhatsAppConfig.mockReturnValue(null);
+    getCompanyWhatsAppConfig.mockResolvedValue(config);
   });
 
   it("lists templates with the operational WABA token", async () => {

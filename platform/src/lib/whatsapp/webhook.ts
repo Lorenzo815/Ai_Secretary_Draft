@@ -1,6 +1,9 @@
 import "server-only";
 
+import type { ObjectId } from "mongodb";
 import { cancelAutomationJob, emitAutomationEvent } from "../automation";
+import { runWithCompany } from "../companies/context";
+import { isCompanyOperational } from "../companies/status";
 import { findOrCreateCustomerFromWhatsApp } from "../crm";
 import {
   ensureWhatsAppMessageIndexes,
@@ -12,12 +15,11 @@ import {
 import {
   captureCoexistenceWebhookEvent,
   COEXISTENCE_WEBHOOK_FIELDS,
-  isOperationalEmbeddedSignupPhoneNumber,
+  resolveCompanyForPhoneNumber,
 } from "./embedded-signup";
 import { getMessageBody, getMessageMedia, getMessageReferral, getMessageSelection, type WebhookMessage } from "./message-payload";
 import { processWhatsAppMessageEchoes } from "./message-echoes";
 import { hydrateWhatsAppTemplateContext } from "./template-context";
-import { legacyCompanyId } from "../companies/ownership";
 
 interface WebhookValue extends Record<string, unknown> {
   metadata?: { phone_number_id?: string };
@@ -71,76 +73,11 @@ export async function processWhatsAppWebhook(rawBody: string) {
         await processWhatsAppMessageEchoes({ wabaId: entry.id ?? "unknown", value });
       }
       if (change.field !== "messages" || !value) continue;
-      const embeddedConnectionMatch = await isOperationalEmbeddedSignupPhoneNumber(value.metadata?.phone_number_id);
-      if (embeddedConnectionMatch === false) continue;
-      if (embeddedConnectionMatch === null) {
-        const legacyPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-        if (legacyPhoneNumberId && value.metadata?.phone_number_id !== legacyPhoneNumberId) continue;
-      }
-      const contact = value.contacts?.[0];
-
-      for (const message of value.messages ?? []) {
-        if (!message.id || !message.from) continue;
-        const referral = getMessageReferral(message);
-        const template = message.type === "template"
-          ? await hydrateWhatsAppTemplateContext(legacyCompanyId(), entry.id ?? "", message.template)
-          : null;
-        const timestamp = message.timestamp
-          ? new Date(Number(message.timestamp) * 1000)
-          : new Date();
-        const customer = await findOrCreateCustomerFromWhatsApp({
-          phone: message.from,
-          name: contact?.profile?.name,
-          interactionAt: timestamp,
-        });
-        const referenced = message.context?.id
-          ? await findWhatsAppMessageByMetaId(message.context.id, legacyCompanyId())
-          : null;
-        const media = getMessageMedia(message);
-        const selection = getMessageSelection(message);
-        const saved = await saveWhatsAppMessage({
-          customerId: customer._id,
-          metaMessageId: message.id,
-          contactPhone: message.from,
-          contactName: contact?.profile?.name,
-          direction: "inbound",
-          type: message.type ?? "unknown",
-          body: template?.body ?? getMessageBody(message),
-          ...(template ? { templateName: template.templateName, templateLanguage: template.templateLanguage } : {}),
-          ...(selection ? { selection } : {}),
-          ...(referral ? { referral } : {}),
-          ...(media ? { media } : {}),
-          ...(message.context?.id ? {
-            replyTo: {
-              metaMessageId: message.context.id,
-              ...(referenced ? {
-                body: referenced.body,
-                direction: referenced.direction,
-                type: referenced.type,
-              } : {}),
-            },
-          } : {}),
-          status: "received",
-          timestamp,
-        });
-        if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
-          await cancelAutomationJob("customer_follow_up", customer._id);
-          const processes = await emitAutomationEvent({
-            type: "message.received",
-            customerId: customer._id,
-            occurredAt: timestamp,
-          }, { immediate: true });
-          if (processes.includes("customer_agent")) processingCustomers.add(customer._id.toString());
-        }
-        receivedMessages += 1;
-      }
-
-      for (const event of value.statuses ?? []) {
-        if (event.id && event.status && validStatuses.has(event.status as MessageStatus)) {
-          await updateWhatsAppMessageStatus(event.id, event.status as MessageStatus);
-          statusUpdates += 1;
-        }
-      }
+      const companyId = await resolveCompanyForPhoneNumber(value.metadata?.phone_number_id);
+      if (!companyId || !await isCompanyOperational(companyId)) continue;
+      const counts = await runWithCompany(companyId, () => processMessagesChange(companyId, entry.id ?? "", value, processingCustomers));
+      receivedMessages += counts.receivedMessages;
+      statusUpdates += counts.statusUpdates;
     }
   }
 
@@ -150,4 +87,80 @@ export async function processWhatsAppWebhook(rawBody: string) {
     coexistenceEvents,
     processingRequests: processingCustomers.size,
   };
+}
+
+async function processMessagesChange(
+  companyId: ObjectId,
+  wabaId: string,
+  value: WebhookValue,
+  processingCustomers: Set<string>,
+) {
+  let receivedMessages = 0;
+  let statusUpdates = 0;
+  const contact = value.contacts?.[0];
+
+  for (const message of value.messages ?? []) {
+    if (!message.id || !message.from) continue;
+    const referral = getMessageReferral(message);
+    const template = message.type === "template"
+      ? await hydrateWhatsAppTemplateContext(companyId, wabaId, message.template)
+      : null;
+    const timestamp = message.timestamp
+      ? new Date(Number(message.timestamp) * 1000)
+      : new Date();
+    const customer = await findOrCreateCustomerFromWhatsApp({
+      phone: message.from,
+      name: contact?.profile?.name,
+      interactionAt: timestamp,
+      companyId,
+    });
+    const referenced = message.context?.id
+      ? await findWhatsAppMessageByMetaId(message.context.id, companyId)
+      : null;
+    const media = getMessageMedia(message);
+    const selection = getMessageSelection(message);
+    const saved = await saveWhatsAppMessage({
+      customerId: customer._id,
+      metaMessageId: message.id,
+      contactPhone: message.from,
+      contactName: contact?.profile?.name,
+      direction: "inbound",
+      type: message.type ?? "unknown",
+      body: template?.body ?? getMessageBody(message),
+      ...(template ? { templateName: template.templateName, templateLanguage: template.templateLanguage } : {}),
+      ...(selection ? { selection } : {}),
+      ...(referral ? { referral } : {}),
+      ...(media ? { media } : {}),
+      ...(message.context?.id ? {
+        replyTo: {
+          metaMessageId: message.context.id,
+          ...(referenced ? {
+            body: referenced.body,
+            direction: referenced.direction,
+            type: referenced.type,
+          } : {}),
+        },
+      } : {}),
+      status: "received",
+      timestamp,
+    });
+    if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
+      await cancelAutomationJob("customer_follow_up", customer._id);
+      const processes = await emitAutomationEvent({
+        type: "message.received",
+        customerId: customer._id,
+        occurredAt: timestamp,
+      }, { immediate: true });
+      if (processes.includes("customer_agent")) processingCustomers.add(customer._id.toString());
+    }
+    receivedMessages += 1;
+  }
+
+  for (const event of value.statuses ?? []) {
+    if (event.id && event.status && validStatuses.has(event.status as MessageStatus)) {
+      await updateWhatsAppMessageStatus(event.id, event.status as MessageStatus);
+      statusUpdates += 1;
+    }
+  }
+  return { receivedMessages, statusUpdates };
 }

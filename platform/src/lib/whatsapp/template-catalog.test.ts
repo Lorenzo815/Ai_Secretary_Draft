@@ -2,9 +2,8 @@ import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { legacyCompanyId } from "../companies/ownership";
 
-const { operational, environment } = vi.hoisted(() => ({ operational: vi.fn(), environment: vi.fn() }));
-vi.mock("./embedded-signup", () => ({ getOperationalEmbeddedSignupConfig: operational }));
-vi.mock("./client", () => ({ getWhatsAppConfig: environment }));
+const { companyConfig } = vi.hoisted(() => ({ companyConfig: vi.fn() }));
+vi.mock("./client", () => ({ getCompanyWhatsAppConfig: companyConfig }));
 
 const config = { businessAccountId: "12345", phoneNumberId: "67890", accessToken: "fake-token", graphVersion: "v25.0" };
 const template = { id: "1", name: "confirmation", language: "pt_BR", category: "UTILITY", status: "APPROVED", components: [{ type: "BODY", text: "Confirma?" }] };
@@ -15,8 +14,8 @@ beforeEach(async () => {
   vi.resetModules();
   vi.resetAllMocks();
   vi.useFakeTimers();
-  operational.mockResolvedValue(config);
-  environment.mockReturnValue(null);
+  // Only the original clinic (or the company in scope, when none is passed) has a WhatsApp number here.
+  companyConfig.mockImplementation(async (companyId?: ObjectId) => (!companyId || companyId.equals(legacyCompanyId()) ? config : null));
   fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [template] }) });
   vi.stubGlobal("fetch", fetchMock);
   api = await import("./templates");
@@ -29,16 +28,16 @@ describe("company template catalog cache", () => {
       api.getCachedWhatsAppTemplates(legacyCompanyId(), "12345"),
       api.getCachedWhatsAppTemplates(legacyCompanyId(), "12345"),
     ])).toEqual([[template], [template]]);
-    expect(operational).toHaveBeenCalledWith(legacyCompanyId());
+    expect(companyConfig).toHaveBeenCalledWith(legacyCompanyId());
     expect(fetchMock).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
     await api.getCachedWhatsAppTemplates(legacyCompanyId(), "12345");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects another company or a mismatched WABA before querying Graph", async () => {
+  it("rejects a company without its own number or a mismatched WABA before querying Graph", async () => {
     await expect(api.getCachedWhatsAppTemplates(new ObjectId(), "12345"))
-      .rejects.toThrow("WHATSAPP_TEMPLATE_COMPANY_NOT_OPERATIONAL");
+      .rejects.toThrow("não está configurada");
     await expect(api.getCachedWhatsAppTemplates(legacyCompanyId(), "other"))
       .rejects.toThrow("WHATSAPP_TEMPLATE_WABA_MISMATCH");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -51,7 +50,7 @@ describe("company template catalog cache", () => {
   });
 
   it("does not treat an unconfigured integration as an empty successful catalog", async () => {
-    operational.mockResolvedValue(null);
+    companyConfig.mockResolvedValue(null);
     expect(await api.refreshWhatsAppTemplateCatalog()).toEqual({ configured: false, count: 0 });
     expect(fetchMock).not.toHaveBeenCalled();
   });

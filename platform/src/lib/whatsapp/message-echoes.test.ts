@@ -69,7 +69,7 @@ describe("WhatsApp Business app echo ingestion", () => {
     }), undefined);
     expect(mocks.archive).toHaveBeenCalledWith({
       _id: coexistenceWebhookEventId({ ...input(), field: "smb_message_echoes" }),
-      companyId, field: "smb_message_echoes",
+      field: "smb_message_echoes",
     }, { $set: { processedAt: expect.any(Date) }, $unset: { processingError: "", nextAttemptAt: "" } });
     expect(mocks.save.mock.invocationCallOrder[0]).toBeLessThan(mocks.archive.mock.invocationCallOrder[0]);
   });
@@ -184,10 +184,10 @@ describe("WhatsApp Business app echo ingestion", () => {
 });
 
 describe("archived echo recovery", () => {
-  it("limits and scopes the sweep and includes Brazilian phone aliases for a contact", async () => {
+  it("sweeps every company's pending events, limited and with Brazilian phone aliases for a contact", async () => {
     const result = await processPendingWhatsAppMessageEchoes([phone]);
     expect(mocks.pending).toHaveBeenCalledWith({
-      companyId, field: "smb_message_echoes", processedAt: null,
+      field: "smb_message_echoes", processedAt: null,
       "value.message_echoes.to": { $in: [phone, "551199999999"] },
       $or: [{ nextAttemptAt: { $exists: false } }, { nextAttemptAt: { $lte: expect.any(Date) } }],
     });
@@ -203,7 +203,7 @@ describe("archived echo recovery", () => {
     mocks.save.mockRejectedValueOnce(new Error("secret connection or message content"));
     mocks.remaining.mockResolvedValue({ _id: "event-1" });
     expect(await processPendingWhatsAppMessageEchoes()).toEqual({ processed: 1, failed: 1, pending: true });
-    expect(mocks.archive).toHaveBeenCalledWith({ _id: "event-1", companyId }, {
+    expect(mocks.archive).toHaveBeenCalledWith({ _id: "event-1" }, {
       $set: { processingError: "Error", nextAttemptAt: expect.any(Date) },
     });
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain("secret connection");

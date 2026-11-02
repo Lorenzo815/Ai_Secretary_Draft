@@ -1,10 +1,35 @@
 import { createHmac } from "crypto";
+import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runWithCompany } from "../companies/context";
+import { legacyCompanyId } from "../companies/ownership";
 
 const getOperationalEmbeddedSignupConfig = vi.hoisted(() => vi.fn());
 vi.mock("./embedded-signup", () => ({ getOperationalEmbeddedSignupConfig }));
 
-import { isValidWebhookSignature, sendWhatsAppTemplate } from "./client";
+import { getCompanyWhatsAppConfig, isValidWebhookSignature, sendWhatsAppTemplate } from "./client";
+
+describe("WhatsApp credentials per company", () => {
+  beforeEach(() => {
+    vi.stubEnv("WHATSAPP_ACCESS_TOKEN", "original-clinic-token");
+    vi.stubEnv("WHATSAPP_PHONE_NUMBER_ID", "1111111111");
+    getOperationalEmbeddedSignupConfig.mockResolvedValue(null);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("lets only the original clinic fall back to the environment number", async () => {
+    await expect(getCompanyWhatsAppConfig(legacyCompanyId())).resolves.toMatchObject({ phoneNumberId: "1111111111" });
+    await expect(getCompanyWhatsAppConfig(new ObjectId())).resolves.toBeNull();
+  });
+
+  it("uses the company in scope and never another company's number", async () => {
+    const clinic = new ObjectId();
+    await expect(runWithCompany(clinic, () => getCompanyWhatsAppConfig())).resolves.toBeNull();
+    expect(getOperationalEmbeddedSignupConfig).toHaveBeenCalledWith(clinic);
+    getOperationalEmbeddedSignupConfig.mockResolvedValue({ accessToken: "own", phoneNumberId: "2222222222", graphVersion: "v25.0" });
+    await expect(runWithCompany(clinic, () => getCompanyWhatsAppConfig())).resolves.toMatchObject({ phoneNumberId: "2222222222" });
+  });
+});
 
 describe("WhatsApp template delivery client", () => {
   beforeEach(() => {

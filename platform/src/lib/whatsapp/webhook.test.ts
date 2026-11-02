@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ObjectId } from "mongodb";
+import { currentCompanyId } from "../companies/context";
+import { legacyCompanyId } from "../companies/ownership";
 
 const {
   captureCoexistenceWebhookEvent,
@@ -7,7 +10,8 @@ const {
   ensureWhatsAppMessageIndexes,
   findWhatsAppMessageByMetaId,
   findOrCreateCustomerFromWhatsApp,
-  isOperationalEmbeddedSignupPhoneNumber,
+  isCompanyOperational,
+  resolveCompanyForPhoneNumber,
   saveWhatsAppMessage,
   processWhatsAppMessageEchoes,
   updateWhatsAppMessageStatus,
@@ -19,7 +23,8 @@ const {
   ensureWhatsAppMessageIndexes: vi.fn(),
   findWhatsAppMessageByMetaId: vi.fn(),
   findOrCreateCustomerFromWhatsApp: vi.fn(),
-  isOperationalEmbeddedSignupPhoneNumber: vi.fn(),
+  isCompanyOperational: vi.fn(),
+  resolveCompanyForPhoneNumber: vi.fn(),
   saveWhatsAppMessage: vi.fn(),
   processWhatsAppMessageEchoes: vi.fn(),
   updateWhatsAppMessageStatus: vi.fn(),
@@ -36,8 +41,9 @@ vi.mock("./embedded-signup", () => ({
     "smb_app_state_sync",
     "smb_message_echoes",
   ]),
-  isOperationalEmbeddedSignupPhoneNumber,
+  resolveCompanyForPhoneNumber,
 }));
+vi.mock("../companies/status", () => ({ isCompanyOperational }));
 vi.mock("./messages", () => ({
   ensureWhatsAppMessageIndexes,
   findWhatsAppMessageByMetaId,
@@ -55,7 +61,8 @@ describe("WhatsApp webhook isolation", () => {
     process.env.WHATSAPP_PHONE_NUMBER_ID = "1111111111";
     ensureWhatsAppMessageIndexes.mockResolvedValue(undefined);
     captureCoexistenceWebhookEvent.mockResolvedValue(true);
-    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(null);
+    resolveCompanyForPhoneNumber.mockResolvedValue(legacyCompanyId());
+    isCompanyOperational.mockResolvedValue(true);
     emitAutomationEvent.mockResolvedValue(["customer_agent"]);
     findWhatsAppMessageByMetaId.mockResolvedValue(null);
   });
@@ -204,7 +211,7 @@ describe("WhatsApp webhook isolation", () => {
   });
 
   it("ignores live messages for a phone number that is not operational", async () => {
-    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(false);
+    resolveCompanyForPhoneNumber.mockResolvedValue(null);
     const result = await processWhatsAppWebhook(JSON.stringify({
       object: "whatsapp_business_account",
       entry: [{
@@ -225,8 +232,37 @@ describe("WhatsApp webhook isolation", () => {
     expect(emitAutomationEvent).not.toHaveBeenCalled();
   });
 
+  it("routes a message to the company that owns the number, only when that company is operational", async () => {
+    const clinic = new ObjectId();
+    resolveCompanyForPhoneNumber.mockResolvedValue(clinic);
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: new ObjectId(), serviceStatus: "ai_active" });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    const payload = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "4444444444", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "5555555555" },
+        messages: [{ id: "wamid.other", from: "5511988888888", type: "text", text: { body: "Oi" } }],
+      } }] }],
+    });
+
+    isCompanyOperational.mockResolvedValue(false);
+    expect((await processWhatsAppWebhook(payload)).receivedMessages).toBe(0);
+    expect(findOrCreateCustomerFromWhatsApp).not.toHaveBeenCalled();
+
+    isCompanyOperational.mockResolvedValue(true);
+    let seenCompany = "";
+    emitAutomationEvent.mockImplementation(async () => {
+      seenCompany = (await currentCompanyId()).toHexString();
+      return ["customer_agent"];
+    });
+    expect((await processWhatsAppWebhook(payload)).receivedMessages).toBe(1);
+    expect(isCompanyOperational).toHaveBeenCalledWith(clinic);
+    expect(findOrCreateCustomerFromWhatsApp).toHaveBeenCalledWith(expect.objectContaining({ companyId: clinic }));
+    expect(seenCompany).toBe(clinic.toHexString());
+  });
+
   it("cancels a pending follow-up before scheduling the reply job", async () => {
-    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    resolveCompanyForPhoneNumber.mockResolvedValue(legacyCompanyId());
     const customerId = { toString: () => "customer-1" };
     findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
     saveWhatsAppMessage.mockResolvedValue({ inserted: true });
@@ -252,7 +288,7 @@ describe("WhatsApp webhook isolation", () => {
   });
 
   it("preserves image metadata and the quoted message snapshot", async () => {
-    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    resolveCompanyForPhoneNumber.mockResolvedValue(legacyCompanyId());
     const customerId = { toString: () => "customer-1" };
     findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
     findWhatsAppMessageByMetaId.mockResolvedValue({
@@ -307,7 +343,7 @@ describe("WhatsApp webhook isolation", () => {
   });
 
   it("preserves WhatsApp voice-message metadata and triggers the agent", async () => {
-    isOperationalEmbeddedSignupPhoneNumber.mockResolvedValue(true);
+    resolveCompanyForPhoneNumber.mockResolvedValue(legacyCompanyId());
     const customerId = { toString: () => "customer-1" };
     findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: customerId, serviceStatus: "ai_active" });
     saveWhatsAppMessage.mockResolvedValue({ inserted: true });

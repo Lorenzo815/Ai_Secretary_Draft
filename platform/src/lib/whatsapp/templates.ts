@@ -2,8 +2,7 @@ import "server-only";
 
 import type { ObjectId } from "mongodb";
 import { legacyCompanyId } from "../companies/ownership";
-import { getWhatsAppConfig, type WhatsAppConfig } from "./client";
-import { getOperationalEmbeddedSignupConfig } from "./embedded-signup";
+import { getCompanyWhatsAppConfig, type WhatsAppConfig } from "./client";
 
 const TEMPLATE_NAME_PATTERN = /^[a-z0-9_]{1,512}$/;
 const TEMPLATE_VARIABLE_PATTERN = /\{\{(\d+)\}\}/g;
@@ -82,35 +81,37 @@ async function fetchWhatsAppTemplates(config: WhatsAppConfig & { businessAccount
 }
 
 const TEMPLATE_CATALOG_TTL_MS = 15 * 60_000;
-let templateCatalog: { key: string; expiresAt: number; promise: Promise<WhatsAppTemplate[]> } | undefined;
+const templateCatalogs = new Map<string, { expiresAt: number; promise: Promise<WhatsAppTemplate[]> }>();
 
 function cachedTemplates(companyId: ObjectId, config: WhatsAppConfig & { businessAccountId: string }) {
   const key = `${companyId.toHexString()}:${config.businessAccountId}:${config.graphVersion}`;
-  if (templateCatalog?.key === key && templateCatalog.expiresAt > Date.now()) return templateCatalog.promise;
+  const cached = templateCatalogs.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
   const entry = {
-    key, expiresAt: Date.now() + TEMPLATE_CATALOG_TTL_MS,
+    expiresAt: Date.now() + TEMPLATE_CATALOG_TTL_MS,
     promise: fetchWhatsAppTemplates(config),
   };
-  templateCatalog = entry;
+  templateCatalogs.set(key, entry);
   void entry.promise.catch(() => {
-    if (templateCatalog === entry) entry.expiresAt = Date.now() + 60_000;
+    if (templateCatalogs.get(key) === entry) entry.expiresAt = Date.now() + 60_000;
   });
   return entry.promise;
 }
 
 export async function getCachedWhatsAppTemplates(companyId: ObjectId, businessAccountId: string) {
-  if (!companyId.equals(legacyCompanyId())) throw new Error("WHATSAPP_TEMPLATE_COMPANY_NOT_OPERATIONAL");
-  const config = await requireTemplateManagementConfig();
+  const config = await requireTemplateManagementConfig(companyId);
   if (!businessAccountId || config.businessAccountId !== businessAccountId) {
     throw new Error("WHATSAPP_TEMPLATE_WABA_MISMATCH");
   }
   return cachedTemplates(companyId, config);
 }
 
+/** Cache warm-up run by the worker for the original clinic; other companies load templates on demand. */
 export async function refreshWhatsAppTemplateCatalog() {
-  const config = await getOperationalEmbeddedSignupConfig(legacyCompanyId()) ?? getWhatsAppConfig();
+  const companyId = legacyCompanyId();
+  const config = await getCompanyWhatsAppConfig(companyId);
   if (!config?.businessAccountId) return { configured: false as const, count: 0 };
-  const templates = await cachedTemplates(legacyCompanyId(), { ...config, businessAccountId: config.businessAccountId });
+  const templates = await cachedTemplates(companyId, { ...config, businessAccountId: config.businessAccountId });
   return { configured: true as const, count: templates.length };
 }
 
@@ -142,7 +143,7 @@ export async function createWhatsAppTemplate(input: CreateWhatsAppTemplateInput)
       }),
     },
   );
-  templateCatalog = undefined;
+  templateCatalogs.clear();
   return result;
 }
 
@@ -239,8 +240,8 @@ function normalizeButtons(buttons: CreateWhatsAppTemplateButton[]): WhatsAppTemp
   });
 }
 
-async function requireTemplateManagementConfig(): Promise<WhatsAppConfig & { businessAccountId: string }> {
-  const config = await getOperationalEmbeddedSignupConfig(legacyCompanyId()) ?? getWhatsAppConfig();
+async function requireTemplateManagementConfig(companyId?: ObjectId): Promise<WhatsAppConfig & { businessAccountId: string }> {
+  const config = await getCompanyWhatsAppConfig(companyId);
   if (!config) throw new Error("A integração do WhatsApp não está configurada no servidor.");
   if (!config.businessAccountId) throw new Error("A conexão do WhatsApp não possui um WABA ID.");
   return { ...config, businessAccountId: config.businessAccountId };
