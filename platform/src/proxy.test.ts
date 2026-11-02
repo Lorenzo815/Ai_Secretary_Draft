@@ -11,8 +11,34 @@ const user: Principal = { id: "user", companyId: "company", companyName: "Compan
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("NEXTAUTH_SECRET", "test-secret");
+  vi.stubEnv("ORIA_MOVED_NOTICE", "off");
   mocks.getToken.mockResolvedValue({});
   mocks.resolveToken.mockResolvedValue(user);
+});
+
+describe("moved notice", () => {
+  beforeEach(() => vi.stubEnv("ORIA_MOVED_NOTICE", ""));
+
+  it.each(["/", "/login", "/dashboard", "/dashboard/settings/system?tab=x"])("shows the notice instead of %s", async (path) => {
+    const response = await proxy(new NextRequest(`https://oria.example${path}`));
+    const rewrite = new URL(response.headers.get("x-middleware-rewrite")!);
+    expect(rewrite.pathname).toBe("/mudamos");
+    expect(rewrite.searchParams.get("from")).toBe(path);
+    expect(mocks.resolveToken).not.toHaveBeenCalled();
+  });
+
+  it("keeps webhooks and the worker reachable", async () => {
+    const response = await proxy(new NextRequest("https://oria.example/api/webhooks/whatsapp", { method: "POST" }));
+    expect(response.headers.get("x-middleware-rewrite")).toBeNull();
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("restores the previous behaviour when turned off", async () => {
+    vi.stubEnv("ORIA_MOVED_NOTICE", "off");
+    expect((await proxy(new NextRequest("https://oria.example/login"))).headers.get("x-middleware-next")).toBe("1");
+    expect((await proxy(new NextRequest("https://oria.example/dashboard/calendario"))).headers.get("location"))
+      .toBe("https://oria.example/dashboard/access-denied");
+  });
 });
 
 describe("server request authorization", () => {

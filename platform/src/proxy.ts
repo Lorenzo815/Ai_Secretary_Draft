@@ -3,9 +3,22 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveToken } from "./lib/access/session";
 import { allows, routePolicy } from "./lib/access/policy";
 import { sessionCookie } from "./lib/access/cookies";
+import { MOVED_NOTICE_PATH, movedNoticeEnabled } from "./lib/moved-notice";
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname.replace(/\/$/, "");
+  if (!path.startsWith("/api/")) {
+    // "/" and "/login" are matched only for the moved notice; otherwise they behave as before.
+    if (movedNoticeEnabled()) {
+      const notice = new URL(MOVED_NOTICE_PATH, request.url);
+      notice.search = "";
+      notice.searchParams.set("from", `${path || "/"}${request.nextUrl.search}`);
+      const response = NextResponse.rewrite(notice);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
+    if (path === "" || path === "/login") return NextResponse.next();
+  }
   const policy = routePolicy(path, request.method);
   if (policy === "public") return NextResponse.next();
   const api = path.startsWith("/api/");
@@ -44,4 +57,4 @@ export async function proxy(request: NextRequest) {
   }
 }
 
-export const config = { matcher: ["/dashboard/:path*", "/api/:path*"] };
+export const config = { matcher: ["/", "/login", "/dashboard/:path*", "/api/:path*"] };
