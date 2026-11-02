@@ -5,6 +5,7 @@ import { Collection, ObjectId } from "mongodb";
 import type { WhatsAppReferral } from "./message-payload";
 import { currentCompanyId, withCurrentCompany } from "../companies/context";
 import { tenantDb } from "../companies/tenant-db";
+import clientPromise from "../mongodb";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -271,8 +272,9 @@ export async function isLatestInboundWhatsAppMessage(customerId: ObjectId, messa
   return latest?._id.equals(messageId) ?? false;
 }
 
+// Indexes span all companies, so this runs before the webhook knows which company a message belongs to.
 export async function ensureWhatsAppMessageIndexes() {
-  const messages = await getMessagesCollection();
+  const messages = (await clientPromise).db(DB_NAME).collection<WhatsAppMessageDocument>("whatsapp_messages");
   await Promise.all([
     messages.createIndex({ metaMessageId: 1 }, { unique: true }),
     messages.createIndex({ contactPhone: 1, timestamp: -1 }),
