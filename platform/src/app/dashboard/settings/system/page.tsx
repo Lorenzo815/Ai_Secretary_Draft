@@ -6,15 +6,15 @@ import { getEmbeddedSignupConfiguration, getEmbeddedSignupConnectionStatus } fro
 import { getMercadoPagoCredentialStatus, getPaymentProviderConfiguration } from "@/lib/payments";
 import AutoRefresh from "../../_components/auto-refresh";
 import EmbeddedSignupSettings from "../_components/embedded-signup-settings";
-import AiModelSettings from "../_components/ai-model-settings";
 import SystemControls from "../_components/system-controls";
-import WebhookForwardingSettings from "../_components/webhook-forwarding-settings";
 import { requirePrincipal } from "@/lib/access/server";
 
 export const dynamic = "force-dynamic";
 
+// AI model routing and WhatsApp webhook forwarding are managed by Oria in the back-office,
+// so they are intentionally not rendered for clinic users.
 export default async function SystemSettingsPage() {
-  const principal = await requirePrincipal();
+  await requirePrincipal();
   const [assistantSettings, customers, embeddedSignup, embeddedConnection, paymentProvider, mercadoPagoStatus] = await Promise.all([
     getAgentConfiguration(),
     listCustomers(),
@@ -57,11 +57,6 @@ export default async function SystemSettingsPage() {
         phoneNumberId: embeddedConnection.phoneNumberId,
       } : null} />
     </div>
-
-    {principal.isAdmin && <WebhookForwardingSettings companyName={principal.companyName} />}
-
-    <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Inteligência e roteamento</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Modelos de IA</h2></div>
-    <AiModelSettings />
 
     <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Regras da operação</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Automação e pagamentos</h2></div>
     <SystemControls
