@@ -9,6 +9,15 @@ export function movedNoticeEnabled() {
   return process.env.ORIA_MOVED_NOTICE !== "off";
 }
 
+/**
+ * While on, every /api/* request (Meta and Mercado Pago webhooks, the integration webhook, the worker endpoint)
+ * is passed through to Azure untouched, so this old deployment never runs its own code against the database.
+ * Turn off with ORIA_API_PASSTHROUGH=off.
+ */
+export function apiPassthroughEnabled() {
+  return process.env.ORIA_API_PASSTHROUGH !== "off";
+}
+
 /** The same screen at the new address; only same-site paths are accepted. */
 export function movedTargetUrl(from: string | string[] | undefined) {
   const path = Array.isArray(from) ? from[0] : from;

@@ -3,10 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveToken } from "./lib/access/session";
 import { allows, routePolicy } from "./lib/access/policy";
 import { sessionCookie } from "./lib/access/cookies";
-import { MOVED_NOTICE_PATH, movedNoticeEnabled } from "./lib/moved-notice";
+import { MOVED_NOTICE_PATH, MOVED_TO_ORIGIN, apiPassthroughEnabled, movedNoticeEnabled } from "./lib/moved-notice";
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname.replace(/\/$/, "");
+  if (path.startsWith("/api/") && apiPassthroughEnabled()) {
+    return NextResponse.rewrite(new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, MOVED_TO_ORIGIN));
+  }
   if (!path.startsWith("/api/")) {
     // "/" and "/login" are matched only for the moved notice; otherwise they behave as before.
     if (movedNoticeEnabled()) {

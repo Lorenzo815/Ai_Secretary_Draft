@@ -12,6 +12,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("NEXTAUTH_SECRET", "test-secret");
   vi.stubEnv("ORIA_MOVED_NOTICE", "off");
+  vi.stubEnv("ORIA_API_PASSTHROUGH", "off");
   mocks.getToken.mockResolvedValue({});
   mocks.resolveToken.mockResolvedValue(user);
 });
@@ -24,6 +25,14 @@ describe("moved notice", () => {
     const rewrite = new URL(response.headers.get("x-middleware-rewrite")!);
     expect(rewrite.pathname).toBe("/mudamos");
     expect(rewrite.searchParams.get("from")).toBe(path);
+    expect(mocks.resolveToken).not.toHaveBeenCalled();
+  });
+
+  it("passes every API call through to Azure, unchanged, instead of running this deployment's code", async () => {
+    vi.stubEnv("ORIA_API_PASSTHROUGH", "");
+    const response = await proxy(new NextRequest("https://oria.example/api/webhooks/whatsapp?x=1", { method: "POST", body: "{}" }));
+    expect(response.headers.get("x-middleware-rewrite"))
+      .toBe("https://ca-oria.whiteisland-0f8ce503.brazilsouth.azurecontainerapps.io/api/webhooks/whatsapp?x=1");
     expect(mocks.resolveToken).not.toHaveBeenCalled();
   });
 
