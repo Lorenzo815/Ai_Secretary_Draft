@@ -14,7 +14,7 @@ describe("follow-up instructions", () => {
   });
 
   it("prevents repeated price defenses and coercive follow-ups", () => {
-    expect(DEFAULT_FOLLOW_UP_PROMPT).toContain("não volte a defender o valor com a mesma lista");
+    expect(DEFAULT_FOLLOW_UP_PROMPT).toContain("não volte a defender o valor repetindo a mesma lista de diferenciais");
     expect(DEFAULT_FOLLOW_UP_PROMPT).toContain("Não invente desconto, parcelamento");
     expect(DEFAULT_FOLLOW_UP_PROMPT).toContain("não use culpa, pressão, urgência ou escassez artificial");
     expect(DEFAULT_FOLLOW_UP_PROMPT).toContain("com no máximo uma pergunta concreta");
