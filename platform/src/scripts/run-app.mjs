@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const mode = process.argv[2];
@@ -23,9 +23,12 @@ if (mode === "standalone") {
   process.env.ASSISTANT_WORKER_URL ??= `http://127.0.0.1:${process.env.PORT}`;
 }
 
-const nextProcess = mode === "standalone"
-  ? startChild("Next.js", [resolve(appRoot, "server.js")])
-  : startChild("Next.js", [nextBin, mode]);
+const nextEntry = mode === "standalone" ? [resolve(appRoot, "server.js")] : [nextBin, mode];
+// `next dev` already prints request lines; production servers get the access logger.
+const requestLogEnabled = mode !== "dev" && (process.env.REQUEST_LOG ?? "on").toLowerCase() !== "off";
+if (requestLogEnabled) process.env.ORIA_REQUEST_LOG = "on";
+const requestLogger = pathToFileURL(resolve(scriptDirectory, "request-logger.mjs")).href;
+const nextProcess = startChild("Next.js", requestLogEnabled ? ["--import", requestLogger, ...nextEntry] : nextEntry);
 if (workerEnabled) {
   startChild("assistant worker", [workerScript]);
 } else {
