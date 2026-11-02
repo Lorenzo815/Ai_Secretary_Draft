@@ -33,6 +33,7 @@ export interface AutomationRuleDocument {
 
 export interface AutomationJobDocument {
   _id: ObjectId;
+  companyId?: ObjectId;
   process: AutomationProcessKey;
   customerId: ObjectId;
   event: AutomationEventType;

@@ -2,16 +2,24 @@ import "server-only";
 
 import { getAssistantConfig } from "../assistant/config";
 import { processCustomerAgentJob } from "../assistant/agent/orchestrator";
+import { runWithCompany } from "../companies/context";
+import { legacyCompanyId } from "../companies/ownership";
 import { analyzeAndSaveCustomerLeadQualification } from "../qualification/customer-lead";
 import {
   claimAutomationJob,
   completeAutomationJob,
   failAutomationJob,
 } from "./queue";
+import type { AutomationJobDocument } from "./contracts";
 
 export async function processNextAutomationJob() {
   const job = await claimAutomationJob(getAssistantConfig().leaseMs);
   if (!job) return { processed: false as const };
+  // Jobs are claimed across all companies; each one runs under its own tenant.
+  return runWithCompany(job.companyId ?? legacyCompanyId(), () => processClaimedJob(job));
+}
+
+async function processClaimedJob(job: AutomationJobDocument) {
   if (job.process === "customer_agent" || job.process === "customer_follow_up") {
     return processCustomerAgentJob(job);
   }

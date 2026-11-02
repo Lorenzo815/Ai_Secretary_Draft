@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyPermissions, type Principal } from "./lib/access/contracts";
+import { COMPANY_HEADER } from "./lib/companies/tenant-header";
 
 const mocks = vi.hoisted(() => ({ getToken: vi.fn(), resolveToken: vi.fn() }));
 vi.mock("next-auth/jwt", () => ({ getToken: mocks.getToken }));
@@ -68,6 +69,21 @@ describe("server request authorization", () => {
     const result = await proxy(new NextRequest("http://localhost:3000/api/webhooks/whatsapp", { method: "POST" }));
     expect(result.status).toBe(200);
     expect(mocks.resolveToken).not.toHaveBeenCalled();
+  });
+  it("strips a client-supplied tenant header on public routes", async () => {
+    const result = await proxy(new NextRequest("http://localhost:3000/api/webhooks/whatsapp", {
+      method: "POST", headers: { [COMPANY_HEADER]: "0123456789abcdef01234567" },
+    }));
+    expect(result.headers.get(`x-middleware-request-${COMPANY_HEADER}`)).toBeNull();
+    expect(result.headers.get("x-middleware-override-headers") ?? "").not.toContain(COMPANY_HEADER);
+  });
+  it("forwards the authenticated company instead of a forged one", async () => {
+    mocks.resolveToken.mockResolvedValue({ ...user, companyId: "9b9d1f4b4f16cf6e84abcce4", isAdmin: true });
+    const result = await proxy(new NextRequest("http://localhost:3000/api/company/settings", {
+      headers: { [COMPANY_HEADER]: "0123456789abcdef01234567" },
+    }));
+    expect(result.status).toBe(200);
+    expect(result.headers.get(`x-middleware-request-${COMPANY_HEADER}`)).toBe("9b9d1f4b4f16cf6e84abcce4");
   });
   it("fails closed when database validation is unavailable", async () => {
     mocks.resolveToken.mockRejectedValue(new Error("private database details"));

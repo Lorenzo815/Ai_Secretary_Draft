@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { legacyCompanyId } from "../companies/ownership";
+import { runWithCompany } from "../companies/context";
 
 const mocks = vi.hoisted(() => ({ updateOne: vi.fn(), createIndex: vi.fn() }));
 vi.mock("../mongodb", () => ({
@@ -59,5 +60,16 @@ describe("automation job ownership", () => {
       status: { $cond: [{ $eq: ["$status", "processing"] }, "processing", "pending"] },
       latestEventAt: occurredAt,
     });
+  });
+
+  it("creates jobs for the company in scope", async () => {
+    const companyId = new ObjectId();
+    await runWithCompany(companyId, () => scheduleAutomationJob({
+      process: "customer_agent",
+      event: { type: "message.received", customerId: new ObjectId(), occurredAt: new Date(), payload: {} },
+      debounceMs: 0,
+    }));
+    const expression = mocks.updateOne.mock.calls[0][1][0].$set.companyId;
+    expect(evaluate(expression, {})).toEqual(companyId);
   });
 });

@@ -2,7 +2,7 @@ import "server-only";
 
 import { ObjectId, type Collection } from "mongodb";
 import clientPromise from "../mongodb";
-import { legacyCompanyId } from "../companies/ownership";
+import { currentCompanyId } from "../companies/context";
 import type { AutomationEvent, AutomationJobDocument, AutomationProcessKey } from "./contracts";
 
 const DB_NAME = "ai_secretary";
@@ -20,6 +20,7 @@ export async function scheduleAutomationJob(input: {
 }) {
   const collection = await getCollection();
   await ensureIndexes();
+  const companyId = await currentCompanyId();
   const now = new Date();
   const dueAt = input.dueAt ?? new Date(now.getTime() + input.debounceMs);
   await collection.updateOne(
@@ -27,7 +28,7 @@ export async function scheduleAutomationJob(input: {
     [{
       $set: {
         _id: { $ifNull: ["$_id", new ObjectId()] },
-        companyId: { $cond: [{ $eq: [{ $type: "$companyId" }, "missing"] }, legacyCompanyId(), "$companyId"] },
+        companyId: { $cond: [{ $eq: [{ $type: "$companyId" }, "missing"] }, companyId, "$companyId"] },
         process: { $ifNull: ["$process", input.process] },
         customerId: { $ifNull: ["$customerId", input.event.customerId] },
         event: input.event.type,

@@ -3,11 +3,15 @@ import { NextResponse, type NextRequest } from "next/server";
 import { resolveToken } from "./lib/access/session";
 import { allows, routePolicy } from "./lib/access/policy";
 import { sessionCookie } from "./lib/access/cookies";
+import { COMPANY_HEADER } from "./lib/companies/tenant-header";
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname.replace(/\/$/, "");
   const policy = routePolicy(path, request.method);
-  if (policy === "public") return NextResponse.next();
+  // The tenant header is trusted downstream, so a client-supplied value must never pass through.
+  const forwardedHeaders = new Headers(request.headers);
+  forwardedHeaders.delete(COMPANY_HEADER);
+  if (policy === "public") return NextResponse.next({ request: { headers: forwardedHeaders } });
   const api = path.startsWith("/api/");
   const secret = process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET;
   if (!secret) {
@@ -33,7 +37,8 @@ export async function proxy(request: NextRequest) {
       const origin = request.headers.get("origin");
       if (!origin || !allowedOrigins(request).has(origin)) return NextResponse.json({ error: "Origem não permitida." }, { status: 403 });
     }
-    const response = NextResponse.next();
+    forwardedHeaders.set(COMPANY_HEADER, principal.companyId);
+    const response = NextResponse.next({ request: { headers: forwardedHeaders } });
     response.headers.set("Cache-Control", "private, no-store");
     return response;
   } catch (error) {
