@@ -2,11 +2,12 @@ import "server-only";
 
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
 import { Collection, Document, MongoServerError, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
-import { currentCompanyId, withCurrentCompany } from "../companies/context";
+import { currentCompanyId, runWithCompany, withCurrentCompany } from "../companies/context";
 import { withCompany } from "../companies/ownership";
 import { LEAD_QUALIFICATION_VERSION, type LeadInsightTag } from "../qualification/contracts";
 import { CustomerProfileValidationError, getWhatsAppPhoneAliases, isValidBirthDate, isValidCpf, isValidFullName, isValidPhone, normalizeCpf, normalizePhone, normalizeWhatsAppPhone } from "./validation";
+import clientPromise from "../mongodb";
+import { tenantDb } from "../companies/tenant-db";
 
 export interface CustomerIdentifier {
   kind: string;
@@ -164,11 +165,21 @@ const DB_NAME = "ai_secretary";
 let qualificationHistoryIndexesPromise: Promise<unknown> | undefined;
 
 async function getCustomersCollection(): Promise<Collection<CustomerDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<CustomerDocument>("crm_customers");
+  return (await tenantDb()).collection<CustomerDocument>("crm_customers");
 }
 
 export async function findOrCreateCustomerFromWhatsApp(input: {
+  phone: string;
+  name?: string;
+  interactionAt: Date;
+  companyId?: ObjectId;
+}) {
+  return input.companyId
+    ? runWithCompany(input.companyId, () => findOrCreateCustomerInScope(input))
+    : findOrCreateCustomerInScope(input);
+}
+
+async function findOrCreateCustomerInScope(input: {
   phone: string;
   name?: string;
   interactionAt: Date;
@@ -818,8 +829,7 @@ export async function listCustomerOperationsPage(input: {
   status?: CustomerOperationsFilter;
   sort?: CustomerOperationsSort;
 } = {}): Promise<CustomerOperationsPage> {
-  const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const customers = database.collection<CustomerDocument>("crm_customers");
   const appointments = database.collection<{ customerId: ObjectId; status: string; startAt: Date }>("calendar_appointments");
   const pageSize = Math.min(Math.max(Math.trunc(input.pageSize ?? 25), 10), 100);
@@ -958,7 +968,7 @@ export async function saveCustomerLeadQualification(
   qualification: CustomerLeadQualification,
 ) {
   const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const customers = database.collection<CustomerDocument>("crm_customers");
   const history = database.collection<CustomerLeadQualificationHistoryDocument>("lead_qualification_history");
   qualificationHistoryIndexesPromise ??= ensureQualificationHistoryIndexes(history);

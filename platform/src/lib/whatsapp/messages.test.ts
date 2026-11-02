@@ -269,6 +269,7 @@ describe("WhatsApp message ordering", () => {
           { customerId },
           { contactPhone: { $in: ["5542999999999"] } },
         ],
+        companyId: legacyCompanyId(),
       },
       { sort: { timestamp: -1, _id: -1 } },
     );

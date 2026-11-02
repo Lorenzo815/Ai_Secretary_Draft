@@ -1,8 +1,8 @@
 import "server-only";
 
 import { MongoServerError, ObjectId, type Collection } from "mongodb";
-import clientPromise from "../mongodb";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const LOCK_COLLECTION = "lead_qualification_locks";
@@ -79,8 +79,7 @@ export async function getQualificationLockStatus(customerId: ObjectId) {
 }
 
 async function getCollection(): Promise<Collection<QualificationLockDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<QualificationLockDocument>(LOCK_COLLECTION);
+  return (await tenantDb()).collection<QualificationLockDocument>(LOCK_COLLECTION);
 }
 
 async function ensureIndexes(collection: Collection<QualificationLockDocument>) {

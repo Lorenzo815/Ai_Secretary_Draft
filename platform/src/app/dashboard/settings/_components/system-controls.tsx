@@ -11,6 +11,7 @@ interface MercadoPagoStatus {
   environmentConfigured: boolean;
   databaseConfigured: boolean;
   storageEncryptionConfigured: boolean;
+  webhookPath: string;
 }
 
 interface PaymentSettings {
@@ -59,7 +60,7 @@ export default function SystemControls({
   const [savingProvider, setSavingProvider] = useState(false);
   const [savingCredential, setSavingCredential] = useState(false);
   const [accountHealth, setAccountHealth] = useState<{ state: "idle" | "checking" | "working" | "failed"; text: string }>({ state: "idle", text: "Conta ainda não testada." });
-  const [webhookUrl, setWebhookUrl] = useState("/api/webhooks/mercado-pago");
+  const [webhookUrl, setWebhookUrl] = useState(initialPaymentProvider.mercadoPago.webhookPath);
   const confirmationAccepted = confirmation.trim() === "APAGAR";
   const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
   const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !saving && !deleting;
@@ -74,8 +75,8 @@ export default function SystemControls({
   }, [initialProcessingEnabled]);
 
   useEffect(() => {
-    setWebhookUrl(`${window.location.origin}/api/webhooks/mercado-pago`);
-  }, []);
+    setWebhookUrl(`${window.location.origin}${mercadoPagoStatus.webhookPath}`);
+  }, [mercadoPagoStatus.webhookPath]);
 
   useEffect(() => {
     const previous = receivedManualPayment.current;

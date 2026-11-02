@@ -4,7 +4,7 @@ import { Collection, MongoServerError, ObjectId, type ClientSession, type Update
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { legacyCompanyId, withCompany } from "../companies/ownership";
-import { withCurrentCompany } from "../companies/context";
+import { scopedSettingsId, withCurrentCompany } from "../companies/context";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
 import { getSlotAccessDecision, isSlotAllowedByAccessEvents } from "./access-policy";
 import {
@@ -13,6 +13,7 @@ import {
   type AppointmentRecurrenceFrequency,
   type AppointmentRecurrenceInput,
 } from "./recurrence";
+import { tenantDb } from "../companies/tenant-db";
 
 export type { AppointmentRecurrenceFrequency, AppointmentRecurrenceInput } from "./recurrence";
 
@@ -164,23 +165,20 @@ const defaultResources: CalendarResourceDefinition[] = [
 ];
 
 async function getSettingsCollection(): Promise<Collection<CalendarSettingsDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<CalendarSettingsDocument>("calendar_settings");
+  return (await tenantDb()).collection<CalendarSettingsDocument>("calendar_settings");
 }
 
 async function getAppointmentsCollection(): Promise<Collection<AppointmentDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<AppointmentDocument>("calendar_appointments");
+  return (await tenantDb()).collection<AppointmentDocument>("calendar_appointments");
 }
 
 async function getAccessEventsCollection(): Promise<Collection<CalendarAccessEventDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<CalendarAccessEventDocument>("calendar_access_events");
+  return (await tenantDb()).collection<CalendarAccessEventDocument>("calendar_access_events");
 }
 
 export async function getCalendarSettings() {
   const settings = await getSettingsCollection();
-  const existing = await settings.findOne({ _id: SETTINGS_ID });
+  const existing = await settings.findOne({ _id: await scopedSettingsId(SETTINGS_ID) });
   if (existing) {
     const slotDurationMinutes = normalizeSlotDuration(existing.slotDurationMinutes);
     const weeklyAvailability = normalizeWeeklyAvailability(existing.weeklyAvailability);
@@ -192,7 +190,7 @@ export async function getCalendarSettings() {
       : storedMessage;
     if (slotDurationMinutes !== existing.slotDurationMinutes || JSON.stringify(weeklyAvailability) !== JSON.stringify(existing.weeklyAvailability) || JSON.stringify(resources) !== JSON.stringify(existing.resources) || JSON.stringify(eventTypes) !== JSON.stringify(existing.eventTypes) || confirmationMessageTemplate !== existing.confirmationMessageTemplate) {
       await settings.updateOne(
-        { _id: SETTINGS_ID },
+        { _id: await scopedSettingsId(SETTINGS_ID) },
         { $set: { slotDurationMinutes, weeklyAvailability, resources, eventTypes, confirmationMessageTemplate, updatedAt: new Date() }, $unset: { followUpHoursBefore: "" } },
       );
     }
@@ -201,7 +199,7 @@ export async function getCalendarSettings() {
     return normalized;
   }
   const initial: CalendarSettingsDocument = {
-    _id: SETTINGS_ID,
+    _id: await scopedSettingsId(SETTINGS_ID),
     providerId: DEFAULT_PROVIDER_ID,
     providerName: "Dr(a). responsável",
     timezone: "America/Sao_Paulo",
@@ -213,8 +211,9 @@ export async function getCalendarSettings() {
     confirmationMessageTemplate: DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
-  await settings.insertOne(await withCurrentCompany(initial));
-  return initial;
+  const stamped = await withCurrentCompany(initial);
+  await settings.insertOne(stamped);
+  return stamped;
 }
 
 export async function updateCalendarSettings(input: {
@@ -265,7 +264,7 @@ export async function updateCalendarSettings(input: {
     confirmationMessageTemplate: input.confirmationMessageTemplate?.trim().slice(0, 500) || DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
-  await (await getSettingsCollection()).replaceOne({ _id: SETTINGS_ID }, await withCurrentCompany(next), { upsert: true });
+  await (await getSettingsCollection()).replaceOne({ _id: await scopedSettingsId(SETTINGS_ID) }, await withCurrentCompany(next), { upsert: true });
   return next;
 }
 

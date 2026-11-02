@@ -2,13 +2,13 @@ import "server-only";
 
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
-import { withCurrentCompany } from "../companies/context";
+import { withCurrentCompany, scopedSettingsId } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 
 export interface LeadQualificationConfigurationDocument {
-  _id: "active";
+  _id: string;
   revision: number;
   contentHash: string;
   enabled: boolean;
@@ -32,16 +32,15 @@ const DEFAULT_PROMPT = `Você é um analista de operações comerciais de uma cl
 - Escreva em português brasileiro de forma concisa, específica e auditável.`;
 
 async function getCollection(): Promise<Collection<LeadQualificationConfigurationDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<LeadQualificationConfigurationDocument>("lead_qualification_config");
+  return (await tenantDb()).collection<LeadQualificationConfigurationDocument>("lead_qualification_config");
 }
 
 export async function getLeadQualificationConfiguration() {
   const collection = await getCollection();
-  const existing = await collection.findOne({ _id: "active" });
+  const existing = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (existing) return existing;
   const initial = withHash({
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: 1,
     contentHash: "",
     enabled: true,
@@ -50,8 +49,8 @@ export async function getLeadQualificationConfiguration() {
     updatedAt: new Date(),
     updatedBy: "system",
   });
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
-  return (await collection.findOne({ _id: "active" })) ?? initial;
+  await collection.updateOne({ _id: await scopedSettingsId("active") }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
+  return (await collection.findOne({ _id: await scopedSettingsId("active") })) ?? initial;
 }
 
 export async function updateLeadQualificationConfiguration(input: {
@@ -66,7 +65,7 @@ export async function updateLeadQualificationConfiguration(input: {
     throw new Error("O limite de tokens da qualificação é inválido.");
   }
   const next = withHash({
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: input.expectedRevision + 1,
     contentHash: "",
     enabled: input.enabled,
@@ -76,7 +75,7 @@ export async function updateLeadQualificationConfiguration(input: {
     updatedBy: input.updatedBy,
   });
   const result = await (await getCollection()).replaceOne(
-    { _id: "active", revision: input.expectedRevision },
+    { _id: await scopedSettingsId("active"), revision: input.expectedRevision },
     await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) throw new Error("A configuração de qualificação foi alterada. Recarregue antes de salvar.");

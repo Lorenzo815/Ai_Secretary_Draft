@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../companies/ownership";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ createIndex: vi.fn(), findOne: vi.fn(), findOneAndUpdate: vi.fn() }));
@@ -23,7 +24,7 @@ describe("relationship classification and service routing", () => {
 
       expect(mocks.findOneAndUpdate).toHaveBeenCalledTimes(2);
       for (const [filter, update] of mocks.findOneAndUpdate.mock.calls) {
-        expect(filter).toEqual({ _id: customerId });
+        expect(filter).toEqual({ _id: customerId, companyId: legacyCompanyId() });
         expect(update.$set).toMatchObject({ relationship: { status, source: "customer" } });
         expect(update.$set).not.toHaveProperty("serviceStatus");
       }
@@ -36,7 +37,7 @@ describe("relationship classification and service routing", () => {
       await updateCustomerProfile(customerId, { relationshipStatus: status }, { serviceStatus });
 
       for (const [filter, update] of mocks.findOneAndUpdate.mock.calls) {
-        expect(filter).toEqual({ _id: customerId });
+        expect(filter).toEqual({ _id: customerId, companyId: legacyCompanyId() });
         expect(update.$set).toMatchObject({
           relationship: { status, source: "customer" }, serviceStatus,
         });

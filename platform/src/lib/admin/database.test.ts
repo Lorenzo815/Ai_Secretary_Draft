@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../companies/ownership";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { collection, deleteMany, findOne, updateOne, findActiveJob, findActiveAnalysis, startSession, withTransaction, endSession } = vi.hoisted(() => ({
@@ -62,7 +63,7 @@ describe("clearDynamicDataForCustomer", () => {
       expect(deleteMany).toHaveBeenCalledTimes(CUSTOMER_CHAT_COLLECTIONS.length);
       for (const [, options] of deleteMany.mock.calls) expect(options).toEqual({ session });
       expect(updateOne).toHaveBeenCalledExactlyOnceWith(
-        { _id: customerId },
+        { _id: customerId, companyId: legacyCompanyId() },
         { $unset: { leadQualification: "", whatsappAttention: "" }, $set: { updatedAt: expect.any(Date) } },
         { session },
       );
@@ -89,9 +90,9 @@ describe("clearDynamicDataForCustomer", () => {
       await clearChatHistoryForCustomer(customerId);
 
       expect(findActiveJob).toHaveBeenCalledWith(
-        { ...filter, status: "processing" }, { projection: { _id: 1 }, session },
+        { ...filter, status: "processing", companyId: legacyCompanyId() }, { projection: { _id: 1 }, session },
       );
-      expect(deleteMany).toHaveBeenCalledWith(filter, { session });
+      expect(deleteMany).toHaveBeenCalledWith({ ...filter, companyId: legacyCompanyId() }, { session });
     });
 
     it("includes legacy phone aliases without deleting messages owned by another customer", async () => {
@@ -104,6 +105,7 @@ describe("clearDynamicDataForCustomer", () => {
           { customerId },
           { customerId: null, contactPhone: { $in: ["5542999990000", "554299990000"] } },
         ],
+        companyId: legacyCompanyId(),
       }, { session });
     });
 
@@ -115,6 +117,7 @@ describe("clearDynamicDataForCustomer", () => {
 
       expect(deleteMany).toHaveBeenCalledWith({
         $or: [{ customerId }, { customerId: null, contactPhone: { $in: [] } }],
+        companyId: legacyCompanyId(),
       }, { session });
     });
 
@@ -163,13 +166,14 @@ describe("clearDynamicDataForCustomer", () => {
 
     expect(result).toEqual(Object.fromEntries(DYNAMIC_COLLECTIONS.map((name) => [name, 1])));
     expect(deleteMany).toHaveBeenCalledTimes(DYNAMIC_COLLECTIONS.length);
-    expect(deleteMany).toHaveBeenCalledWith({ _id: customerId });
-    expect(deleteMany).toHaveBeenCalledWith({ customerId });
+    expect(deleteMany).toHaveBeenCalledWith({ _id: customerId, companyId: legacyCompanyId() });
+    expect(deleteMany).toHaveBeenCalledWith({ customerId, companyId: legacyCompanyId() });
     expect(deleteMany).toHaveBeenCalledWith({
       $or: [
         { customerId },
         { contactPhone: { $in: ["5542999990000"] } },
       ],
+      companyId: legacyCompanyId(),
     });
   });
 

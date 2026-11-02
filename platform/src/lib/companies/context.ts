@@ -2,7 +2,7 @@ import "server-only";
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ObjectId } from "mongodb";
-import { legacyCompanyId, withCompany } from "./ownership";
+import { companyScopedId, legacyCompanyId, withCompany } from "./ownership";
 import { COMPANY_HEADER } from "./tenant-header";
 
 export { COMPANY_HEADER };
@@ -48,6 +48,11 @@ export async function withCurrentCompany<T extends object>(document: T): Promise
 /** Adds the current company to a query filter. */
 export async function companyFilter<T extends object>(filter: T): Promise<T & { companyId: ObjectId }> {
   return { ...filter, companyId: await currentCompanyId() };
+}
+
+/** `_id` of the current company's copy of a per-company settings document. */
+export async function scopedSettingsId(key: string): Promise<string> {
+  return companyScopedId(await currentCompanyId(), key);
 }
 
 export function parseCompanyId(value: unknown): ObjectId | null {

@@ -1,11 +1,11 @@
 import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 
 import { updateCustomerServiceStatus } from "../crm";
 import { getAutomaticPaymentProvider } from "./providers/registry";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 export type PaymentRequestStatus = "awaiting_human_confirmation" | "awaiting_provider_confirmation" | "paid" | "rejected" | "provider_error";
 
@@ -33,8 +33,7 @@ export interface PaymentRequestDocument {
 const DB_NAME = "ai_secretary";
 
 async function getPaymentRequestsCollection(): Promise<Collection<PaymentRequestDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<PaymentRequestDocument>("payment_requests");
+  return (await tenantDb()).collection<PaymentRequestDocument>("payment_requests");
 }
 
 export async function createPaymentRequest(input: {

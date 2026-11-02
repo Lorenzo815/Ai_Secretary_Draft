@@ -1,13 +1,13 @@
 import "server-only";
 
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
 
 import {
   getVercelGatewayCredentialStatus,
 } from "./provider-credentials";
 import { AI_PROVIDERS, type AiProvider } from "./providers/types";
-import { withCurrentCompany } from "../companies/context";
+import { withCurrentCompany, scopedSettingsId } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 export type { AiProvider } from "./providers/types";
 
@@ -33,7 +33,7 @@ export interface AiTaskModelConfiguration {
 }
 
 export interface AiProviderConfigurationDocument {
-  _id: "active";
+  _id: string;
   revision: number;
   activeProvider: AiProvider;
   preferredProvider?: AiProvider;
@@ -45,7 +45,7 @@ export interface AiProviderConfigurationDocument {
 }
 
 const DEFAULT_CONFIGURATION: AiProviderConfigurationDocument = {
-  _id: "active",
+  _id: await scopedSettingsId("active"),
   revision: 1,
   activeProvider: "vercel",
   tasks: {
@@ -70,16 +70,16 @@ const DEFAULT_CONFIGURATION: AiProviderConfigurationDocument = {
 };
 
 async function getCollection(): Promise<Collection<AiProviderConfigurationDocument>> {
-  return (await clientPromise).db(DB_NAME).collection<AiProviderConfigurationDocument>(COLLECTION);
+  return (await tenantDb()).collection<AiProviderConfigurationDocument>(COLLECTION);
 }
 
 export async function getAiProviderConfiguration() {
   const collection = await getCollection();
-  const existing = await collection.findOne({ _id: "active" });
+  const existing = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (existing) return normalizeConfiguration(existing);
   const initial = { ...DEFAULT_CONFIGURATION, updatedAt: new Date() };
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
-  return normalizeConfiguration((await collection.findOne({ _id: "active" })) ?? initial);
+  await collection.updateOne({ _id: await scopedSettingsId("active") }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
+  return normalizeConfiguration((await collection.findOne({ _id: await scopedSettingsId("active") })) ?? initial);
 }
 
 export async function updateAiProviderConfiguration(input: {
@@ -147,7 +147,7 @@ export async function updateAiProviderConfiguration(input: {
     throw new Error("O modelo Vercel para transcrição de áudio é inválido.");
   }
   const next: AiProviderConfigurationDocument = {
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: input.expectedRevision + 1,
     activeProvider: input.activeProvider,
     ...(input.activeProvider === "azure" ? { azureAccessAuthorizedAt: new Date() } : {}),
@@ -157,7 +157,7 @@ export async function updateAiProviderConfiguration(input: {
     updatedBy: input.updatedBy,
   };
   const result = await (await getCollection()).replaceOne(
-    { _id: "active", revision: input.expectedRevision },
+    { _id: await scopedSettingsId("active"), revision: input.expectedRevision },
     await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { legacyCompanyId } from "../companies/ownership";
 
 const { deleteOne, findOne, replaceOne } = vi.hoisted(() => ({
   deleteOne: vi.fn(),
@@ -45,6 +46,6 @@ describe("Mercado Pago credentials", () => {
 
   it("removes only the stored Mercado Pago credential", async () => {
     await clearStoredMercadoPagoCredential();
-    expect(deleteOne).toHaveBeenCalledWith({ _id: "mercado_pago" });
+    expect(deleteOne).toHaveBeenCalledWith({ _id: "mercado_pago", companyId: legacyCompanyId() });
   });
 });

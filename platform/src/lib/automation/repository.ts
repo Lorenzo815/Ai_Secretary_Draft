@@ -1,18 +1,17 @@
 import "server-only";
 
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
 import { currentCompanyId } from "../companies/context";
-import { withCompany } from "../companies/ownership";
+import { companyScopedId, unscopedId, withCompany } from "../companies/ownership";
 import type { AutomationRuleDocument } from "./contracts";
 import { createDefaultAutomationRules } from "./defaults";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const RETIRED_RULE_IDS = ["lead-qualification-on-profile"];
 
 async function getCollection(): Promise<Collection<AutomationRuleDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<AutomationRuleDocument>("automation_rules");
+  return (await tenantDb()).collection<AutomationRuleDocument>("automation_rules");
 }
 
 export async function listAutomationRules() {
@@ -20,14 +19,17 @@ export async function listAutomationRules() {
   const defaults = createDefaultAutomationRules();
   const companyId = await currentCompanyId();
   await Promise.all([
-    collection.deleteMany({ _id: { $in: RETIRED_RULE_IDS } }),
+    collection.deleteMany({ companyId, _id: { $in: RETIRED_RULE_IDS.map((id) => companyScopedId(companyId, id)) } }),
     ...defaults.map((rule) => collection.updateOne(
-      { _id: rule._id },
-      { $setOnInsert: withCompany(rule, companyId) },
+      { _id: companyScopedId(companyId, rule._id) },
+      { $setOnInsert: withCompany({ ...rule, _id: companyScopedId(companyId, rule._id) }, companyId) },
       { upsert: true },
     )),
   ]);
-  return collection.find({}).sort({ _id: 1 }).toArray();
+  const stored = await collection.find({ companyId }).toArray();
+  return stored
+    .map((rule) => ({ ...rule, _id: unscopedId(companyId, rule._id) }))
+    .sort((left, right) => left._id.localeCompare(right._id));
 }
 
 export async function replaceAutomationRules(input: {
@@ -37,11 +39,11 @@ export async function replaceAutomationRules(input: {
   validateRules(input.rules);
   const collection = await getCollection();
   const companyId = await currentCompanyId();
-  const ids = input.rules.map((rule) => rule._id);
+  const ids = input.rules.map((rule) => companyScopedId(companyId, rule._id));
   await Promise.all(input.rules.map((rule) => collection.replaceOne(
-    { _id: rule._id },
+    { _id: companyScopedId(companyId, rule._id) },
     withCompany({
-      _id: rule._id,
+      _id: companyScopedId(companyId, rule._id),
       name: rule.name,
       enabled: rule.enabled,
       process: rule.process,
@@ -55,7 +57,7 @@ export async function replaceAutomationRules(input: {
     }, companyId),
     { upsert: true },
   )));
-  await collection.deleteMany({ _id: { $nin: ids } });
+  await collection.deleteMany({ companyId, _id: { $nin: ids } });
   return listAutomationRules();
 }
 

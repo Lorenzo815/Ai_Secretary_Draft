@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../companies/ownership";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -231,7 +232,7 @@ describe("WhatsApp inbox", () => {
     await resolveWhatsAppInboxAttention(customerId, "current-message", "team@example.com");
 
     expect(mocks.updateOne).toHaveBeenCalledWith(
-      { _id: customerId },
+      { _id: customerId, companyId: legacyCompanyId() },
       {
         $set: {
           whatsappAttention: {

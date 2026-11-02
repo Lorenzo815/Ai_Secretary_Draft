@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
+import { scopedSettingsId } from "../companies/context";
 import {
   estimateAudioTranscriptionCostUsd,
   estimateModelCallCostUsd,
@@ -13,6 +13,7 @@ import { listVercelLanguageModels, listVercelModelEndpoints, listVercelTranscrip
 import { getUsdBrlRate, type UsdBrlRate } from "../currency/usd-brl";
 import { reconcileResumedAgentRuns } from "../assistant/agent/runs";
 import { collectAudioTranscriptionModelIds } from "./operations-usage";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 
@@ -64,14 +65,14 @@ interface ModelCallRecord {
 }
 
 export async function getOperationsDashboard() {
-  const database = (await clientPromise).db(DB_NAME);
+  const database = (await tenantDb());
   await reconcileResumedAgentRuns();
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
   const lastSevenDays = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1_000);
   const last30Days = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1_000);
   const calendarSettings = await database.collection<{ _id: string; timezone?: string }>("calendar_settings").findOne(
-    { _id: "default-calendar" },
+    { _id: await scopedSettingsId("default-calendar") },
     { projection: { timezone: 1 } },
   );
   const timezone = typeof calendarSettings?.timezone === "string"

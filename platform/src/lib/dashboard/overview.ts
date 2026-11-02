@@ -1,8 +1,8 @@
 import "server-only";
 
 import type { ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 import { LEAD_QUALIFICATION_VERSION, type LeadInsightTagTone } from "../qualification/contracts";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 
@@ -44,8 +44,7 @@ interface MessageAnalyticsDocument {
 }
 
 export async function getDashboardOverview(periodDays = 30) {
-  const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const now = new Date();
   const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1_000);
   const periodStart = new Date(now.getTime() - periodDays * 24 * 60 * 60 * 1_000);

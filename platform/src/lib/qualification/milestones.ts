@@ -1,8 +1,8 @@
 import "server-only";
 
 import { MongoServerError, type ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 export type QualificationMilestone = "profile_completed" | "first_appointment_confirmed";
 
@@ -28,7 +28,7 @@ export async function claimQualificationMilestone(
   occurredAt: Date,
 ) {
   try {
-    await (await clientPromise).db(DB_NAME).collection<QualificationMilestoneDocument>("qualification_milestones").insertOne(await withCurrentCompany({
+    await (await tenantDb()).collection<QualificationMilestoneDocument>("qualification_milestones").insertOne(await withCurrentCompany({
       _id: `${customerId.toHexString()}:${milestone}`,
       customerId,
       milestone,
@@ -46,7 +46,7 @@ export async function releaseQualificationMilestone(
   customerId: ObjectId,
   milestone: QualificationMilestone,
 ) {
-  await (await clientPromise).db(DB_NAME).collection<QualificationMilestoneDocument>("qualification_milestones").deleteOne({
+  await (await tenantDb()).collection<QualificationMilestoneDocument>("qualification_milestones").deleteOne({
     _id: `${customerId.toHexString()}:${milestone}`,
   });
 }
@@ -55,8 +55,7 @@ export async function isFirstCustomerAppointment(
   customerId: ObjectId,
   appointmentIds: ObjectId[],
 ) {
-  const firstAppointment = await (await clientPromise)
-    .db(DB_NAME)
+  const firstAppointment = await (await tenantDb())
     .collection<AppointmentReference>("calendar_appointments")
     .findOne({ customerId }, { projection: { _id: 1 }, sort: { createdAt: 1, _id: 1 } });
   return Boolean(firstAppointment && appointmentIds.some((id) => id.equals(firstAppointment._id)));

@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../../companies/ownership";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAction, AgentRunDocument, AgentRunStepDocument } from "./contracts";
 
@@ -120,6 +121,7 @@ function failedResult(tool: string) {
       jobRevision: 8,
       configHash: "current-config",
       status: { $in: ["failed", "running"] },
+      companyId: legacyCompanyId(),
     });
     expect(stepFind).not.toHaveBeenCalled();
     expect(checkpoint.toolHistory).toEqual([]);
@@ -147,7 +149,7 @@ function failedResult(tool: string) {
     });
 
     expect(updateMany).toHaveBeenCalledWith(
-      { _id: { $in: [interruptedRunId] }, status: "running" },
+      { _id: { $in: [interruptedRunId] }, status: "running", companyId: legacyCompanyId() },
       { $set: { status: "superseded", completedAt: expect.any(Date) } },
     );
     expect(insertOne).toHaveBeenCalledWith(expect.objectContaining({
@@ -170,7 +172,7 @@ function failedResult(tool: string) {
     expect(run).not.toHaveProperty("configSnapshot");
     expect(run.configHash).toBe("routing-test-hash");
     const [filter, update, options] = snapshotUpdateOne.mock.calls[0];
-    expect(filter).toEqual({ _id: expect.stringMatching(/:routing-test-hash$/) });
+    expect(filter).toEqual({ _id: `${legacyCompanyId().toHexString()}:routing-test-hash`, companyId: legacyCompanyId() });
     expect(options).toEqual({ upsert: true });
     expect(update.$setOnInsert.snapshot.relationshipRouting).toEqual(configuration.relationshipRouting);
     expect(JSON.stringify(update)).not.toContain("private-test-key");
@@ -197,7 +199,7 @@ function failedResult(tool: string) {
     await expect(reconcileResumedAgentRuns()).resolves.toBe(1);
 
     expect(updateMany).toHaveBeenCalledWith(
-      { _id: { $in: [interruptedRunId] }, status: "running" },
+      { _id: { $in: [interruptedRunId] }, status: "running", companyId: legacyCompanyId() },
       { $set: { status: "superseded", completedAt: expect.any(Date) } },
     );
   });

@@ -92,10 +92,13 @@ invariantes e pontos de extensão.
 ## Implantação
 
 Webhooks do WhatsApp devem apontar para `/api/webhooks/whatsapp`. Para
-confirmação automática do Pix, cadastre a URL pública
-`/api/webhooks/mercado-pago` nas notificações de pagamentos do Mercado Pago.
+confirmação automática do Pix, cadastre a URL pública exibida em Configurações
+(`/api/webhooks/mercado-pago` para a empresa inicial e
+`/api/webhooks/mercado-pago?company=<companyId>` para as demais) nas notificações
+de pagamentos do Mercado Pago da própria clínica. A assinatura é validada com o
+segredo da empresa indicada.
 Configure `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` no
-ambiente ou armazene-os pela tela de configurações. O armazenamento no banco
+ambiente (somente empresa inicial) ou armazene-os pela tela de configurações. O armazenamento no banco
 exige `PAYMENT_CREDENTIALS_ENCRYPTION_KEY` com 32 bytes em Base64. Variáveis de
 ambiente sempre têm prioridade sobre credenciais armazenadas.
 
@@ -329,6 +332,25 @@ Não há promoção automática no login nem redefinição da senha existente. E
 continua limitada à empresa inicial: `isolationReady:false`. Não habilite outra
 empresa até concluir o isolamento de todas as consultas operacionais.
 
+### Isolamento por empresa (multi-tenancy)
+
+- **Empresa da operação**: `runWithCompany` (worker, webhooks) ou o cabeçalho
+  `x-oria-company-id`, que o proxy remove do cliente e define a partir da sessão.
+  Sem empresa resolvida, o código usa a empresa inicial; `TENANT_STRICT=true` falha.
+- **Consultas**: módulos operacionais usam `tenantDb()`
+  (`src/lib/companies/tenant-db.ts`). Nas coleções da empresa, todo filtro recebe
+  `companyId`, inserções e substituições são carimbadas, agregações começam com
+  `$match` da empresa e `bulkWrite` é filtrado operação a operação. Filtros ou
+  documentos com outra empresa geram `TenantScopeError`. `users`, `companies` e as
+  configurações da plataforma (`ai_provider_credentials`,
+  `whatsapp_embedded_signup_config`) ficam globais; a fila de jobs, a resolução de
+  número do WhatsApp, os ecos e o encaminhamento filtram a empresa explicitamente.
+- **Configurações por empresa**: a empresa inicial mantém os `_id` existentes
+  (`active`, `default-calendar`, `mercado_pago`, regras de automação); as demais usam
+  `<companyId>:<chave>` (`companyScopedId`). Nenhum documento existente muda.
+- **Credenciais do ambiente** (WhatsApp e Mercado Pago) pertencem somente à empresa
+  inicial; outras empresas usam apenas as credenciais próprias armazenadas.
+
 ### Encaminhamento de webhooks do WhatsApp
 
 Em **Configurações do sistema**, o administrador único da empresa pode salvar até
@@ -515,7 +537,8 @@ se houver falha posterior; a execução é retomável/idempotente.
 
 As novas escritas e substituições completas atribuem a empresa inicial no servidor;
 metadados de propriedade enviados por clientes não controlam essa atribuição nem
-compõem hashes de configuração. Essa ponte é transitória, não um resolvedor de tenants.
+compõem hashes de configuração. A resolução da empresa por requisição/job está
+descrita em "Isolamento por empresa (multi-tenancy)".
 Use `dry-run` e `verify` para confirmar a cobertura no ambiente de destino.
 O ensaio de `apply` em scratch não equivale a executar `apply` em produção.
 

@@ -2,8 +2,6 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
-import clientPromise from "../../mongodb";
-import { legacyCompanyId } from "../../companies/ownership";
 import type { AssistantDecision } from "../tools";
 import type {
   AgentAction,
@@ -14,7 +12,8 @@ import type {
   AgentRunStepDocument,
 } from "./contracts";
 import type { AgentToolHistoryEntry } from "./prompt";
-import { withCurrentCompany } from "../../companies/context";
+import { currentCompanyId, withCurrentCompany } from "../../companies/context";
+import { tenantDb } from "../../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const SNAPSHOTS_COLLECTION = "assistant_config_snapshots";
@@ -25,10 +24,10 @@ function configurationSnapshotKey(companyId: ObjectId, configHash: string) {
 }
 
 async function persistConfigurationSnapshot(configuration: AgentConfigurationDocument) {
-  const companyId = legacyCompanyId();
+  const companyId = await currentCompanyId();
   const key = configurationSnapshotKey(companyId, configuration.contentHash);
   if (persistedSnapshotKeys.has(key)) return;
-  await (await clientPromise).db(DB_NAME)
+  await (await tenantDb())
     .collection<AgentConfigurationSnapshotDocument>(SNAPSHOTS_COLLECTION)
     .updateOne(
       { _id: key },
@@ -47,7 +46,7 @@ async function persistConfigurationSnapshot(configuration: AgentConfigurationDoc
 }
 
 export async function listCustomerAgentRuns(customerId: ObjectId, limit = 20) {
-  return (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs")
+  return (await tenantDb()).collection<AgentRunDocument>("assistant_runs")
     .find({ customerId })
     .sort({ startedAt: -1 })
     .limit(Math.min(Math.max(limit, 1), 100))
@@ -76,7 +75,7 @@ export async function startAgentRun(input: {
     startedAt: new Date(),
   };
   await persistConfigurationSnapshot(input.configuration);
-  const collection = (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs");
+  const collection = (await tenantDb()).collection<AgentRunDocument>("assistant_runs");
   if (input.checkpoint?.runIds.length) {
     await collection.updateMany(
       { _id: { $in: input.checkpoint.runIds }, status: "running" },
@@ -101,7 +100,7 @@ export async function recordAgentRunStep(input: {
     action: redactActionForAudit(input.action),
     createdAt: new Date(),
   };
-  const collection = (await clientPromise).db(DB_NAME).collection<AgentRunStepDocument>("assistant_run_steps");
+  const collection = (await tenantDb()).collection<AgentRunStepDocument>("assistant_run_steps");
   await collection.insertOne(await withCurrentCompany(step));
   await collection.createIndex({ runId: 1, iteration: 1 }, { unique: true });
 }
@@ -115,7 +114,7 @@ export async function finishAgentRun(input: {
   finalDecision?: AssistantDecision;
   error?: unknown;
 }) {
-  await (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs").updateOne(
+  await (await tenantDb()).collection<AgentRunDocument>("assistant_runs").updateOne(
     { _id: input.runId, status: "running" },
     {
       $set: {
@@ -132,7 +131,7 @@ export async function finishAgentRun(input: {
 }
 
 export async function reconcileResumedAgentRuns() {
-  const collection = (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs");
+  const collection = (await tenantDb()).collection<AgentRunDocument>("assistant_runs");
   const resumptions = await collection.find(
     { resumedFromRunIds: { $exists: true, $ne: [] } },
     { projection: { resumedFromRunIds: 1 } },
@@ -207,7 +206,7 @@ export async function loadAgentRunCheckpoint(input: {
   jobRevision: number;
   configHash: string;
 }): Promise<AgentRunCheckpoint> {
-  const database = (await clientPromise).db(DB_NAME);
+  const database = (await tenantDb());
   const runs = await database.collection<AgentRunDocument>("assistant_runs")
     .find({
       jobId: input.jobId,

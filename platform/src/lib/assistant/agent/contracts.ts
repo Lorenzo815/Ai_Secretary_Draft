@@ -56,7 +56,7 @@ export type RelationshipRoutingAction = "preserve" | "ai_active" | "waiting_huma
 export type RelationshipRoutingPolicy = Record<"new" | "returning", RelationshipRoutingAction>;
 
 export interface AgentConfigurationDocument {
-  _id: "active";
+  _id: string;
   revision: number;
   contentHash: string;
   enabled: boolean;

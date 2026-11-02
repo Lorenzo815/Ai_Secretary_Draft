@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { legacyCompanyId } from "../companies/ownership";
 
 const { findOne, getVercelGatewayCredential, replaceOne, updateOne } = vi.hoisted(() => ({
   findOne: vi.fn(),
@@ -84,7 +85,7 @@ describe("AI provider configuration", () => {
     });
 
     expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "active", revision: 2 },
+      { _id: "active", revision: 2, companyId: legacyCompanyId() },
       expect.objectContaining({
         revision: 3,
         audioTranscription: { vercelModel: "google/gemini-3.5-transcribe" },
@@ -112,7 +113,7 @@ describe("AI provider configuration", () => {
     });
 
     expect(replaceOne).toHaveBeenCalledWith(
-      { _id: "active", revision: 2 },
+      { _id: "active", revision: 2, companyId: legacyCompanyId() },
       expect.objectContaining({
         tasks: {
           customer_agent: expect.objectContaining({

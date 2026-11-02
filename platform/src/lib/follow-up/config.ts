@@ -2,15 +2,15 @@ import "server-only";
 
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
 
 import { DEFAULT_FOLLOW_UP_ATTEMPT_INSTRUCTIONS, DEFAULT_FOLLOW_UP_PROMPT } from "./instructions";
-import { withCurrentCompany } from "../companies/context";
+import { withCurrentCompany, scopedSettingsId } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 
 export interface FollowUpConfigurationDocument {
-  _id: "active";
+  _id: string;
   revision: number;
   contentHash: string;
   enabled: boolean;
@@ -25,13 +25,12 @@ export interface FollowUpConfigurationDocument {
 }
 
 async function getCollection(): Promise<Collection<FollowUpConfigurationDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<FollowUpConfigurationDocument>("assistant_follow_up_config");
+  return (await tenantDb()).collection<FollowUpConfigurationDocument>("assistant_follow_up_config");
 }
 
 export async function getFollowUpConfiguration() {
   const collection = await getCollection();
-  const existing = await collection.findOne({ _id: "active" });
+  const existing = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (existing) {
     if (Array.isArray(existing.attemptInstructions)) return existing;
     const migrated = withHash({
@@ -41,11 +40,11 @@ export async function getFollowUpConfiguration() {
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
-    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, await withCurrentCompany(migrated));
-    return result.matchedCount === 1 ? migrated : (await collection.findOne({ _id: "active" })) ?? migrated;
+    const result = await collection.replaceOne({ _id: await scopedSettingsId("active"), revision: existing.revision }, await withCurrentCompany(migrated));
+    return result.matchedCount === 1 ? migrated : (await collection.findOne({ _id: await scopedSettingsId("active") })) ?? migrated;
   }
   const initial = withHash({
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: 1,
     contentHash: "",
     enabled: true,
@@ -58,8 +57,8 @@ export async function getFollowUpConfiguration() {
     updatedAt: new Date(),
     updatedBy: "system",
   });
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
-  return (await collection.findOne({ _id: "active" })) ?? initial;
+  await collection.updateOne({ _id: await scopedSettingsId("active") }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
+  return (await collection.findOne({ _id: await scopedSettingsId("active") })) ?? initial;
 }
 
 export async function updateFollowUpConfiguration(input: {
@@ -75,7 +74,7 @@ export async function updateFollowUpConfiguration(input: {
 }) {
   validateFollowUpConfiguration(input);
   const next = withHash({
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: input.expectedRevision + 1,
     contentHash: "",
     enabled: input.enabled,
@@ -89,7 +88,7 @@ export async function updateFollowUpConfiguration(input: {
     updatedBy: input.updatedBy,
   });
   const result = await (await getCollection()).replaceOne(
-    { _id: "active", revision: input.expectedRevision },
+    { _id: await scopedSettingsId("active"), revision: input.expectedRevision },
     await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) throw new Error("A configuração de follow-up foi alterada. Recarregue antes de salvar.");

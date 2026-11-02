@@ -1,5 +1,6 @@
 import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { legacyCompanyId } from "../companies/ownership";
 
 const mocks = vi.hoisted(() => ({
   findOne: vi.fn(),
@@ -101,7 +102,7 @@ describe("scheduled customer appointment queries", () => {
       const result = await findUpcomingCustomerAppointments({ customerId });
 
       expect(mocks.find).toHaveBeenCalledWith({
-        customerId, startAt: { $gte: now },
+        customerId, companyId: legacyCompanyId(), startAt: { $gte: now },
         $or: [{ status: "scheduled" }, { status: "held", holdExpiresAt: { $gt: now } }],
       });
       expect(mocks.sort).toHaveBeenCalledWith({ startAt: 1 });
@@ -141,6 +142,7 @@ describe("scheduled customer appointment queries", () => {
 
       expect(mocks.find).toHaveBeenCalledWith({
         customerId,
+        companyId: legacyCompanyId(),
         status: "scheduled",
         startAt: { $gte: new Date("2026-10-23T03:00:00.000Z"), $lte: new Date("2026-10-24T02:59:59.999Z") },
       });
@@ -199,7 +201,7 @@ describe("calendar setting minute ranges", () => {
       expect(saved.slotDurationMinutes).toBe(minutes);
       expect(saved.eventTypes).toEqual(initial.eventTypes);
       expect(mocks.replaceOne).toHaveBeenCalledWith(
-        { _id: initial._id },
+        { _id: initial._id, companyId: legacyCompanyId() },
         expect.objectContaining({ slotDurationMinutes: minutes }),
         { upsert: true },
       );
@@ -250,7 +252,7 @@ describe("calendar setting minute ranges", () => {
 
       expect((await getCalendarSettings()).slotDurationMinutes).toBe(30);
       expect(mocks.updateOne).toHaveBeenCalledWith(
-        { _id: initial._id },
+        { _id: initial._id, companyId: legacyCompanyId() },
         expect.objectContaining({
           $set: expect.objectContaining({ slotDurationMinutes: 30 }),
         }),

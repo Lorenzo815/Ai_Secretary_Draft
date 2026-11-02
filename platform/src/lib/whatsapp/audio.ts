@@ -3,10 +3,10 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { getAiProviderConfiguration } from "../ai/provider-config";
 import { getVercelGatewayCredential } from "../ai/provider-credentials";
-import clientPromise from "../mongodb";
 
 import { fetchWhatsAppMediaFile } from "./client";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
@@ -106,7 +106,7 @@ async function startAudioTrace(input: {
   startedAt: Date;
 }) {
   try {
-    const collection = (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION);
+    const collection = (await tenantDb()).collection(TRACE_COLLECTION);
     indexesPromise ??= Promise.all([
       collection.createIndex({ startedAt: 1 }, { expireAfterSeconds: TRACE_RETENTION_SECONDS }),
       collection.createIndex({ taskKey: 1, customerId: 1, startedAt: -1 }),
@@ -131,7 +131,7 @@ async function startAudioTrace(input: {
 async function completeAudioTrace(traceId: ObjectId | null, durationMs: number, audioDurationSeconds: number | null) {
   if (!traceId) return;
   const usage = audioDurationSeconds === null ? undefined : { audioDurationSeconds };
-  await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
+  await (await tenantDb()).collection(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     {
       $set: {
@@ -146,7 +146,7 @@ async function completeAudioTrace(traceId: ObjectId | null, durationMs: number, 
 
 async function failAudioTrace(traceId: ObjectId | null, durationMs: number, error: unknown) {
   if (!traceId) return;
-  await (await clientPromise).db(DB_NAME).collection(TRACE_COLLECTION).updateOne(
+  await (await tenantDb()).collection(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     {
       $set: {

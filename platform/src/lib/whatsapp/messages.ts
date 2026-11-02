@@ -2,9 +2,9 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { Collection, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 import type { WhatsAppReferral } from "./message-payload";
 import { currentCompanyId, withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -53,8 +53,7 @@ export interface WhatsAppMessageDocument {
 const DB_NAME = "ai_secretary";
 
 async function getMessagesCollection(): Promise<Collection<WhatsAppMessageDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<WhatsAppMessageDocument>("whatsapp_messages");
+  return (await tenantDb()).collection<WhatsAppMessageDocument>("whatsapp_messages");
 }
 
 export async function saveWhatsAppMessage(

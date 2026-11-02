@@ -22,6 +22,7 @@ import {
   type PlanCandidateStep,
   type SchedulingPreference,
 } from "./engine";
+import { tenantDb } from "../../companies/tenant-db";
 
 export interface PlanSearchCriteria {
   stepKey: string;
@@ -56,8 +57,7 @@ export interface SchedulingPlanOptionDocument {
 const DB_NAME = "ai_secretary";
 
 async function getOptionsCollection(): Promise<Collection<SchedulingPlanOptionDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<SchedulingPlanOptionDocument>("calendar_plan_options");
+  return (await tenantDb()).collection<SchedulingPlanOptionDocument>("calendar_plan_options");
 }
 
 export async function findSchedulingPlanOption(input: {
@@ -297,7 +297,7 @@ export async function holdSchedulingPlanOption(input: {
     }
   } catch (error) {
     if (createdIds.length > 0) {
-      await (await clientPromise).db(DB_NAME).collection("calendar_appointments").deleteMany({ _id: { $in: createdIds } });
+      await (await tenantDb()).collection("calendar_appointments").deleteMany({ _id: { $in: createdIds } });
     }
     await options.updateOne(
       { _id: option._id, status: "processing" },
@@ -395,7 +395,7 @@ export async function bookSchedulingPlanOption(input: {
     }
   } catch (error) {
     if (createdIds.length > 0) {
-      await (await clientPromise).db(DB_NAME).collection("calendar_appointments").deleteMany({ _id: { $in: createdIds } });
+      await (await tenantDb()).collection("calendar_appointments").deleteMany({ _id: { $in: createdIds } });
     }
     await options.updateOne(
       { _id: option._id, status: "processing" },

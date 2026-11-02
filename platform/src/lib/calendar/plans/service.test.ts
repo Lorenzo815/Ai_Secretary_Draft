@@ -1,4 +1,5 @@
 import { ObjectId } from "mongodb";
+import { legacyCompanyId } from "../../companies/ownership";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SchedulingPlan } from "../../assistant/agent/contracts";
 
@@ -203,7 +204,7 @@ describe("temporary scheduling option replacement", () => {
 
     expect(mocks.releaseAppointmentHolds).not.toHaveBeenCalled();
     expect(mocks.updateOne).toHaveBeenCalledWith(
-      { _id: nextOptionId, status: "processing" },
+      { _id: nextOptionId, status: "processing", companyId: legacyCompanyId() },
       {
         $set: { status: "proposed" },
         $unset: { processingAt: "" },
@@ -264,7 +265,7 @@ describe("rescheduling existing appointment holds", () => {
     }), expect.anything(), { returnDocument: "after", session });
     expect(mocks.findOne).toHaveBeenCalledWith({
       _id: heldOptionId, customerId: option.customerId, planKey: plan.key,
-      status: "held", expiresAt: { $gt: now },
+      status: "held", expiresAt: { $gt: now }, companyId: legacyCompanyId(),
     }, { session });
     expect(mocks.updateCustomerAppointments).toHaveBeenCalledWith({
       customerId: option.customerId,
@@ -279,7 +280,7 @@ describe("rescheduling existing appointment holds", () => {
       { session },
     );
     expect(mocks.updateOne).toHaveBeenCalledWith(
-      { _id: option._id, status: "processing" },
+      { _id: option._id, status: "processing", companyId: legacyCompanyId() },
       { $set: { status: "rescheduled", rescheduledAt: now }, $unset: { processingAt: "" } },
       { session },
     );

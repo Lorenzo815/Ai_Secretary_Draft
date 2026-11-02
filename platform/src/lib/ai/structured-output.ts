@@ -2,7 +2,6 @@ import "server-only";
 
 import type { ChatCompletion, ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 
 import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
 import { withModelRateLimitRetry } from "./retry";
@@ -11,6 +10,7 @@ import type { AiProvider } from "./providers/types";
 import type { ReasoningEffort } from "./provider-config";
 import { resolveAiModel } from "./routing";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
 
@@ -195,7 +195,7 @@ async function startTrace(input: {
   startedAt: Date;
 }) {
   try {
-    const collection = (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION);
+    const collection = (await tenantDb()).collection<AiTaskCallDocument>(TRACE_COLLECTION);
     indexesPromise ??= Promise.all([
       collection.createIndex({ startedAt: 1 }, { expireAfterSeconds: TRACE_RETENTION_SECONDS }),
       collection.createIndex({ taskKey: 1, customerId: 1, startedAt: -1 }),
@@ -225,7 +225,7 @@ async function completeTrace(
   },
 ) {
   if (!traceId) return;
-  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
+  await (await tenantDb()).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     { $set: { ...result, status: "completed", completedAt: new Date() } },
   ).catch((error) => console.error("AI task trace could not be completed", error));
@@ -233,7 +233,7 @@ async function completeTrace(
 
 async function appendProviderCall(traceId: ObjectId | null, call: ProviderCallTrace) {
   if (!traceId) return;
-  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
+  await (await tenantDb()).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     { $push: { providerCalls: call } },
   ).catch((error) => console.error("AI provider call could not be traced", error));
@@ -247,7 +247,7 @@ async function failTrace(
 ) {
   if (!traceId) return;
   const normalizedUsage = sumModelUsage(providerCalls.map((call) => call.normalizedUsage));
-  await (await clientPromise).db(DB_NAME).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
+  await (await tenantDb()).collection<AiTaskCallDocument>(TRACE_COLLECTION).updateOne(
     { _id: traceId },
     {
       $set: {

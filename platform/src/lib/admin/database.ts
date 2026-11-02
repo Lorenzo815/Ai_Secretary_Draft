@@ -1,11 +1,10 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
+import clientPromise from "../mongodb";
 import type { CustomerDocument } from "../crm";
 import { getWhatsAppPhoneAliases } from "../crm/validation";
-import clientPromise from "../mongodb";
-
-const DB_NAME = "ai_secretary";
+import { tenantDb } from "../companies/tenant-db";
 
 export const DYNAMIC_COLLECTIONS = [
   "automation_jobs",
@@ -39,7 +38,7 @@ export class ChatHistoryInProgressError extends Error {
 
 export async function clearChatHistoryForCustomer(customerId: ObjectId) {
   const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const customers = database.collection<CustomerDocument>("crm_customers");
   const session = client.startSession();
   try {
@@ -86,8 +85,7 @@ export async function clearChatHistoryForCustomer(customerId: ObjectId) {
 }
 
 export async function clearDynamicData() {
-  const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const results = await Promise.all(
     DYNAMIC_COLLECTIONS.map(async (collectionName) => {
       const result = await database.collection(collectionName).deleteMany({});
@@ -99,8 +97,7 @@ export async function clearDynamicData() {
 }
 
 export async function clearDynamicDataForCustomer(customerId: ObjectId) {
-  const client = await clientPromise;
-  const database = client.db(DB_NAME);
+  const database = await tenantDb();
   const customer = await database.collection("crm_customers").findOne(
     { _id: customerId },
     { projection: { phones: 1 } },

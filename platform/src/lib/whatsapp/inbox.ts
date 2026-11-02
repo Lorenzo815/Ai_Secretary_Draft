@@ -1,7 +1,6 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 import { getWhatsAppPhoneAliases, type CustomerDocument, type CustomerServiceStatus } from "../crm";
 import {
   findLatestInboundWhatsAppMessage,
@@ -10,6 +9,7 @@ import {
   type WhatsAppMessageDocument,
 } from "./messages";
 import { getWhatsAppServiceWindowStatus } from "./service-window";
+import { tenantDb } from "../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const ACTIVE_WINDOW_MS = 24 * 60 * 60_000;
@@ -94,7 +94,7 @@ export async function listActiveWhatsAppInboxConversations(now = new Date()) {
 export async function listWhatsAppInboxConversations(filters: WhatsAppInboxFilters = {}) {
   const now = filters.now ?? new Date();
   const includeOutsideWindow = filters.includeOutsideWindow ?? false;
-  const database = (await clientPromise).db(DB_NAME);
+  const database = (await tenantDb());
   const messages = database.collection<InboxMessage>("whatsapp_messages");
   const cutoff = new Date(now.getTime() - ACTIVE_WINDOW_MS);
   const startAt = filters.startAt ?? new Date(now.getTime() - DEFAULT_HISTORY_MS);
@@ -243,7 +243,7 @@ export async function listWhatsAppInboxConversations(filters: WhatsAppInboxFilte
 }
 
 export async function getWhatsAppInboxDetail(customerId: ObjectId): Promise<WhatsAppInboxDetail> {
-  const database = (await clientPromise).db(DB_NAME);
+  const database = (await tenantDb());
   const customer = await database.collection<InboxCustomer>("crm_customers").findOne(
     { _id: customerId },
     { projection: { name: 1, phones: 1, serviceStatus: 1, whatsappAttention: 1 } },
@@ -295,7 +295,7 @@ export async function resolveWhatsAppInboxAttention(
   expectedMessageId: string,
   resolvedBy: string,
 ) {
-  const database = (await clientPromise).db(DB_NAME);
+  const database = (await tenantDb());
   const customer = await database.collection<InboxCustomer>("crm_customers").findOne(
     { _id: customerId },
     { projection: { phones: 1 } },

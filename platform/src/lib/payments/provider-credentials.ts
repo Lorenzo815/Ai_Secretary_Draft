@@ -2,17 +2,21 @@ import "server-only";
 
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
-import { withCurrentCompany } from "../companies/context";
+import { currentCompanyId, scopedSettingsId, withCurrentCompany } from "../companies/context";
+import { legacyCompanyId } from "../companies/ownership";
+import { tenantDb } from "../companies/tenant-db";
 
 interface EncryptedSecret { ciphertext: string; iv: string; authTag: string }
 interface MercadoPagoCredentialDocument {
-  _id: "mercado_pago";
+  _id: string;
   accessToken: EncryptedSecret;
   webhookSecret: EncryptedSecret;
   updatedAt: Date;
   updatedBy: string;
 }
+
+/** Each clinic registers this URL in its own Mercado Pago account; `?company=` routes the notification. */
+export const MERCADO_PAGO_WEBHOOK_PATH = "/api/webhooks/mercado-pago";
 
 export interface MercadoPagoCredential {
   accessToken: string;
@@ -21,14 +25,21 @@ export interface MercadoPagoCredential {
 }
 
 async function getCollection(): Promise<Collection<MercadoPagoCredentialDocument>> {
-  return (await clientPromise).db("ai_secretary").collection("payment_provider_credentials");
+  return (await tenantDb()).collection("payment_provider_credentials");
+}
+
+/** The environment credential belongs to the original clinic's Mercado Pago account only. */
+async function environmentCredential() {
+  if (!(await currentCompanyId()).equals(legacyCompanyId())) return null;
+  const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN?.trim();
+  const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET?.trim();
+  return accessToken && webhookSecret ? { accessToken, webhookSecret } : null;
 }
 
 export async function getMercadoPagoCredential(): Promise<MercadoPagoCredential | null> {
-  const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN?.trim();
-  const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET?.trim();
-  if (accessToken && webhookSecret) return { accessToken, webhookSecret, source: "environment" };
-  const stored = await (await getCollection()).findOne({ _id: "mercado_pago" });
+  const environment = await environmentCredential();
+  if (environment) return { ...environment, source: "environment" };
+  const stored = await (await getCollection()).findOne({ _id: await scopedSettingsId("mercado_pago") });
   if (!stored) return null;
   return {
     accessToken: decrypt(stored.accessToken),
@@ -38,15 +49,16 @@ export async function getMercadoPagoCredential(): Promise<MercadoPagoCredential 
 }
 
 export async function getMercadoPagoCredentialStatus() {
-  const environmentConfigured = Boolean(
-    process.env.MERCADO_PAGO_ACCESS_TOKEN?.trim()
-    && process.env.MERCADO_PAGO_WEBHOOK_SECRET?.trim(),
-  );
+  const environmentConfigured = Boolean(await environmentCredential());
   const databaseConfigured = Boolean(await (await getCollection()).findOne(
-    { _id: "mercado_pago" },
+    { _id: await scopedSettingsId("mercado_pago") },
     { projection: { _id: 1 } },
   ));
+  const companyId = await currentCompanyId();
   return {
+    webhookPath: companyId.equals(legacyCompanyId())
+      ? MERCADO_PAGO_WEBHOOK_PATH
+      : `${MERCADO_PAGO_WEBHOOK_PATH}?company=${companyId.toHexString()}`,
     configured: environmentConfigured || databaseConfigured,
     source: environmentConfigured ? "environment" as const : databaseConfigured ? "database" as const : null,
     environmentConfigured,
@@ -66,7 +78,7 @@ export async function saveMercadoPagoCredential(input: {
     throw new Error("As credenciais do Mercado Pago são inválidas.");
   }
   await (await getCollection()).replaceOne(
-    { _id: "mercado_pago" },
+    { _id: await scopedSettingsId("mercado_pago") },
     await withCurrentCompany({
       accessToken: encrypt(accessToken),
       webhookSecret: encrypt(webhookSecret),
@@ -78,7 +90,7 @@ export async function saveMercadoPagoCredential(input: {
 }
 
 export async function clearStoredMercadoPagoCredential() {
-  await (await getCollection()).deleteOne({ _id: "mercado_pago" });
+  await (await getCollection()).deleteOne({ _id: await scopedSettingsId("mercado_pago") });
 }
 
 function getEncryptionKey() {

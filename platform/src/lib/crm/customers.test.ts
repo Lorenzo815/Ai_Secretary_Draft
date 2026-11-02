@@ -35,7 +35,7 @@ describe("client option queries", () => {
     await listCustomerOptions(ids);
 
     expect(find).toHaveBeenCalledExactlyOnceWith(
-      { _id: { $in: ids } },
+      { _id: { $in: ids }, companyId: legacyCompanyId() },
       { projection: { name: 1, phones: 1, createdAt: 1 } },
     );
   });
@@ -50,7 +50,7 @@ describe("client option queries", () => {
     await listCustomerOptions();
 
     expect(find).toHaveBeenCalledExactlyOnceWith(
-      {},
+      { companyId: legacyCompanyId() },
       { projection: { name: 1, phones: 1, createdAt: 1 } },
     );
     expect(sort).toHaveBeenCalledExactlyOnceWith({ name: 1 });
@@ -95,7 +95,7 @@ describe("bounded calendar client search", () => {
     expect(skip).toHaveBeenCalledExactlyOnceWith(0);
     expect(sort).toHaveBeenCalledExactlyOnceWith({ createdAt: -1, name: 1, _id: 1 });
     expect(find).toHaveBeenCalledExactlyOnceWith(
-      {},
+      { companyId: legacyCompanyId() },
       { projection: { name: 1, phones: 1, createdAt: 1 }, collation: { locale: "pt", strength: 1 } },
     );
   });
@@ -119,7 +119,7 @@ describe("bounded calendar client search", () => {
 
     const filter = find.mock.calls[0][0];
     expect(new RegExp(filter.name.$regex, "iu").test(name)).toBe(true);
-    expect(Object.keys(filter)).toEqual(["name"]);
+    expect(Object.keys(filter)).toEqual(["name", "companyId"]);
   });
 
   it("treats regex characters literally rather than allowing wildcard searches", async () => {
@@ -288,7 +288,7 @@ describe("updateCustomerProfile address updates", () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: customerId },
+      { _id: customerId, companyId: legacyCompanyId() },
       expect.objectContaining({
         $set: expect.objectContaining({ "profile.address.number": "123" }),
       }),
@@ -410,7 +410,7 @@ describe("updateCustomerProfile address updates", () => {
     }
 
     expect(findOne).toHaveBeenLastCalledWith(
-      { _id: customerId },
+      { _id: customerId, companyId: legacyCompanyId() },
       { projection: { "profile.cpf": 1 } },
     );
   });

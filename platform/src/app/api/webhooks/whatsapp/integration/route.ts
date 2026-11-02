@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { runWithCompany } from "@/lib/companies/context";
+import { legacyCompanyId } from "@/lib/companies/ownership";
 import { IntegrationWhatsAppTemplateError, sendIntegrationTemplate } from "@/lib/whatsapp/integration-templates";
 import { WhatsAppTemplatePersistenceError } from "@/lib/whatsapp/template-messages";
 
@@ -28,7 +30,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "JSON inválido." }, { status: 400 });
   }
   try {
-    const message = await sendIntegrationTemplate(input);
+    // WHATSAPP_INTEGRATION_WEBHOOK_TOKEN is the original clinic's integration credential.
+    const message = await runWithCompany(legacyCompanyId(), () => sendIntegrationTemplate(input));
     return NextResponse.json({
       messaging_product: "whatsapp",
       messages: [{ id: message.messageId }],

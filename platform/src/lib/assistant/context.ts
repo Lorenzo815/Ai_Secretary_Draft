@@ -1,12 +1,12 @@
 import "server-only";
 
 import { Collection, ObjectId } from "mongodb";
-import clientPromise from "../mongodb";
 
 import { fetchWhatsAppImageDataUrl } from "../whatsapp/client";
 import { fetchAndTranscribeWhatsAppAudio } from "../whatsapp/audio";
 import { listWhatsAppMessagesForAssistant, updateWhatsAppMediaTranscription } from "../whatsapp/messages";
 import { withCurrentCompany } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 interface ConversationStateDocument {
   _id: ObjectId;
@@ -21,8 +21,7 @@ interface ConversationStateDocument {
 const DB_NAME = "ai_secretary";
 
 async function getStatesCollection(): Promise<Collection<ConversationStateDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<ConversationStateDocument>("assistant_conversation_states");
+  return (await tenantDb()).collection<ConversationStateDocument>("assistant_conversation_states");
 }
 
 export async function loadAssistantContext(customerId: ObjectId, messageLimit: number) {

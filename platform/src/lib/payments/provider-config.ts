@@ -1,14 +1,14 @@
 import "server-only";
 
 import type { Collection } from "mongodb";
-import clientPromise from "../mongodb";
-import { withCurrentCompany } from "../companies/context";
+import { withCurrentCompany, scopedSettingsId } from "../companies/context";
+import { tenantDb } from "../companies/tenant-db";
 
 export const PAYMENT_PROVIDERS = ["manual", "mercado_pago"] as const;
 export type PaymentProvider = typeof PAYMENT_PROVIDERS[number];
 
 export interface PaymentProviderConfiguration {
-  _id: "active";
+  _id: string;
   revision: number;
   activeProvider: PaymentProvider;
   humanFallbackEnabled: boolean;
@@ -17,7 +17,7 @@ export interface PaymentProviderConfiguration {
 }
 
 const DEFAULT_CONFIGURATION: PaymentProviderConfiguration = {
-  _id: "active",
+  _id: await scopedSettingsId("active"),
   revision: 1,
   activeProvider: "manual",
   humanFallbackEnabled: true,
@@ -26,15 +26,15 @@ const DEFAULT_CONFIGURATION: PaymentProviderConfiguration = {
 };
 
 async function getCollection(): Promise<Collection<PaymentProviderConfiguration>> {
-  return (await clientPromise).db("ai_secretary").collection("payment_provider_config");
+  return (await tenantDb()).collection("payment_provider_config");
 }
 
 export async function getPaymentProviderConfiguration() {
   const collection = await getCollection();
-  const stored = await collection.findOne({ _id: "active" });
+  const stored = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (stored) return { ...DEFAULT_CONFIGURATION, ...stored };
   const initial = { ...DEFAULT_CONFIGURATION, updatedAt: new Date() };
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
+  await collection.updateOne({ _id: await scopedSettingsId("active") }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
   return initial;
 }
 
@@ -46,13 +46,13 @@ export async function updatePaymentProviderConfiguration(input: {
   if (!PAYMENT_PROVIDERS.includes(input.activeProvider)) throw new Error("Provedor de pagamento inválido.");
   const current = await getPaymentProviderConfiguration();
   const next: PaymentProviderConfiguration = {
-    _id: "active",
+    _id: await scopedSettingsId("active"),
     revision: current.revision + 1,
     activeProvider: input.activeProvider,
     humanFallbackEnabled: input.humanFallbackEnabled,
     updatedAt: new Date(),
     updatedBy: input.updatedBy,
   };
-  await (await getCollection()).replaceOne({ _id: "active" }, await withCurrentCompany(next), { upsert: true });
+  await (await getCollection()).replaceOne({ _id: await scopedSettingsId("active") }, await withCurrentCompany(next), { upsert: true });
   return next;
 }

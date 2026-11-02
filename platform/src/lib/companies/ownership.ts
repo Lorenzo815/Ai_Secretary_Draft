@@ -58,6 +58,20 @@ export function withCompany<T extends object>(document: T, companyId: ObjectId):
   return { ...document, companyId };
 }
 
+/**
+ * `_id` of a per-company settings document. The original clinic keeps its pre-tenancy ids
+ * ("active", "default-calendar", ...); every other company gets "<companyId>:<key>".
+ */
+export function companyScopedId(companyId: ObjectId, key: string) {
+  return companyId.equals(legacyCompanyId()) ? key : `${companyId.toHexString()}:${key}`;
+}
+
+/** Inverse of `companyScopedId`. */
+export function unscopedId(companyId: ObjectId, storedId: string) {
+  const prefix = `${companyId.toHexString()}:`;
+  return storedId.startsWith(prefix) ? storedId.slice(prefix.length) : storedId;
+}
+
 /** For platform-level documents (Oria's own Meta app and AI Gateway key) and the original clinic's seed. */
 export function withLegacyCompany<T extends object>(document: T): T & { companyId: ObjectId } {
   return withCompany(document, legacyCompanyId());

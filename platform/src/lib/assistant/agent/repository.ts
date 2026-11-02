@@ -2,25 +2,24 @@ import "server-only";
 
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
-import clientPromise from "../../mongodb";
 
 import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./contracts";
 import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RELATIONSHIP_ROUTING, DEFAULT_RESPONSE_STYLE } from "./defaults";
-import { withCurrentCompany } from "../../companies/context";
+import { withCurrentCompany, scopedSettingsId } from "../../companies/context";
+import { tenantDb } from "../../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
 
 async function getCollection(): Promise<Collection<AgentConfigurationDocument>> {
-  const client = await clientPromise;
-  return client.db(DB_NAME).collection<AgentConfigurationDocument>(COLLECTION_NAME);
+  return (await tenantDb()).collection<AgentConfigurationDocument>(COLLECTION_NAME);
 }
 
 export async function getAgentConfiguration() {
   const collection = await getCollection();
-  const existing = await collection.findOne({ _id: "active" });
+  const existing = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (existing) {
     const existingAuthorization = (existing as AgentConfigurationDocument & {
       bookableEventTypeKeys?: unknown;
@@ -62,9 +61,9 @@ export async function getAgentConfiguration() {
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
-    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, await withCurrentCompany(migrated));
+    const result = await collection.replaceOne({ _id: await scopedSettingsId("active"), revision: existing.revision }, await withCurrentCompany(migrated));
     if (result.matchedCount > 0) return migrated;
-    const concurrent = await collection.findOne({ _id: "active" });
+    const concurrent = await collection.findOne({ _id: await scopedSettingsId("active") });
     return concurrent
       ? {
           ...concurrent,
@@ -86,14 +85,15 @@ export async function getAgentConfiguration() {
   const calendarSettings = await getCalendarSettings();
   const initial = withContentHash({
     ...createDefaultAgentConfiguration(),
+    _id: await scopedSettingsId("active"),
     bookableEventTypeKeys: calendarSettings.eventTypes.map((eventType) => eventType.key),
   });
   await collection.updateOne(
-    { _id: "active" },
+    { _id: await scopedSettingsId("active") },
     { $setOnInsert: await withCurrentCompany(initial) },
     { upsert: true },
   );
-  return (await collection.findOne({ _id: "active" })) ?? initial;
+  return (await collection.findOne({ _id: await scopedSettingsId("active") })) ?? initial;
 }
 
 export async function updateAgentConfiguration(input: {
@@ -110,7 +110,7 @@ export async function updateAgentConfiguration(input: {
   validateConfiguration(configuration, new Set(calendarSettings.eventTypes.map((eventType) => eventType.key)));
   const collection = await getCollection();
   const next = withContentHash({
-    _id: "active" as const,
+    _id: await scopedSettingsId("active"),
     ...configuration,
     revision: input.expectedRevision + 1,
     contentHash: "",
@@ -118,7 +118,7 @@ export async function updateAgentConfiguration(input: {
     updatedBy: input.updatedBy,
   });
   const result = await collection.replaceOne(
-    { _id: "active", revision: input.expectedRevision },
+    { _id: await scopedSettingsId("active"), revision: input.expectedRevision },
     await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) {
