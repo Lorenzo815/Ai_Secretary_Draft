@@ -7,7 +7,9 @@ if (existsSync(".env.local")) {
 const enabled = (process.env.ASSISTANT_WORKER_ENABLED ?? "true").toLowerCase() === "true";
 const secret = process.env.ASSISTANT_WORKER_SECRET;
 const baseUrl = process.env.ASSISTANT_WORKER_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000";
-const intervalMs = readBoundedInteger("ASSISTANT_WORKER_INTERVAL_MS", 3_000, 1_000, 60_000);
+// Incoming messages are processed immediately by the webhook trigger; this loop only picks up
+// scheduled work (follow-ups, qualification, retries), so a 10 s floor keeps database load low.
+const intervalMs = readBoundedInteger("ASSISTANT_WORKER_INTERVAL_MS", 10_000, 10_000, 60_000);
 const timeoutMs = readBoundedInteger("ASSISTANT_WORKER_REQUEST_TIMEOUT_MS", 210_000, 1_000, 300_000);
 const processUrl = new URL("/api/internal/assistant/process", baseUrl);
 const logEveryTick = (process.env.ASSISTANT_WORKER_LOG_TICKS ?? "false").toLowerCase() === "true";

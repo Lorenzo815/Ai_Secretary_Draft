@@ -145,6 +145,19 @@ válida nas mutações quando o ingress encerra o TLS.
 `GET /api/health?db=1` também executa `ping` no MongoDB e retorna 503 quando o
 banco está indisponível.
 
+Em `start` e no contêiner, cada requisição gera uma linha no console, como no
+`next dev`: `[req] POST /api/webhooks/whatsapp 200 in 45ms`. Query strings são
+descartadas e IDs mascarados; arquivos estáticos e sondas de saúde bem-sucedidas
+não são registrados. Desative com `REQUEST_LOG=off`.
+
+O worker verifica a fila a cada `ASSISTANT_WORKER_INTERVAL_MS` (padrão e mínimo
+de 10 s). Mensagens recebidas não dependem desse intervalo, pois o webhook
+dispara o processamento imediatamente; o worker atende follow-ups, qualificação
+e novas tentativas. Ele registra `[worker] heartbeat` a cada
+`ASSISTANT_WORKER_HEARTBEAT_MS` (padrão de 5 min) e cada verificação quando
+`ASSISTANT_WORKER_LOG_TICKS=true`. No Azure, essas linhas aparecem em
+**Monitoring → Log stream** e na tabela `ContainerAppConsoleLogs_CL`.
+
 ### Envio de templates pela integração do WhatsApp
 
 O webhook oficial da Meta, `POST /api/webhooks/whatsapp`, continua exigindo
