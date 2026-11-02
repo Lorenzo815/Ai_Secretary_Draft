@@ -5,7 +5,7 @@ import { Card, PageHeader, StatusBadge } from "@/components/ui";
 import { getCompanyDetail, listCompanyOverview } from "@/lib/companies";
 import { formatDate, formatNumber } from "@/lib/format";
 import { LEGACY_COMPANY_ID } from "@/lib/platform-rules";
-import { AiSection, ProfileSection, UsersSection, WhatsAppSection } from "./company-sections";
+import { AiSection, DangerZone, ProfileSection, UsersSection, WhatsAppSection } from "./company-sections";
 
 export default async function CompanyPage({ params, searchParams }: {
   params: Promise<{ id: string }>; searchParams: Promise<{ created?: string }>;
@@ -41,9 +41,10 @@ export default async function CompanyPage({ params, searchParams }: {
           Depois conecte o número de WhatsApp (pela tela de Sistema da plataforma ou aqui) e revise a IA.
         </div>
       )}
-      {legacy && (
+      {company.status === "active" && (
         <div className="mb-6 rounded-xl border border-night/20 bg-night px-4 py-3 text-sm text-white">
-          Esta é a clínica em produção. Toda alteração pede confirmação digitando <code className="rounded bg-white/15 px-1">PRODUCAO</code>.
+          Clínica em produção (status Ativa). Toda alteração pede confirmação digitando <code className="rounded bg-white/15 px-1">PRODUCAO</code>.
+          {legacy && " Esta é a clínica original: usa o número de WhatsApp e as chaves do Mercado Pago do ambiente."}
         </div>
       )}
 
@@ -70,6 +71,7 @@ export default async function CompanyPage({ params, searchParams }: {
             </ul>
           )}
         </Card>
+        {!legacy && <DangerZone companyId={id} name={company.name} live={company.status === "active"} className="2xl:col-span-2" />}
       </div>
     </>
   );

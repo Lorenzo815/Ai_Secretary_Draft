@@ -6,7 +6,6 @@ import { parseEjson, parseEjsonObject, toEjson } from "./actions";
 import { decryptValue } from "./crypto";
 import { getDb } from "./mongodb";
 import { getPath, isEncryptedShape, listMasks, maskDocument, restoreMasked, type MaskInfo } from "./masking";
-import { LEGACY_COMPANY_ID } from "./platform-rules";
 import { assertConfirmed, belongsToProduction, requiredConfirmation } from "./risk";
 
 const NAME = /^[A-Za-z0-9_.-]{1,120}$/;
@@ -34,6 +33,12 @@ export async function assertCollection(name: string) {
   const exists = await (await getDb()).listCollections({ name }, { nameOnly: true }).hasNext();
   if (!exists) throw new Error(`A coleção "${name}" não existe.`);
   return name;
+}
+
+/** Clinics in production: status "active". Their data needs typed confirmation to change. */
+export async function liveCompanyIds(): Promise<Set<string>> {
+  const live = await (await getDb()).collection("companies").find({ status: "active" }, { projection: { _id: 1 } }).toArray();
+  return new Set(live.map((company) => String(company._id)));
 }
 
 export async function companyNames() {
@@ -94,16 +99,17 @@ async function loadDocument(collectionName: string, idText: string) {
 export async function getDocument(collectionName: string, idText: string) {
   const { document } = await loadDocument(collectionName, idText);
   const masked = maskDocument(document);
-  return { json: toEjson(masked), masks: listMasks(masked), production: belongsToProduction(collectionName, document) };
+  return { json: toEjson(masked), masks: listMasks(masked), production: belongsToProduction(collectionName, document, await liveCompanyIds()) };
 }
 
 export async function saveDocument(actor: string, collectionName: string, idText: string, json: string, confirmation?: string) {
   const { collection, id, document } = await loadDocument(collectionName, idText);
   const edited = restoreMasked(parseEjsonObject(json, "Documento"), document) as Document;
   if (toEjson(edited._id, false) !== toEjson(id, false)) throw new Error("O _id não pode ser alterado.");
-  const production = belongsToProduction(collectionName, document) || belongsToProduction(collectionName, edited);
+  const live = await liveCompanyIds();
+  const production = belongsToProduction(collectionName, document, live) || belongsToProduction(collectionName, edited, live);
   assertConfirmed(requiredConfirmation({ operation: "update", collection: collectionName, touchesProduction: production }), confirmation,
-    "Este documento pertence à clínica em produção ou a configurações globais da Oria.");
+    "Este documento pertence a uma clínica em produção ou a configurações globais da Oria.");
   const result = await collection.replaceOne({ _id: id as never }, edited);
   if (result.matchedCount !== 1) throw new Error("Documento não encontrado ao salvar.");
   await audit({ actor, action: "document.replace", collection: collectionName, documentId: id, companyId: ownerOf(collectionName, edited), before: document, after: edited });
@@ -114,8 +120,8 @@ export async function insertDocument(actor: string, collectionName: string, json
   const document = parseEjsonObject(json, "Documento") as Document;
   if (listMasks(document).length) throw new Error("Um novo documento não pode conter campos mascarados; remova-os ou informe valores.");
   document._id ??= new ObjectId();
-  assertConfirmed(requiredConfirmation({ operation: "insert", collection: collectionName, touchesProduction: belongsToProduction(collectionName, document) }),
-    confirmation, "O novo documento pertence à clínica em produção ou a configurações globais da Oria.");
+  assertConfirmed(requiredConfirmation({ operation: "insert", collection: collectionName, touchesProduction: belongsToProduction(collectionName, document, await liveCompanyIds()) }),
+    confirmation, "O novo documento pertence a uma clínica em produção ou a configurações globais da Oria.");
   await collection.insertOne(document);
   await audit({ actor, action: "document.insert", collection: collectionName, documentId: document._id, companyId: ownerOf(collectionName, document), after: document });
   return toEjson(document._id, false);
@@ -123,7 +129,7 @@ export async function insertDocument(actor: string, collectionName: string, json
 
 export async function deleteDocument(actor: string, collectionName: string, idText: string, confirmation?: string) {
   const { collection, id, document } = await loadDocument(collectionName, idText);
-  assertConfirmed(requiredConfirmation({ operation: "delete", collection: collectionName, touchesProduction: belongsToProduction(collectionName, document) }),
+  assertConfirmed(requiredConfirmation({ operation: "delete", collection: collectionName, touchesProduction: belongsToProduction(collectionName, document, await liveCompanyIds()) }),
     confirmation, "Excluir é irreversível.");
   await collection.deleteOne({ _id: id as never });
   await audit({ actor, action: "document.delete", collection: collectionName, documentId: id, companyId: ownerOf(collectionName, document), before: document });
@@ -132,9 +138,10 @@ export async function deleteDocument(actor: string, collectionName: string, idTe
 export async function previewBulk(input: Pick<QueryInput, "collection" | "company" | "filter" | "id">) {
   const collection = (await getDb()).collection(await assertCollection(input.collection));
   const filter = buildFilter(input);
+  const live = [...await liveCompanyIds()].map((id) => new ObjectId(id));
   const productionFilter = input.collection === "companies"
-    ? { $and: [filter, { _id: new ObjectId(LEGACY_COMPANY_ID) }] }
-    : { $and: [filter, { companyId: new ObjectId(LEGACY_COMPANY_ID) }] };
+    ? { $and: [filter, { _id: { $in: live } }] }
+    : { $and: [filter, { companyId: { $in: live } }] };
   const [count, production] = await Promise.all([collection.countDocuments(filter), collection.countDocuments(productionFilter)]);
   return { filter, count, production };
 }
@@ -155,7 +162,7 @@ export async function bulkWrite(actor: string, input: Pick<QueryInput, "collecti
     throw new Error("Use operadores de atualização ($set, $unset, $inc...) ou um pipeline; a substituição em massa não é permitida.");
   }
   assertConfirmed(requiredConfirmation({ operation: input.operation, collection: input.collection, touchesProduction: production > 0, count }),
-    input.confirmation, `${count} documento(s) serão afetados${production ? `, ${production} da clínica em produção` : ""}.`);
+    input.confirmation, `${count} documento(s) serão afetados${production ? `, ${production} de clínicas em produção` : ""}.`);
   const collection = (await getDb()).collection(input.collection);
   const result = input.operation === "bulk-delete"
     ? await collection.deleteMany(filter)

@@ -115,6 +115,21 @@ export async function saveAiConfigAction(companyId: string, json: string, confir
   return companyMutation(companyId, "Configuração de IA salva.", (actor) => companies.saveAiConfig(actor, companyId, json, confirmation));
 }
 
+export async function previewCompanyDeletionAction(companyId: string) {
+  await requireOwner();
+  return runAction(() => companies.previewCompanyDeletion(companyId));
+}
+
+export async function deleteCompanyAction(companyId: string, confirmation?: string) {
+  const actor = await requireOwner();
+  return runAction(async () => {
+    const deleted = await companies.deleteCompany(actor, companyId, confirmation);
+    revalidatePath("/companies");
+    revalidatePath("/");
+    return deleted;
+  }, "Clínica excluída.");
+}
+
 export async function copyAiConfigAction(sourceId: string, targetIds: string[], confirmation?: string) {
   const actor = await requireOwner();
   return runAction(async () => {

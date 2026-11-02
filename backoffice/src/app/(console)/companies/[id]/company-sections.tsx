@@ -2,12 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Copy, Crown, PhoneCall, Plus, Save, UserPlus } from "lucide-react";
+import { Copy, Crown, PhoneCall, Plus, Save, Trash2, UserPlus } from "lucide-react";
 import { useGuardedAction } from "@/components/guarded-action";
-import { Badge, Card, buttonClass, inputClass, labelClass, secondaryButtonClass } from "@/components/ui";
+import { Badge, Card, buttonClass, dangerButtonClass, inputClass, labelClass, secondaryButtonClass } from "@/components/ui";
 import { ACCESS_MODULES, emptyPermissions, type AccessLevel, type Permissions } from "@/lib/platform-rules";
 import {
-  addWhatsAppConnectionAction, copyAiConfigAction, createUserAction, saveAiConfigAction,
+  addWhatsAppConnectionAction, copyAiConfigAction, createUserAction, deleteCompanyAction, previewCompanyDeletionAction, saveAiConfigAction,
   setCompanyAdminAction, setConnectionStatusAction, updateCompanyAction, updateUserAction,
 } from "../../actions";
 
@@ -285,5 +285,41 @@ export function AiSection({ companyId, json, revision, updatedBy, others }: {
         </div>
       )}
     </Card>
+  );
+}
+
+// ---------- danger zone ----------
+
+export function DangerZone({ companyId, name, live, className }: { companyId: string; name: string; live: boolean; className?: string }) {
+  const router = useRouter();
+  const { run, pending, ui } = useGuardedAction();
+  const [preview, setPreview] = useState<{ counts: Array<{ name: string; count: number }>; total: number } | null>(null);
+  return (
+    <section className={`rounded-2xl border border-red-200 bg-red-50/40 p-5 ${className ?? ""}`}>
+      {ui}
+      <h2 className="font-heading text-base font-semibold text-red-800">Zona de perigo</h2>
+      <p className="mt-1 text-sm text-red-900/75">
+        Excluir a clínica remove todos os dados dela (pacientes, conversas, agenda, usuários, números de WhatsApp e configurações). Não há como desfazer.
+        {live && " Para excluir, primeiro altere o status para Teste ou Suspensa."}
+      </p>
+      {preview && (
+        <div className="mt-3 rounded-xl border border-red-200 bg-white p-3 text-sm">
+          <p className="font-semibold">{preview.total} documento(s) serão excluídos:</p>
+          <ul className="mt-1 grid gap-x-6 text-xs text-slate-ink/70 sm:grid-cols-2 lg:grid-cols-3">
+            {preview.counts.map((entry) => <li key={entry.name} className="flex justify-between gap-2"><code>{entry.name}</code><span className="tabular-nums">{entry.count}</span></li>)}
+          </ul>
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" disabled={pending} className={secondaryButtonClass}
+          onClick={() => run(() => previewCompanyDeletionAction(companyId), { success: "Prévia atualizada.", onSuccess: setPreview })}>
+          Ver o que será excluído
+        </button>
+        <button type="button" disabled={pending || live} className={dangerButtonClass}
+          onClick={() => run((confirmation) => deleteCompanyAction(companyId, confirmation), { onSuccess: () => router.push("/companies") })}>
+          <Trash2 className="h-4 w-4" />Excluir “{name}”
+        </button>
+      </div>
+    </section>
   );
 }

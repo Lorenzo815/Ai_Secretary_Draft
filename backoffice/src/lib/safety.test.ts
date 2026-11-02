@@ -58,11 +58,16 @@ describe("write confirmations", () => {
     expect(requiredConfirmation({ operation: "bulk-delete", collection: "x", touchesProduction: true, count: 3 })).toBe("3 PRODUCAO");
   });
 
-  it("recognizes the live clinic's documents and the clinic itself", () => {
-    const legacy = new ObjectId(LEGACY_COMPANY_ID);
-    expect(belongsToProduction("crm_customers", { companyId: legacy })).toBe(true);
-    expect(belongsToProduction("crm_customers", { companyId: new ObjectId() })).toBe(false);
-    expect(belongsToProduction("companies", { _id: legacy })).toBe(true);
+  it("treats every clinic in production (status active) as protected, not only the original one", () => {
+    const original = new ObjectId(LEGACY_COMPANY_ID);
+    const newLive = new ObjectId();
+    const inTest = new ObjectId();
+    const live = new Set([original.toHexString(), newLive.toHexString()]);
+    expect(belongsToProduction("crm_customers", { companyId: original }, live)).toBe(true);
+    expect(belongsToProduction("crm_customers", { companyId: newLive }, live)).toBe(true);
+    expect(belongsToProduction("crm_customers", { companyId: inTest }, live)).toBe(false);
+    expect(belongsToProduction("companies", { _id: newLive }, live)).toBe(true);
+    expect(belongsToProduction("crm_customers", {}, live)).toBe(false);
   });
 
   it("uses the platform's per-company settings ids", () => {

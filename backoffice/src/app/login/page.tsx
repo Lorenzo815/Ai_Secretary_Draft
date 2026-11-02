@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { googleConfigured } from "@/lib/auth";
-import { SignInButton } from "./sign-in-button";
+import { totpConfigured } from "@/lib/auth";
+import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Entrar" };
+export const dynamic = "force-dynamic";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; callbackUrl?: string }> }) {
-  const { error, callbackUrl } = await searchParams;
-  const safeCallback = callbackUrl?.startsWith("/") && !callbackUrl.startsWith("//") ? callbackUrl : "/";
+export default function LoginPage() {
+  const configured = totpConfigured();
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-night px-6">
       <div aria-hidden className="pointer-events-none absolute -left-40 -top-40 h-[30rem] w-[30rem] rounded-full bg-deep-teal/30 blur-3xl" />
@@ -24,15 +24,11 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </div>
         </div>
         <h1 className="mt-8 font-heading text-2xl font-semibold">Entrar</h1>
-        <p className="mt-1 text-sm text-white/60">Use a conta Google autorizada.</p>
-        {error && (
-          <p className="mt-5 rounded-lg border border-burnt-coral/40 bg-burnt-coral/10 px-3 py-2 text-sm text-burnt-coral">
-            {error === "AccessDenied" ? "Esta conta Google não tem acesso ao back-office." : "Não foi possível entrar. Tente novamente."}
-          </p>
-        )}
-        {googleConfigured() ? <SignInButton callbackUrl={safeCallback} /> : (
+        <p className="mt-1 text-sm text-white/60">Digite o código de 6 dígitos do Google Authenticator.</p>
+        {configured ? <LoginForm /> : (
           <p className="mt-6 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-            O login com Google ainda não está configurado (GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET).
+            O acesso ainda não foi configurado.
+            {process.env.NODE_ENV === "development" && <> Abra <a href="/setup" className="font-semibold underline">/setup</a> para configurar o aplicativo.</>}
           </p>
         )}
       </section>

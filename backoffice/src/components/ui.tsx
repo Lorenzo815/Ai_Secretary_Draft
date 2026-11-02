@@ -57,7 +57,8 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
 export function StatusBadge({ status, isolationReady, legacy }: { status: string; isolationReady?: boolean; legacy?: boolean }) {
   return (
     <span className="inline-flex flex-wrap gap-1">
-      {legacy && <Badge tone="dark">Produção</Badge>}
+      {status === "active" && <Badge tone="dark">Produção</Badge>}
+      {legacy && <Badge>Original</Badge>}
       <Badge tone={status === "active" ? "teal" : status === "test" ? "amber" : "red"}>
         {status === "active" ? "Ativa" : status === "test" ? "Teste" : status === "suspended" ? "Suspensa" : status}
       </Badge>

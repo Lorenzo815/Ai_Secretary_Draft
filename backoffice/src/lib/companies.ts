@@ -110,8 +110,10 @@ function slug(name: string) {
   return `${base.slice(0, 40) || "clinica"}-${randomUUID().slice(0, 6)}`;
 }
 
-function productionPhrase(companyId: ObjectId) {
-  return requiredConfirmation({ operation: "update", collection: "companies", touchesProduction: companyId.toHexString() === LEGACY_COMPANY_ID });
+/** "PRODUCAO" when the clinic is in production (status "active"). */
+async function productionPhrase(companyId: ObjectId) {
+  const company = await (await getDb()).collection("companies").findOne({ _id: companyId }, { projection: { status: 1 } });
+  return requiredConfirmation({ operation: "update", collection: "companies", touchesProduction: company?.status === "active" });
 }
 
 async function requireCompany(companyId: ObjectId) {
@@ -233,7 +235,7 @@ export async function updateCompany(actor: string, companyIdText: string, input:
     status: status(input.status),
     isolationReady: input.isolationReady === true,
   };
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   await (await getDb()).collection("companies").updateOne({ _id: companyId }, { $set: next });
   await audit({ actor, action: "company.update", collection: "companies", documentId: companyId, companyId: companyIdText, before, after: { ...before, ...next } });
 }
@@ -243,7 +245,7 @@ export async function updateCompany(actor: string, companyIdText: string, input:
 export async function createUser(actor: string, companyIdText: string, input: Record<string, unknown>, confirmation?: string) {
   const companyId = objectId(companyIdText, "Empresa");
   await requireCompany(companyId);
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   const db = await getDb();
   if (await db.collection("users").countDocuments({ companyId }) >= USER_LIMIT) {
     throw new Error(`Limite de ${USER_LIMIT} contas por empresa atingido.`);
@@ -268,7 +270,7 @@ export async function updateUser(actor: string, companyIdText: string, userIdTex
   const disabled = input.disabled === true;
   if (disabled && company.adminUserId?.equals(userId)) throw new Error("Defina outro administrador antes de desativar esta conta.");
   const password = typeof input.password === "string" && input.password ? validatePassword(input.password) : null;
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   const set = {
     name: text(input.name, "Nome", 120), email: email(input.email), permissions: parsePermissions(input.permissions), disabled,
     ...(password ? { passwordHash: await hash(password, 12) } : {}), updatedAt: new Date(),
@@ -285,7 +287,7 @@ export async function setCompanyAdmin(actor: string, companyIdText: string, user
   const db = await getDb();
   const user = await db.collection<UserRecord>("users").findOne({ _id: userId, companyId, disabled: false });
   if (!user) throw new Error("Escolha um usuário ativo desta empresa.");
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   await db.collection("companies").updateOne({ _id: companyId }, {
     $set: { adminUserId: userId, accessControlVersion: 1 }, $inc: { userManagementVersion: 1 },
   });
@@ -308,7 +310,7 @@ export async function addWhatsAppConnection(actor: string, companyIdText: string
   const connections = db.collection<ConnectionRecord>("whatsapp_embedded_signup_connections");
   const taken = await connections.findOne({ phoneNumberId, status: { $in: ["operational", "connected"] }, companyId: { $ne: companyId } });
   if (taken) throw new Error("Este número já está conectado a outra empresa.");
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   const meta = await db.collection<{ _id: string; appId?: string }>("whatsapp_embedded_signup_config").findOne({ _id: "active" });
   const makeOperational = input.makeOperational === true;
   const now = new Date();
@@ -330,7 +332,7 @@ export async function setConnectionStatus(actor: string, companyIdText: string, 
   const connection = await connections.findOne({ _id: connectionId, companyId });
   if (!connection) throw new Error("Número não encontrado nesta empresa.");
   if (next === "operational" && (!connection.wabaId || !connection.phoneNumberId)) throw new Error("A conexão ainda não tem WABA e número.");
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   const updatedAt = new Date();
   // As in the platform: one operational number per company; the previous one becomes "connected".
   if (next === "operational") {
@@ -351,7 +353,7 @@ export async function saveAiConfig(actor: string, companyIdText: string, json: s
   const unknown = Object.keys(input).filter((key) => !(AI_FIELDS as readonly string[]).includes(key));
   if (unknown.length) throw new Error(`Campos não suportados: ${unknown.join(", ")}.`);
   if (!input.tasks || typeof input.tasks !== "object") throw new Error("Informe \"tasks\" com customer_agent e lead_qualification.");
-  assertConfirmed(productionPhrase(companyId), confirmation, "Esta é a clínica em produção.");
+  assertConfirmed(await productionPhrase(companyId), confirmation, "Esta clínica está em produção (status Ativa).");
   await writeAiConfig(actor, companyId, input, "ai.update");
 }
 
@@ -361,8 +363,8 @@ export async function copyAiConfig(actor: string, sourceIdText: string, targetId
   if (!source) throw new Error("A empresa de origem ainda não tem configuração de IA.");
   const targets = [...new Set(targetIds)].filter((id) => id !== sourceIdText).map((id) => objectId(id, "Empresa de destino"));
   if (!targets.length) throw new Error("Selecione ao menos uma empresa de destino.");
-  const production = targets.some((id) => id.toHexString() === LEGACY_COMPANY_ID);
-  assertConfirmed(production ? "PRODUCAO" : null, confirmation, "A clínica em produção está entre os destinos.");
+  const live = await (await getDb()).collection("companies").countDocuments({ _id: { $in: targets }, status: "active" });
+  assertConfirmed(live > 0 ? "PRODUCAO" : null, confirmation, `${live} clínica(s) em produção estão entre os destinos.`);
   const fields = Object.fromEntries(AI_FIELDS.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
   for (const target of targets) await writeAiConfig(actor, target, fields, `ai.copy-from:${sourceId.toHexString()}`);
   return targets.length;
@@ -378,4 +380,53 @@ async function writeAiConfig(actor: string, companyId: ObjectId, fields: Record<
   };
   await collection.replaceOne({ _id: id as never }, next, { upsert: true });
   await audit({ actor, action, collection: "ai_model_config", documentId: id, companyId: companyId.toHexString(), before: before ?? undefined, after: next });
+}
+
+// ---------- deleting a clinic ----------
+
+const NOT_COMPANY_DATA = new Set(["companies", "backoffice_audit", "backoffice_auth"]);
+
+/** How many documents of each collection belong to the clinic. */
+export async function previewCompanyDeletion(companyIdText: string) {
+  const companyId = objectId(companyIdText, "Empresa");
+  const company = await requireCompany(companyId);
+  const db = await getDb();
+  const names = (await db.listCollections({}, { nameOnly: true }).toArray())
+    .map((collection) => collection.name)
+    .filter((name) => !name.startsWith("system.") && !NOT_COMPANY_DATA.has(name))
+    .sort();
+  const counts = (await Promise.all(names.map(async (name) => ({ name, count: await db.collection(name).countDocuments({ companyId }) }))))
+    .filter((entry) => entry.count > 0);
+  return { name: company.name, status: company.status, counts, total: counts.reduce((sum, entry) => sum + entry.count, 0) };
+}
+
+/**
+ * Deletes a clinic and every document it owns. Never the original clinic, never a clinic in production
+ * (change its status first), and only after typing the clinic's exact name.
+ */
+export async function deleteCompany(actor: string, companyIdText: string, confirmation?: string) {
+  const companyId = objectId(companyIdText, "Empresa");
+  if (companyIdText === LEGACY_COMPANY_ID) throw new Error("A clínica original não pode ser excluída.");
+  const company = await requireCompany(companyId);
+  if (company.status === "active") throw new Error("Esta clínica está em produção. Altere o status para Teste ou Suspensa antes de excluí-la.");
+  const preview = await previewCompanyDeletion(companyIdText);
+  assertConfirmed(company.name, confirmation,
+    `Isto exclui a clínica e ${preview.total} documento(s) dela (pacientes, conversas, agenda, usuários, configurações). Não há como desfazer.`);
+  const db = await getDb();
+  // Cut access first, so nothing is written while the data is being removed.
+  await db.collection("companies").updateOne({ _id: companyId }, { $set: { status: "suspended", isolationReady: false } });
+  const deleted: Record<string, number> = {};
+  for (const { name } of preview.counts) {
+    deleted[name] = (await db.collection(name).deleteMany({ companyId })).deletedCount;
+  }
+  // Anything written in between (e.g. a webhook already in flight) is removed by a second pass.
+  for (const { name } of preview.counts) {
+    deleted[name] += (await db.collection(name).deleteMany({ companyId })).deletedCount;
+  }
+  await db.collection("companies").deleteOne({ _id: companyId });
+  await audit({
+    actor, action: "company.delete", collection: "companies", documentId: companyId, companyId: companyIdText,
+    before: company, count: Object.values(deleted).reduce((sum, count) => sum + count, 0), detail: JSON.stringify(deleted),
+  });
+  return deleted;
 }

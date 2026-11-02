@@ -1,54 +1,76 @@
 import "server-only";
 
-import { getServerSession, type NextAuthOptions } from "next-auth";
-import GoogleProvider from "next-auth/providers/google";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { authCookies } from "./auth-cookies";
+import { audit } from "./audit";
+import { getDb } from "./mongodb";
+import { createSessionToken, sessionCookieName, SESSION_TTL_SECONDS, verifySessionToken } from "./session";
+import { STEP_SECONDS, verifyTotp } from "./totp";
 
-export function allowedEmails() {
-  return (process.env.BACKOFFICE_ALLOWED_EMAILS ?? "")
-    .split(",").map((email) => email.trim().toLowerCase()).filter(Boolean);
+const AUTH_COLLECTION = "backoffice_auth";
+export const MAX_FAILURES = 5;
+export const LOCKOUT_MS = 60 * 60 * 1000;
+
+interface AuthState { _id: "totp"; lastStep?: number; failures?: Date[] }
+
+export function ownerName() {
+  return process.env.BACKOFFICE_OWNER?.trim() || "owner";
 }
 
-export function isAllowedEmail(email: unknown) {
-  return typeof email === "string" && allowedEmails().includes(email.trim().toLowerCase());
+export function totpConfigured() {
+  return Boolean(process.env.BACKOFFICE_TOTP_SECRET?.trim() && (process.env.BACKOFFICE_SESSION_SECRET?.length ?? 0) >= 32);
 }
 
-/** Local `next dev` only: lets an allowed email skip Google sign-in. Never active in production builds. */
-export function devBypassEmail() {
-  const email = process.env.BACKOFFICE_DEV_EMAIL;
-  return process.env.NODE_ENV === "development" && isAllowedEmail(email) ? email!.toLowerCase() : null;
-}
-
-export function googleConfigured() {
-  return Boolean(process.env.GOOGLE_CLIENT_ID?.trim() && process.env.GOOGLE_CLIENT_SECRET?.trim());
-}
-
-export const authOptions: NextAuthOptions = {
-  cookies: authCookies,
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-      authorization: { params: { prompt: "select_account" } },
-    }),
-  ],
-  session: { strategy: "jwt", maxAge: 12 * 60 * 60 },
-  pages: { signIn: "/login", error: "/login" },
-  callbacks: {
-    signIn({ account, profile }) {
-      const verified = (profile as { email_verified?: boolean } | undefined)?.email_verified === true;
-      return account?.provider === "google" && verified && isAllowedEmail(profile?.email);
-    },
-  },
-};
-
-/** Every page and server action calls this; the allow-list is re-checked on each request. */
+/** Every page and server action calls this. */
 export async function requireOwner(): Promise<string> {
-  const bypass = devBypassEmail();
-  if (bypass) return bypass;
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  if (!isAllowedEmail(email)) redirect("/login");
-  return email!.toLowerCase();
+  const token = (await cookies()).get(sessionCookieName())?.value;
+  if (!await verifySessionToken(token)) redirect("/login");
+  return ownerName();
+}
+
+/**
+ * Login with a Google Authenticator code. Failures are counted globally (not per IP, which an attacker can
+ * rotate): 5 failures within an hour block every attempt until the oldest is an hour old. Each code works once.
+ */
+export async function loginWithCode(code: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const secret = process.env.BACKOFFICE_TOTP_SECRET?.trim();
+  if (!secret || !totpConfigured()) {
+    return { ok: false, error: "O acesso ainda não foi configurado (BACKOFFICE_TOTP_SECRET e BACKOFFICE_SESSION_SECRET)." };
+  }
+  const states = (await getDb()).collection<AuthState>(AUTH_COLLECTION);
+  const now = new Date();
+  const state = await states.findOne({ _id: "totp" });
+  const recent = (state?.failures ?? []).filter((at) => now.getTime() - at.getTime() < LOCKOUT_MS);
+  if (recent.length >= MAX_FAILURES) {
+    const until = new Date(Math.min(...recent.map((at) => at.getTime())) + LOCKOUT_MS);
+    const time = until.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+    return { ok: false, error: `Muitas tentativas incorretas. Tente novamente após ${time}.` };
+  }
+
+  const step = verifyTotp(secret, code, now.getTime());
+  if (step === null || (state?.lastStep ?? -1) >= step) {
+    await states.updateOne({ _id: "totp" }, { $push: { failures: { $each: [now], $slice: -20 } } }, { upsert: true });
+    await audit({ actor: "anonymous", action: "login.failure", detail: step === null ? "código incorreto" : "código já utilizado" });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return { ok: false, error: "Código incorreto ou já utilizado." };
+  }
+  // Atomic claim of the time step: a concurrent request with the same code loses this race.
+  const claimed = await states.updateOne(
+    { _id: "totp", $or: [{ lastStep: { $lt: step } }, { lastStep: { $exists: false } }] },
+    { $set: { lastStep: step, failures: [] } },
+    { upsert: true },
+  ).catch(() => null);
+  if (!claimed || (claimed.matchedCount === 0 && claimed.upsertedCount === 0)) {
+    return { ok: false, error: "Código já utilizado." };
+  }
+
+  (await cookies()).set(sessionCookieName(), await createSessionToken(now.getTime()), {
+    httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict", path: "/", maxAge: SESSION_TTL_SECONDS,
+  });
+  await audit({ actor: ownerName(), action: "login.success", detail: `passo ${step} (${STEP_SECONDS}s)` });
+  return { ok: true };
+}
+
+export async function logout() {
+  (await cookies()).delete(sessionCookieName());
 }
