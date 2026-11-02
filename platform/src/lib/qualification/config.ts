@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+import { withCurrentCompany } from "../companies/context";
 
 const DB_NAME = "ai_secretary";
 
@@ -50,7 +50,7 @@ export async function getLeadQualificationConfiguration() {
     updatedAt: new Date(),
     updatedBy: "system",
   });
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: withLegacyCompany(initial) }, { upsert: true });
+  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
   return (await collection.findOne({ _id: "active" })) ?? initial;
 }
 
@@ -77,7 +77,7 @@ export async function updateLeadQualificationConfiguration(input: {
   });
   const result = await (await getCollection()).replaceOne(
     { _id: "active", revision: input.expectedRevision },
-    withLegacyCompany(next),
+    await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) throw new Error("A configuração de qualificação foi alterada. Recarregue antes de salvar.");
   return next;

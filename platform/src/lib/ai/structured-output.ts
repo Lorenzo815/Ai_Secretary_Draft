@@ -3,13 +3,14 @@ import "server-only";
 import type { ChatCompletion, ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+
 import { normalizeModelUsage, type NormalizedModelUsage } from "./model-usage";
 import { withModelRateLimitRetry } from "./retry";
 import { getProviderClient } from "./providers/registry";
 import type { AiProvider } from "./providers/types";
 import type { ReasoningEffort } from "./provider-config";
 import { resolveAiModel } from "./routing";
+import { withCurrentCompany } from "../companies/context";
 
 type StructuredOutputMode = "json_schema" | "tool_call" | "tool_call_auto";
 
@@ -201,7 +202,7 @@ async function startTrace(input: {
     ]);
     await indexesPromise;
     const traceId = new ObjectId();
-    await collection.insertOne(withLegacyCompany({ _id: traceId, ...input, status: "started" }));
+    await collection.insertOne(await withCurrentCompany({ _id: traceId, ...input, status: "started" }));
     return traceId;
   } catch (error) {
     console.error("AI task trace could not be started", error);

@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
 import clientPromise from "../../mongodb";
-import { legacyCompanyId, withLegacyCompany } from "../../companies/ownership";
+import { legacyCompanyId } from "../../companies/ownership";
 import type { AssistantDecision } from "../tools";
 import type {
   AgentAction,
@@ -14,6 +14,7 @@ import type {
   AgentRunStepDocument,
 } from "./contracts";
 import type { AgentToolHistoryEntry } from "./prompt";
+import { withCurrentCompany } from "../../companies/context";
 
 const DB_NAME = "ai_secretary";
 const SNAPSHOTS_COLLECTION = "assistant_config_snapshots";
@@ -82,7 +83,7 @@ export async function startAgentRun(input: {
       { $set: { status: "superseded", completedAt: run.startedAt } },
     );
   }
-  await collection.insertOne(withLegacyCompany(run));
+  await collection.insertOne(await withCurrentCompany(run));
   await collection.createIndex({ customerId: 1, startedAt: -1 });
   return run;
 }
@@ -101,7 +102,7 @@ export async function recordAgentRunStep(input: {
     createdAt: new Date(),
   };
   const collection = (await clientPromise).db(DB_NAME).collection<AgentRunStepDocument>("assistant_run_steps");
-  await collection.insertOne(withLegacyCompany(step));
+  await collection.insertOne(await withCurrentCompany(step));
   await collection.createIndex({ runId: 1, iteration: 1 }, { unique: true });
 }
 

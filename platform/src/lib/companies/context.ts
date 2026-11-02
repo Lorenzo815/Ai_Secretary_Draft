@@ -2,7 +2,7 @@ import "server-only";
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ObjectId } from "mongodb";
-import { legacyCompanyId } from "./ownership";
+import { legacyCompanyId, withCompany } from "./ownership";
 import { COMPANY_HEADER } from "./tenant-header";
 
 export { COMPANY_HEADER };
@@ -42,13 +42,7 @@ export async function currentCompanyId(): Promise<ObjectId> {
 
 /** Stamps the current company on a new document; refuses to overwrite a different owner. */
 export async function withCurrentCompany<T extends object>(document: T): Promise<T & { companyId: ObjectId }> {
-  const companyId = await currentCompanyId();
-  if ("companyId" in document && (
-    !(document.companyId instanceof ObjectId) || !document.companyId.equals(companyId)
-  )) {
-    throw new Error("A propriedade da empresa já existe e não pode ser substituída.");
-  }
-  return { ...document, companyId };
+  return withCompany(document, await currentCompanyId());
 }
 
 /** Adds the current company to a query filter. */

@@ -4,8 +4,9 @@ import { ObjectId } from "mongodb";
 import { getAiProviderConfiguration } from "../ai/provider-config";
 import { getVercelGatewayCredential } from "../ai/provider-credentials";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+
 import { fetchWhatsAppMediaFile } from "./client";
+import { withCurrentCompany } from "../companies/context";
 
 const DB_NAME = "ai_secretary";
 const TRACE_COLLECTION = "ai_task_calls";
@@ -112,7 +113,7 @@ async function startAudioTrace(input: {
     ]);
     await indexesPromise;
     const traceId = new ObjectId();
-    await collection.insertOne(withLegacyCompany({
+    await collection.insertOne(await withCurrentCompany({
       _id: traceId,
       ...input,
       provider: "vercel",

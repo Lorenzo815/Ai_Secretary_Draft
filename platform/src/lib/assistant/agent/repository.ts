@@ -3,11 +3,12 @@ import "server-only";
 import { createHash } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../../mongodb";
-import { withLegacyCompany } from "../../companies/ownership";
+
 import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./contracts";
 import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RELATIONSHIP_ROUTING, DEFAULT_RESPONSE_STYLE } from "./defaults";
+import { withCurrentCompany } from "../../companies/context";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
@@ -61,7 +62,7 @@ export async function getAgentConfiguration() {
       updatedAt: new Date(),
       updatedBy: "system-migration",
     });
-    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, withLegacyCompany(migrated));
+    const result = await collection.replaceOne({ _id: "active", revision: existing.revision }, await withCurrentCompany(migrated));
     if (result.matchedCount > 0) return migrated;
     const concurrent = await collection.findOne({ _id: "active" });
     return concurrent
@@ -89,7 +90,7 @@ export async function getAgentConfiguration() {
   });
   await collection.updateOne(
     { _id: "active" },
-    { $setOnInsert: withLegacyCompany(initial) },
+    { $setOnInsert: await withCurrentCompany(initial) },
     { upsert: true },
   );
   return (await collection.findOne({ _id: "active" })) ?? initial;
@@ -118,7 +119,7 @@ export async function updateAgentConfiguration(input: {
   });
   const result = await collection.replaceOne(
     { _id: "active", revision: input.expectedRevision },
-    withLegacyCompany(next),
+    await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) {
     throw new Error("A configuração foi alterada por outra sessão. Recarregue antes de salvar.");

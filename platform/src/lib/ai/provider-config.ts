@@ -2,11 +2,12 @@ import "server-only";
 
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+
 import {
   getVercelGatewayCredentialStatus,
 } from "./provider-credentials";
 import { AI_PROVIDERS, type AiProvider } from "./providers/types";
+import { withCurrentCompany } from "../companies/context";
 
 export type { AiProvider } from "./providers/types";
 
@@ -77,7 +78,7 @@ export async function getAiProviderConfiguration() {
   const existing = await collection.findOne({ _id: "active" });
   if (existing) return normalizeConfiguration(existing);
   const initial = { ...DEFAULT_CONFIGURATION, updatedAt: new Date() };
-  await collection.updateOne({ _id: "active" }, { $setOnInsert: withLegacyCompany(initial) }, { upsert: true });
+  await collection.updateOne({ _id: "active" }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
   return normalizeConfiguration((await collection.findOne({ _id: "active" })) ?? initial);
 }
 
@@ -157,7 +158,7 @@ export async function updateAiProviderConfiguration(input: {
   };
   const result = await (await getCollection()).replaceOne(
     { _id: "active", revision: input.expectedRevision },
-    withLegacyCompany(next),
+    await withCurrentCompany(next),
   );
   if (result.matchedCount === 0) {
     throw new Error("A configuração de modelos foi alterada. Recarregue antes de salvar.");

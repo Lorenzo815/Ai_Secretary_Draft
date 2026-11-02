@@ -163,11 +163,18 @@ describe("updateCustomerProfile address updates", () => {
     }
   });
 
-  it("does not enable a different company through the scoped ingestion helper", async () => {
-    await expect(findOrCreateCustomerFromWhatsApp({
-      phone: "5542988076200", interactionAt: new Date(), companyId: new ObjectId(),
-    })).rejects.toThrow("não pode ser substituída");
-    expect(findOneAndUpdate).not.toHaveBeenCalled();
+  it("stamps a created customer with the same company it was looked up in", async () => {
+    const companyId = new ObjectId();
+    findOneAndUpdate.mockResolvedValue(null);
+    findOneAndUpdate.mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValueOnce({ _id: new ObjectId() });
+    await findOrCreateCustomerFromWhatsApp({
+      phone: "5542988076200", interactionAt: new Date(), companyId,
+    });
+    for (const [filter, update] of findOneAndUpdate.mock.calls) {
+      expect(filter.companyId.equals(companyId)).toBe(true);
+      if (update.$setOnInsert) expect(update.$setOnInsert.companyId.equals(companyId)).toBe(true);
+    }
+    expect(findOneAndUpdate.mock.calls.some(([filter]) => filter.companyId.equals(legacyCompanyId()))).toBe(false);
   });
 
   it("reuses a customer stored with the legacy Brazilian mobile number", async () => {
@@ -188,6 +195,7 @@ describe("updateCustomerProfile address updates", () => {
     expect(findOneAndUpdate).toHaveBeenNthCalledWith(
       1,
       {
+        companyId: legacyCompanyId(),
         identifiers: {
           $elemMatch: {
             kind: "whatsapp_phone",
@@ -201,6 +209,7 @@ describe("updateCustomerProfile address updates", () => {
     expect(findOneAndUpdate).toHaveBeenNthCalledWith(
       2,
       {
+        companyId: legacyCompanyId(),
         identifiers: {
           $elemMatch: {
             kind: "whatsapp_phone",
@@ -239,6 +248,7 @@ describe("updateCustomerProfile address updates", () => {
     expect(findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(findOneAndUpdate).toHaveBeenCalledWith(
       {
+        companyId: legacyCompanyId(),
         identifiers: {
           $elemMatch: { kind: "whatsapp_phone", value: "5542988076200" },
         },

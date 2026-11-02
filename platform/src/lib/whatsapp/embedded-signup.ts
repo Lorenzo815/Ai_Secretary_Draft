@@ -5,6 +5,7 @@ import clientPromise from "../mongodb";
 import { withLegacyCompany } from "../companies/ownership";
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "crypto";
+import { withCurrentCompany } from "../companies/context";
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "whatsapp_embedded_signup_config";
 const DEFAULT_GRAPH_VERSION = "v25.0";
@@ -126,7 +127,7 @@ export async function exchangeEmbeddedSignupCode(code: string) {
 
   const now = new Date();
   const connectionId = randomUUID();
-  await (await getConnectionsCollection()).insertOne(withLegacyCompany({
+  await (await getConnectionsCollection()).insertOne(await withCurrentCompany({
     _id: connectionId,
     appId: configuration.appId,
     graphVersion: configuration.graphVersion,
@@ -532,7 +533,7 @@ export async function captureCoexistenceWebhookEvent(input: {
   const result = await (await getWebhookEventsCollection()).updateOne(
     { _id: eventId },
     {
-      $setOnInsert: withLegacyCompany({
+      $setOnInsert: await withCurrentCompany({
         _id: eventId,
         wabaId: input.wabaId,
         field: input.field,

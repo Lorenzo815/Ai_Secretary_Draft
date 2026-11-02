@@ -48,11 +48,17 @@ export function legacyCompanyId() {
   return new ObjectId(LEGACY_COMPANY_ID);
 }
 
-export function withLegacyCompany<T extends object>(document: T): T & { companyId: ObjectId } {
+/** Stamps `companyId` on a new document; refuses to overwrite a different owner. */
+export function withCompany<T extends object>(document: T, companyId: ObjectId): T & { companyId: ObjectId } {
   if ("companyId" in document && (
-    !(document.companyId instanceof ObjectId) || !document.companyId.equals(legacyCompanyId())
+    !(document.companyId instanceof ObjectId) || !document.companyId.equals(companyId)
   )) {
     throw new Error("A propriedade da empresa já existe e não pode ser substituída.");
   }
-  return { ...document, companyId: legacyCompanyId() };
+  return { ...document, companyId };
+}
+
+/** For platform-level documents (Oria's own Meta app and AI Gateway key) and the original clinic's seed. */
+export function withLegacyCompany<T extends object>(document: T): T & { companyId: ObjectId } {
+  return withCompany(document, legacyCompanyId());
 }

@@ -3,7 +3,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+import { withCurrentCompany } from "../companies/context";
 
 interface EncryptedSecret { ciphertext: string; iv: string; authTag: string }
 interface MercadoPagoCredentialDocument {
@@ -67,7 +67,7 @@ export async function saveMercadoPagoCredential(input: {
   }
   await (await getCollection()).replaceOne(
     { _id: "mercado_pago" },
-    withLegacyCompany({
+    await withCurrentCompany({
       accessToken: encrypt(accessToken),
       webhookSecret: encrypt(webhookSecret),
       updatedAt: new Date(),

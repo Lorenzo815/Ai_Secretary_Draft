@@ -2,7 +2,8 @@ import "server-only";
 
 import type { Collection } from "mongodb";
 import clientPromise from "../mongodb";
-import { withLegacyCompany } from "../companies/ownership";
+import { currentCompanyId } from "../companies/context";
+import { withCompany } from "../companies/ownership";
 import type { AutomationRuleDocument } from "./contracts";
 import { createDefaultAutomationRules } from "./defaults";
 
@@ -17,11 +18,12 @@ async function getCollection(): Promise<Collection<AutomationRuleDocument>> {
 export async function listAutomationRules() {
   const collection = await getCollection();
   const defaults = createDefaultAutomationRules();
+  const companyId = await currentCompanyId();
   await Promise.all([
     collection.deleteMany({ _id: { $in: RETIRED_RULE_IDS } }),
     ...defaults.map((rule) => collection.updateOne(
       { _id: rule._id },
-      { $setOnInsert: withLegacyCompany(rule) },
+      { $setOnInsert: withCompany(rule, companyId) },
       { upsert: true },
     )),
   ]);
@@ -34,10 +36,11 @@ export async function replaceAutomationRules(input: {
 }) {
   validateRules(input.rules);
   const collection = await getCollection();
+  const companyId = await currentCompanyId();
   const ids = input.rules.map((rule) => rule._id);
   await Promise.all(input.rules.map((rule) => collection.replaceOne(
     { _id: rule._id },
-    withLegacyCompany({
+    withCompany({
       _id: rule._id,
       name: rule.name,
       enabled: rule.enabled,
@@ -49,7 +52,7 @@ export async function replaceAutomationRules(input: {
       rerunWhenSourceChanges: rule.rerunWhenSourceChanges,
       updatedAt: new Date(),
       updatedBy: input.updatedBy,
-    }),
+    }, companyId),
     { upsert: true },
   )));
   await collection.deleteMany({ _id: { $nin: ids } });

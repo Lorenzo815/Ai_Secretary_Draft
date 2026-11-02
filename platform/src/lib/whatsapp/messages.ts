@@ -3,8 +3,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { Collection, ObjectId } from "mongodb";
 import clientPromise from "../mongodb";
-import { legacyCompanyId, withLegacyCompany } from "../companies/ownership";
+import { legacyCompanyId } from "../companies/ownership";
 import type { WhatsAppReferral } from "./message-payload";
+import { withCurrentCompany } from "../companies/context";
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageStatus = "received" | "sent" | "delivered" | "read" | "failed";
@@ -67,7 +68,7 @@ export async function saveWhatsAppMessage(
     { metaMessageId: message.metaMessageId },
     {
       $set: { ...message, updatedAt: now },
-      $setOnInsert: withLegacyCompany({ _id: new ObjectId() }),
+      $setOnInsert: await withCurrentCompany({ _id: new ObjectId() }),
     },
     { upsert: true },
   );
@@ -90,7 +91,7 @@ export async function saveWhatsAppMessageEcho(
   };
   const now = new Date();
   const result = await messages.updateOne(filter, {
-    $setOnInsert: withLegacyCompany({
+    $setOnInsert: await withCurrentCompany({
       ...message,
       _id: new ObjectId(),
       updatedAt: now,
