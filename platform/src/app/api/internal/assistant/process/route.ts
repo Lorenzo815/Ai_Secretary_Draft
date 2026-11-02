@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { getAgentConfiguration } from "@/lib/assistant/agent";
+import { listPausedAgentCompanyIds } from "@/lib/assistant/agent";
 import { processNextAutomationJob } from "@/lib/automation";
 import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 import { processPendingWhatsAppMessageEchoes } from "@/lib/whatsapp/message-echoes";
@@ -40,18 +40,16 @@ async function processAssistantBatch() {
   const synchronization = await processPendingWhatsAppMessageEchoes();
   const echoResults = { echoesProcessed: synchronization.processed, echoSyncFailures: synchronization.failed };
   const batchSize = Math.min(Math.max(Number(process.env.ASSISTANT_WORKER_BATCH_SIZE) || 1, 1), 20);
-  const settings = await getAgentConfiguration();
-  if (!settings.enabled) {
-    return { processed: 0, results: [], processingEnabled: false, ...echoResults };
-  }
+  // Paused companies keep their jobs queued, so conversations resume when automatic replies are re-enabled.
+  const pausedCompanyIds = await listPausedAgentCompanyIds();
   const results = [];
   for (let index = 0; index < batchSize; index += 1) {
-    const result = await processNextAutomationJob();
+    const result = await processNextAutomationJob({ excludeCompanyIds: pausedCompanyIds });
     if (!result.processed) break;
     results.push(result);
   }
 
-  return { processed: results.length, results, ...echoResults };
+  return { processed: results.length, results, pausedCompanies: pausedCompanyIds.length, ...echoResults };
 }
 
 function isAuthorized(authorization: string | null) {

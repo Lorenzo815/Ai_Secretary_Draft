@@ -124,7 +124,7 @@ describe("company-scoped forwarding configuration", () => {
   it("uses the serialized admin transaction, company scope and optimistic revision when saving", async () => {
     await saveForwardingSettings(principal, { revision: 1, endpoints: [endpoint] });
     expect(mocks.companies.findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: scope, adminUserId: admin, status: "active", accessControlVersion: 1 },
+      { _id: scope, adminUserId: admin, status: { $in: ["active", "test"] }, accessControlVersion: 1 },
       { $inc: { userManagementVersion: 1 } }, { session: mocks.session, returnDocument: "after" },
     );
     expect(mocks.configuration.replaceOne).toHaveBeenCalledWith(

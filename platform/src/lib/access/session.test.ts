@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyPermissions } from "./contracts";
 import { legacyCompanyId } from "../companies/ownership";
 
@@ -24,7 +24,26 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("database-validated sessions", () => {
+  it("admits another company only when it is isolation-ready and the platform runs in strict tenant mode", async () => {
+    const companyId = new ObjectId();
+    user.companyId = companyId;
+    mocks.company.mockResolvedValue({
+      _id: companyId, name: "Nova clínica", status: "test", isolationReady: true, accessControlVersion: 1, adminUserId: id,
+    });
+    expect(await loadIdentity(id.toHexString())).toBeNull();
+
+    vi.stubEnv("TENANT_STRICT", "true");
+    expect((await loadIdentity(id.toHexString()))?.principal.companyId).toBe(companyId.toHexString());
+
+    mocks.company.mockResolvedValue({
+      _id: companyId, name: "Nova clínica", status: "test", isolationReady: false, accessControlVersion: 1, adminUserId: id,
+    });
+    expect(await loadIdentity(id.toHexString())).toBeNull();
+  });
+
   it("resolves company/admin identity only from the database", async () => {
     const principal = await resolveToken({ id: id.toHexString(), accessFingerprint: sessionFingerprint(user, secret) }, secret);
     expect(principal).toMatchObject({ id: id.toHexString(), companyId: legacyCompanyId().toHexString(), isAdmin: true });

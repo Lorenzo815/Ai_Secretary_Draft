@@ -46,10 +46,12 @@ export function validateCnpj(value: unknown) {
   return normalized;
 }
 
+// The principal was already validated against an operational company by loadIdentity.
 function scopedCompany(principal: Principal) {
-  if (principal.companyId !== LEGACY_COMPANY_ID) throw new ManagementError("Empresa não habilitada.", 403);
   return objectId(principal.companyId);
 }
+
+const SIGNED_IN_STATUSES: { $in: AccessCompany["status"][] } = { $in: ["active", "test"] };
 
 export async function adminTransaction<T>(
   principal: Principal,
@@ -66,7 +68,7 @@ export async function adminTransaction<T>(
       );
       if (!actor) throw new ManagementError("Sessão inválida.", 401);
       const company = await db.collection<AccessCompany>("companies").findOneAndUpdate(
-        { _id: companyId, adminUserId: actor._id, status: "active", accessControlVersion: 1 },
+        { _id: companyId, adminUserId: actor._id, status: SIGNED_IN_STATUSES, accessControlVersion: 1 },
         { $inc: { userManagementVersion: 1 } }, { session, returnDocument: "after" },
       );
       if (!company) throw new ManagementError("Somente o administrador da empresa pode executar esta operação.", 403);
@@ -78,7 +80,7 @@ export async function adminTransaction<T>(
 export async function getCompanySettings(principal: Principal): Promise<CompanySettings> {
   const db = (await clientPromise).db("ai_secretary");
   const companyId = scopedCompany(principal);
-  const company = await db.collection<AccessCompany>("companies").findOne({ _id: companyId, status: "active", accessControlVersion: 1 });
+  const company = await db.collection<AccessCompany>("companies").findOne({ _id: companyId, status: SIGNED_IN_STATUSES, accessControlVersion: 1 });
   if (!company?.adminUserId) throw new ManagementError("Empresa indisponível.", 403);
   const admin = await db.collection<UserDocument>("users").findOne(
     { _id: company.adminUserId, companyId, disabled: false }, { projection: { name: 1, email: 1 } },

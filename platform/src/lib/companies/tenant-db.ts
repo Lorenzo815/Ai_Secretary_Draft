@@ -2,7 +2,7 @@ import "server-only";
 
 import { ObjectId, type AnyBulkWriteOperation, type Collection, type Db, type Document } from "mongodb";
 import clientPromise from "../mongodb";
-import { currentCompanyId } from "./context";
+import { currentCompanyId, TenantResolutionError } from "./context";
 import { COMPANY_OWNED_COLLECTIONS, withCompany } from "./ownership";
 
 const DB_NAME = "ai_secretary";
@@ -30,16 +30,27 @@ export class TenantScopeError extends Error {
 
 /** The application database, with company-owned collections confined to the company in scope. */
 export async function tenantDb(companyId?: ObjectId): Promise<Db> {
-  return scopeDb((await clientPromise).db(DB_NAME), companyId ?? await currentCompanyId());
+  const db = (await clientPromise).db(DB_NAME);
+  if (companyId) return scopeDb(db, companyId);
+  try {
+    return scopeDb(db, await currentCompanyId());
+  } catch (error) {
+    // Index maintenance runs before a company is known (e.g. at the top of a webhook); data access must not.
+    if (error instanceof TenantResolutionError) return scopeDb(db, null);
+    throw error;
+  }
 }
 
-export function scopeDb(db: Db, companyId: ObjectId): Db {
+const INDEX_MAINTENANCE = new Set(["createIndex", "createIndexes", "indexes", "listIndexes", "indexExists", "indexInformation", "dropIndex", "collectionName", "dbName", "namespace"]);
+
+export function scopeDb(db: Db, companyId: ObjectId | null): Db {
   return new Proxy(db, {
     get(target, property, receiver) {
       if (property === "collection") {
         return (name: string, options?: Parameters<Db["collection"]>[1]) => {
           const collection = target.collection(name, options);
-          return TENANT_SCOPED_COLLECTIONS.has(name) ? scopeCollection(collection, companyId) : collection;
+          if (!TENANT_SCOPED_COLLECTIONS.has(name)) return collection;
+          return companyId ? scopeCollection(collection, companyId) : indexOnlyCollection(collection);
         };
       }
       const value = Reflect.get(target, property, receiver);
@@ -120,6 +131,17 @@ export function scopeCollection<T extends Document>(collection: Collection<T>, c
           method(operations.map((operation) => scopeBulkOperation(operation, scopeFilter, stamp, checkUpdate)), ...rest);
       }
       return method;
+    },
+  });
+}
+
+function indexOnlyCollection<T extends Document>(collection: Collection<T>): Collection<T> {
+  return new Proxy(collection, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof property !== "string" || typeof value !== "function") return value;
+      if (INDEX_MAINTENANCE.has(property)) return value.bind(target);
+      return () => { throw new TenantResolutionError(); };
     },
   });
 }

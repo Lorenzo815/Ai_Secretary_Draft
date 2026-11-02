@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ObjectId } from "mongodb";
 import { getAssistantConfig } from "../assistant/config";
 import { processCustomerAgentJob } from "../assistant/agent/orchestrator";
 import { runWithCompany } from "../companies/context";
@@ -12,8 +13,8 @@ import {
 } from "./queue";
 import type { AutomationJobDocument } from "./contracts";
 
-export async function processNextAutomationJob() {
-  const job = await claimAutomationJob(getAssistantConfig().leaseMs);
+export async function processNextAutomationJob(options: { excludeCompanyIds?: ObjectId[] } = {}) {
+  const job = await claimAutomationJob(getAssistantConfig().leaseMs, undefined, options.excludeCompanyIds);
   if (!job) return { processed: false as const };
   // Jobs are claimed across all companies; each one runs under its own tenant.
   return runWithCompany(job.companyId ?? legacyCompanyId(), () => processClaimedJob(job));

@@ -2,14 +2,14 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { getMongoClient } from "../mongodb";
 import type { UserDocument } from "../users";
-import { LEGACY_COMPANY_ID } from "../companies/ownership";
+import { isCompanyDocumentOperational } from "../companies/status";
 import { parsePermissions, type Principal } from "./contracts";
 
 export interface AccessCompany {
   _id: ObjectId;
   name: string;
-  status: "active";
-  isolationReady: false;
+  status: "active" | "test" | "suspended";
+  isolationReady: boolean;
   createdAt: Date;
   adminUserId?: ObjectId;
   accessControlVersion?: number;
@@ -38,9 +38,9 @@ export async function loadIdentity(id: unknown) {
   const db = (await getMongoClient()).db("ai_secretary");
   const user = await db.collection<UserDocument>("users").findOne({ _id: new ObjectId(id) });
   if (!user || user.disabled !== false || !Number.isSafeInteger(user.sessionVersion) ||
-    !(user.companyId instanceof ObjectId) || user.companyId.toHexString() !== LEGACY_COMPANY_ID) return null;
+    !(user.companyId instanceof ObjectId)) return null;
   const company = await db.collection<AccessCompany>("companies").findOne({ _id: user.companyId });
-  if (!company || company.status !== "active" || company.isolationReady !== false || company.accessControlVersion !== 1 ||
+  if (!company || !isCompanyDocumentOperational(user.companyId, company) || company.accessControlVersion !== 1 ||
     !(company.adminUserId instanceof ObjectId)) return null;
   let permissions;
   try {

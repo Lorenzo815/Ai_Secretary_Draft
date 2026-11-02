@@ -3,14 +3,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { legacyCompanyId } from "../companies/ownership";
 import { runWithCompany } from "../companies/context";
 
-const mocks = vi.hoisted(() => ({ updateOne: vi.fn(), createIndex: vi.fn() }));
+const mocks = vi.hoisted(() => ({ updateOne: vi.fn(), createIndex: vi.fn(), findOneAndUpdate: vi.fn() }));
 vi.mock("../mongodb", () => ({
   default: Promise.resolve({ db: () => ({ collection: () => mocks }) }),
 }));
 
-import { scheduleAutomationJob } from "./queue";
+import { claimAutomationJob, scheduleAutomationJob } from "./queue";
 
 beforeEach(() => vi.clearAllMocks());
+
+describe("automation job claiming", () => {
+  it("claims across companies except those whose automatic replies are paused", async () => {
+    const paused = new ObjectId();
+    await claimAutomationJob(1_000, undefined, [paused]);
+    await claimAutomationJob(1_000);
+
+    const [[excluding], [all]] = mocks.findOneAndUpdate.mock.calls;
+    expect(excluding.companyId).toEqual({ $nin: [paused] });
+    expect(all).not.toHaveProperty("companyId");
+  });
+});
 
 describe("automation job ownership", () => {
   function evaluate(expression: unknown, document: Record<string, unknown>): unknown {

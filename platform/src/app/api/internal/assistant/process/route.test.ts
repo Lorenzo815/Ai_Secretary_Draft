@@ -1,7 +1,8 @@
+import { ObjectId } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ configuration: vi.fn(), process: vi.fn(), forward: vi.fn(), echoes: vi.fn(), templates: vi.fn() }));
-vi.mock("@/lib/assistant/agent", () => ({ getAgentConfiguration: mocks.configuration }));
+const mocks = vi.hoisted(() => ({ paused: vi.fn(), process: vi.fn(), forward: vi.fn(), echoes: vi.fn(), templates: vi.fn() }));
+vi.mock("@/lib/assistant/agent", () => ({ listPausedAgentCompanyIds: mocks.paused }));
 vi.mock("@/lib/automation", () => ({ processNextAutomationJob: mocks.process }));
 vi.mock("@/lib/whatsapp/forwarding", () => ({ processForwardingDeliveries: mocks.forward }));
 vi.mock("@/lib/whatsapp/message-echoes", () => ({ processPendingWhatsAppMessageEchoes: mocks.echoes }));
@@ -17,7 +18,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("ASSISTANT_WORKER_SECRET", "worker-secret");
   vi.stubEnv("ASSISTANT_WORKER_BATCH_SIZE", "1");
-  mocks.configuration.mockResolvedValue({ enabled: true });
+  mocks.paused.mockResolvedValue([]);
   mocks.process.mockResolvedValue({ processed: true });
   mocks.forward.mockResolvedValue(2);
   mocks.echoes.mockResolvedValue({ processed: 3, failed: 0, pending: false });
@@ -33,15 +34,17 @@ describe("independent forwarding worker", () => {
     expect(mocks.echoes).not.toHaveBeenCalled();
     expect(mocks.templates).not.toHaveBeenCalled();
   });
-  it("drains forwarding deliveries even when AI processing is paused", async () => {
-    mocks.configuration.mockResolvedValue({ enabled: false });
+  it("drains forwarding deliveries and leaves paused companies' jobs queued", async () => {
+    const paused = [new ObjectId()];
+    mocks.paused.mockResolvedValue(paused);
+    mocks.process.mockResolvedValue({ processed: false });
     const response = await POST(request("Bearer worker-secret"));
     expect(await response.json()).toMatchObject({
-      processed: 0, results: [], processingEnabled: false, forwardingProcessed: 2,
+      processed: 0, results: [], pausedCompanies: 1, forwardingProcessed: 2,
       echoesProcessed: 3, echoSyncFailures: 0,
     });
     expect(mocks.forward).toHaveBeenCalledOnce();
-    expect(mocks.process).not.toHaveBeenCalled();
+    expect(mocks.process).toHaveBeenCalledExactlyOnceWith({ excludeCompanyIds: paused });
     expect(mocks.echoes).toHaveBeenCalledOnce();
     expect(mocks.templates).toHaveBeenCalledOnce();
   });

@@ -328,15 +328,20 @@ comprovada e exatamente o usuário existente na empresa:
 node --env-file=.env.local --import tsx src\scripts\company-user-access.ts --admin-id ID_EXISTENTE --backup CAMINHO_ABSOLUTO --receipt CAMINHO_ABSOLUTO --confirm-production 'ai_secretary:9b9d1f4b4f16cf6e84abcce4'
 ```
 
-Não há promoção automática no login nem redefinição da senha existente. Esta etapa
-continua limitada à empresa inicial: `isolationReady:false`. Não habilite outra
-empresa até concluir o isolamento de todas as consultas operacionais.
+Não há promoção automática no login nem redefinição da senha existente.
 
 ### Isolamento por empresa (multi-tenancy)
 
 - **Empresa da operação**: `runWithCompany` (worker, webhooks) ou o cabeçalho
   `x-oria-company-id`, que o proxy remove do cliente e define a partir da sessão.
-  Sem empresa resolvida, o código usa a empresa inicial; `TENANT_STRICT=true` falha.
+  Sem empresa resolvida, o código usa a empresa inicial e registra cada ponto de código
+  distinto (`[tenant] No company in scope`); com `TENANT_STRICT=true` a operação falha.
+- **Login e tráfego**: a empresa inicial segue a regra atual (`status: active`). Outras
+  empresas exigem `isolationReady: true` (definido pelo back-office), `status` `active`
+  ou `test` **e** a plataforma em `TENANT_STRICT=true`. Ative o modo estrito somente
+  depois que os logs não mostrarem mais avisos `[tenant]`.
+- **Worker**: processa jobs de todas as empresas, cada um sob a própria empresa. Jobs de
+  empresas com respostas automáticas pausadas permanecem na fila até a retomada.
 - **Consultas**: módulos operacionais usam `tenantDb()`
   (`src/lib/companies/tenant-db.ts`). Nas coleções da empresa, todo filtro recebe
   `companyId`, inserções e substituições são carimbadas, agregações começam com

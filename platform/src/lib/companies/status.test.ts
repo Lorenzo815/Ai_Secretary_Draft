@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { findOne } = vi.hoisted(() => ({ findOne: vi.fn() }));
 vi.mock("../mongodb", () => ({
@@ -9,7 +9,11 @@ vi.mock("../mongodb", () => ({
 import { legacyCompanyId } from "./ownership";
 import { isCompanyOperational } from "./status";
 
-beforeEach(() => findOne.mockReset());
+beforeEach(() => {
+  findOne.mockReset();
+  vi.stubEnv("TENANT_STRICT", "true");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("company operational status", () => {
   it("keeps the original clinic operational while active, as today", async () => {
@@ -29,6 +33,14 @@ describe("company operational status", () => {
     await expect(isCompanyOperational(companyId)).resolves.toBe(true);
     findOne.mockResolvedValue({ status: "suspended", isolationReady: true });
     await expect(isCompanyOperational(companyId)).resolves.toBe(false);
+  });
+
+  it("keeps other companies out unless the platform runs in strict tenant mode", async () => {
+    vi.stubEnv("TENANT_STRICT", "false");
+    findOne.mockResolvedValue({ status: "active", isolationReady: true });
+    await expect(isCompanyOperational(new ObjectId())).resolves.toBe(false);
+    findOne.mockResolvedValue({ status: "active" });
+    await expect(isCompanyOperational(legacyCompanyId())).resolves.toBe(true);
   });
 
   it("treats an unknown company as not operational", async () => {

@@ -8,7 +8,7 @@ import { COMPANY_HEADER } from "./tenant-header";
 export { COMPANY_HEADER };
 
 const storage = new AsyncLocalStorage<{ companyId: ObjectId }>();
-let fallbackWarned = false;
+const reportedFallbackSites = new Set<string>();
 
 export class TenantResolutionError extends Error {
   constructor() {
@@ -33,11 +33,16 @@ export async function currentCompanyId(): Promise<ObjectId> {
   const fromRequest = await companyFromRequestHeader();
   if (fromRequest) return fromRequest;
   if (process.env.TENANT_STRICT === "true") throw new TenantResolutionError();
-  if (!fallbackWarned) {
-    fallbackWarned = true;
-    console.warn("[tenant] No company in scope; falling back to the original clinic.");
-  }
+  reportFallback();
   return legacyCompanyId();
+}
+
+/** Logs each distinct code path that relies on the fallback, so it can be scoped before enabling TENANT_STRICT. */
+function reportFallback() {
+  const site = new Error().stack?.split("\n").slice(3, 7).map((line) => line.trim()).join(" < ") ?? "unknown";
+  if (reportedFallbackSites.has(site) || reportedFallbackSites.size >= 200) return;
+  reportedFallbackSites.add(site);
+  console.warn("[tenant] No company in scope; falling back to the original clinic.", { site });
 }
 
 /** Stamps the current company on a new document; refuses to overwrite a different owner. */

@@ -21,7 +21,7 @@ vi.mock("../mongodb", () => ({
   }),
 }));
 
-import { runWithCompany } from "./context";
+import { runWithCompany, TenantResolutionError } from "./context";
 import { companyScopedId, legacyCompanyId, unscopedId } from "./ownership";
 import { TenantScopeError, tenantDb } from "./tenant-db";
 
@@ -127,6 +127,20 @@ describe("tenant-scoped database", () => {
 
     expect(mock("users").findOne).toHaveBeenCalledWith({ email: "a@b.c" });
     expect(mock("ai_provider_credentials").findOne).toHaveBeenCalledWith({ _id: "vercel" });
+  });
+});
+
+describe("tenant-scoped database without a resolved company", () => {
+  it("allows index maintenance but refuses data access in strict mode", async () => {
+    vi.stubEnv("TENANT_STRICT", "true");
+    try {
+      const messages = (await tenantDb()).collection("whatsapp_messages");
+      await messages.createIndex({ timestamp: -1 });
+      expect(mock("whatsapp_messages").createIndex).toHaveBeenCalledWith({ timestamp: -1 });
+      expect(() => messages.findOne({})).toThrow(TenantResolutionError);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

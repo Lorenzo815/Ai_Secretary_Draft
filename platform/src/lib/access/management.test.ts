@@ -63,7 +63,7 @@ describe("company administration invariants", () => {
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
     expect(count).toBe(25);
     expect(mocks.companies.findOneAndUpdate).toHaveBeenCalledWith(
-      { _id: legacyCompanyId(), adminUserId: adminId, status: "active", accessControlVersion: 1 },
+      { _id: legacyCompanyId(), adminUserId: adminId, status: { $in: ["active", "test"] }, accessControlVersion: 1 },
       { $inc: { userManagementVersion: 1 } }, { session: mocks.session, returnDocument: "after" },
     );
     expect(mocks.session.withTransaction).toHaveBeenCalledWith(expect.any(Function), {
@@ -76,7 +76,10 @@ describe("company administration invariants", () => {
     expect(mocks.users.insertOne).not.toHaveBeenCalled();
   });
   it("rejects another company and absent/foreign users", async () => {
-    await expect(createManagedUser({ ...principal, companyId: new ObjectId().toHexString() }, input)).rejects.toMatchObject({ status: 403 });
+    const foreignCompany = new ObjectId();
+    mocks.users.findOne.mockResolvedValueOnce(null);
+    await expect(createManagedUser({ ...principal, companyId: foreignCompany.toHexString() }, input)).rejects.toMatchObject({ status: 401 });
+    expect(mocks.users.findOne).toHaveBeenLastCalledWith(expect.objectContaining({ companyId: foreignCompany }), expect.anything());
     mocks.users.findOne.mockResolvedValueOnce({ _id: adminId }).mockResolvedValueOnce(null);
     await expect(updateManagedUser(principal, { ...input, id: targetId.toHexString(), permissions: emptyPermissions(), disabled: false })).rejects.toMatchObject({ status: 404 });
   });

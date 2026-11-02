@@ -1,7 +1,9 @@
 import "server-only";
 
 import { createHash } from "crypto";
-import type { Collection } from "mongodb";
+import type { Collection, ObjectId } from "mongodb";
+import clientPromise from "../../mongodb";
+import { legacyCompanyId } from "../../companies/ownership";
 
 import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
@@ -15,6 +17,15 @@ const COLLECTION_NAME = "assistant_agent_config";
 
 async function getCollection(): Promise<Collection<AgentConfigurationDocument>> {
   return (await tenantDb()).collection<AgentConfigurationDocument>(COLLECTION_NAME);
+}
+
+/** Companies whose automatic replies are paused; the worker leaves their jobs queued until they resume. */
+export async function listPausedAgentCompanyIds(): Promise<ObjectId[]> {
+  const configurations = await (await clientPromise).db(DB_NAME)
+    .collection<AgentConfigurationDocument & { companyId?: ObjectId }>(COLLECTION_NAME)
+    .find({ enabled: false }, { projection: { companyId: 1 } })
+    .toArray();
+  return configurations.map((configuration) => configuration.companyId ?? legacyCompanyId());
 }
 
 export async function getAgentConfiguration() {

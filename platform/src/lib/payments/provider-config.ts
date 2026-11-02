@@ -17,7 +17,7 @@ export interface PaymentProviderConfiguration {
 }
 
 const DEFAULT_CONFIGURATION: PaymentProviderConfiguration = {
-  _id: await scopedSettingsId("active"),
+  _id: "active",
   revision: 1,
   activeProvider: "manual",
   humanFallbackEnabled: true,
@@ -33,7 +33,7 @@ export async function getPaymentProviderConfiguration() {
   const collection = await getCollection();
   const stored = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (stored) return { ...DEFAULT_CONFIGURATION, ...stored };
-  const initial = { ...DEFAULT_CONFIGURATION, updatedAt: new Date() };
+  const initial = { ...DEFAULT_CONFIGURATION, _id: await scopedSettingsId("active"), updatedAt: new Date() };
   await collection.updateOne({ _id: await scopedSettingsId("active") }, { $setOnInsert: await withCurrentCompany(initial) }, { upsert: true });
   return initial;
 }

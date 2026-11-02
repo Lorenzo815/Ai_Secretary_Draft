@@ -47,13 +47,18 @@ export async function scheduleAutomationJob(input: {
   );
 }
 
-export async function claimAutomationJob(leaseMs: number, process?: AutomationProcessKey) {
+export async function claimAutomationJob(
+  leaseMs: number,
+  process?: AutomationProcessKey,
+  excludeCompanyIds: ObjectId[] = [],
+) {
   const collection = await getCollection();
   await ensureIndexes();
   const now = new Date();
   return collection.findOneAndUpdate(
     {
       ...(process ? { process } : {}),
+      ...(excludeCompanyIds.length ? { companyId: { $nin: excludeCompanyIds } } : {}),
       $or: [
         { status: "pending", dueAt: { $lte: now } },
         { status: "processing", leaseUntil: { $lte: now } },
