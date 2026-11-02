@@ -4,7 +4,7 @@ import { Collection, MongoServerError, ObjectId, type ClientSession, type Update
 import { DateTime, Interval } from "luxon";
 import clientPromise from "../mongodb";
 import { legacyCompanyId, withCompany } from "../companies/ownership";
-import { scopedSettingsId, withCurrentCompany } from "../companies/context";
+import { currentCompanyId, scopedSettingsId, withCurrentCompany } from "../companies/context";
 import { scheduleFirstAppointmentQualification } from "../qualification/triggers";
 import { getSlotAccessDecision, isSlotAllowedByAccessEvents } from "./access-policy";
 import {
@@ -178,12 +178,14 @@ async function getAccessEventsCollection(): Promise<Collection<CalendarAccessEve
 
 export async function getCalendarSettings() {
   const settings = await getSettingsCollection();
+  // Only the original clinic gets its own professionals and event types by default; new clinics start empty.
+  const originalClinic = (await currentCompanyId()).equals(legacyCompanyId());
   const existing = await settings.findOne({ _id: await scopedSettingsId(SETTINGS_ID) });
   if (existing) {
     const slotDurationMinutes = normalizeSlotDuration(existing.slotDurationMinutes);
     const weeklyAvailability = normalizeWeeklyAvailability(existing.weeklyAvailability);
-    const resources = normalizeResources(existing.resources, weeklyAvailability);
-    const eventTypes = normalizeEventTypes(existing.eventTypes, slotDurationMinutes);
+    const resources = normalizeResources(existing.resources, weeklyAvailability, originalClinic);
+    const eventTypes = normalizeEventTypes(existing.eventTypes, slotDurationMinutes, originalClinic);
     const storedMessage = existing.confirmationMessageTemplate?.trim();
     const confirmationMessageTemplate = !storedMessage || storedMessage === LEGACY_CONFIRMATION_MESSAGE
       ? DEFAULT_CONFIRMATION_MESSAGE
@@ -206,8 +208,8 @@ export async function getCalendarSettings() {
     slotDurationMinutes: DEFAULT_SLOT_DURATION_MINUTES,
     minimumNoticeHours: 2,
     weeklyAvailability: defaultWeek,
-    resources: defaultResources,
-    eventTypes: defaultEventTypes,
+    resources: originalClinic ? defaultResources : [],
+    eventTypes: originalClinic ? defaultEventTypes : [],
     confirmationMessageTemplate: DEFAULT_CONFIRMATION_MESSAGE,
     updatedAt: new Date(),
   };
@@ -509,6 +511,7 @@ export async function findAvailableSlots(input: {
         resourceId: input.resourceId ?? "",
       }
     : configuredEventType ?? settings.eventTypes[0];
+  if (!eventType) throw new Error("Cadastre ao menos um tipo de evento no calendário.");
   if (
     input.eventType === "custom"
     && (
@@ -1322,7 +1325,7 @@ function createAppointmentDocument(
     holdExpiresAt: input.holdExpiresAt,
     schedulingOptionId: input.schedulingOptionId,
     notes: input.notes?.trim().slice(0, 1_000),
-    eventType: input.eventType ?? settings.eventTypes[0].key,
+    eventType: input.eventType ?? settings.eventTypes[0]?.key ?? "custom",
     customTitle: input.customTitle?.trim().slice(0, 120),
     durationMinutes: Math.round(endAt.diff(startAt, "minutes").minutes),
     allowOutsideAvailability: input.allowOutsideAvailability,
@@ -1637,8 +1640,8 @@ async function validateManualAppointmentSlot(input: {
   return { startAt: requestedStartUtc, endAt: requestedEndUtc, eventType };
 }
 
-function normalizeEventTypes(value: unknown, fallbackDuration = 30): CalendarEventTypeDefinition[] {
-  if (!Array.isArray(value) || value.length === 0) return defaultEventTypes;
+function normalizeEventTypes(value: unknown, fallbackDuration = 30, originalClinic = true): CalendarEventTypeDefinition[] {
+  if (!Array.isArray(value) || value.length === 0) return originalClinic ? defaultEventTypes : [];
   const normalized = value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const eventType = item as Partial<CalendarEventTypeDefinition>;
@@ -1655,6 +1658,7 @@ function normalizeEventTypes(value: unknown, fallbackDuration = 30): CalendarEve
         : defaultType?.durationMinutes ?? fallbackDuration,
     }];
   });
+  if (!originalClinic) return normalized;
   const requiredKeys = new Set(["doctor_consultation", "bioimpedance"]);
   const withRequired = [...normalized];
   for (const required of defaultEventTypes.filter((item) => requiredKeys.has(item.key))) {
@@ -1663,9 +1667,9 @@ function normalizeEventTypes(value: unknown, fallbackDuration = 30): CalendarEve
   return withRequired.length > 0 ? withRequired : defaultEventTypes;
 }
 
-function normalizeResources(value: unknown, fallback: WeeklyAvailability[]): CalendarResourceDefinition[] {
+function normalizeResources(value: unknown, fallback: WeeklyAvailability[], originalClinic = true): CalendarResourceDefinition[] {
   if (!Array.isArray(value) || value.length === 0) {
-    return defaultResources.map((resource) => ({ ...resource, weeklyAvailability: fallback }));
+    return originalClinic ? defaultResources.map((resource) => ({ ...resource, weeklyAvailability: fallback })) : [];
   }
   const resources = value.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
@@ -1677,6 +1681,7 @@ function normalizeResources(value: unknown, fallback: WeeklyAvailability[]): Cal
       weeklyAvailability: normalizeWeeklyAvailability(resource.weeklyAvailability),
     }];
   });
+  if (!originalClinic) return resources;
   for (const required of defaultResources) {
     if (!resources.some((resource) => resource.id === required.id)) {
       resources.push({ ...required, weeklyAvailability: fallback });

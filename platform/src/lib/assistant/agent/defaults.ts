@@ -72,7 +72,26 @@ CANAIS E FONTES OFICIAIS:
 - Site: https://drmatheusbusnardo.com.br/. Instagram: https://instagram.com/drmatheusbusnardo.
 - O site reúne avaliações públicas no Google, Doctoralia e Instagram. Apresente-as apenas como relatos individuais e nunca como garantia de resultado.`;
 
-export function createDefaultAgentConfiguration(): AgentConfigurationDocument {
+/**
+ * The original clinic's configuration, or with `blank` (every other company) the same structure with empty texts,
+ * no scheduling plans and no event types, ready for the clinic to fill in.
+ */
+export function createDefaultAgentConfiguration(options: { blank?: boolean } = {}): AgentConfigurationDocument {
+  const configuration = createOriginalClinicConfiguration();
+  if (!options.blank) return configuration;
+  return {
+    ...configuration,
+    identityPrompt: "",
+    conversationPolicy: "",
+    responseStyle: "",
+    journeyPolicy: "",
+    knowledge: "",
+    schedulingPlans: [],
+    bookableEventTypeKeys: [],
+  };
+}
+
+function createOriginalClinicConfiguration(): AgentConfigurationDocument {
   const now = new Date();
   return {
     _id: "active",

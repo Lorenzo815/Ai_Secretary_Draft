@@ -162,6 +162,29 @@ describe("scheduled customer appointment queries", () => {
     });
 });
 
+describe("new clinic calendar", () => {
+  it("starts without professionals or event types and does not add the original clinic's ones back", async () => {
+    const { runWithCompany } = await import("../companies/context");
+    const companyId = new ObjectId();
+    mocks.findOne.mockResolvedValue(null);
+    const created = await runWithCompany(companyId, () => getCalendarSettings());
+    expect(created.resources).toEqual([]);
+    expect(created.eventTypes).toEqual([]);
+    expect(mocks.insertOne).toHaveBeenLastCalledWith(expect.objectContaining({ _id: `${companyId.toHexString()}:default-calendar`, companyId, resources: [], eventTypes: [] }));
+
+    const own = { key: "avaliacao", name: "Avaliação", color: "#0F766E", durationMinutes: 45, resourceId: "dra" };
+    mocks.findOne.mockResolvedValue({ ...created, resources: [{ id: "dra", name: "Dra. Ana", weeklyAvailability: created.weeklyAvailability }], eventTypes: [own] });
+    const stored = await runWithCompany(companyId, () => getCalendarSettings());
+    expect(stored.resources.map((resource) => resource.id)).toEqual(["dra"]);
+    expect(stored.eventTypes.map((eventType) => eventType.key)).toEqual(["avaliacao"]);
+  });
+
+  it("keeps the original clinic's required professionals and event types", async () => {
+    expect(initial.resources.map((resource) => resource.id)).toEqual(expect.arrayContaining(["doctor", "technician"]));
+    expect(initial.eventTypes.map((eventType) => eventType.key)).toEqual(expect.arrayContaining(["doctor_consultation", "bioimpedance"]));
+  });
+});
+
 describe("calendar event type limit", () => {
   it.each([20, 21, 49, 50])("persists and reloads %i event types", async (count) => {
     const eventTypes = [

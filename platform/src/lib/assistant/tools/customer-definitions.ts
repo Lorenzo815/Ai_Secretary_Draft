@@ -12,7 +12,7 @@ export const customerToolDefinitions = {
       confirmedByCustomer: { type: "boolean" },
     }),
     promptInstructions: `customer.classify_relationship exige status=new ou returning e confirmedByCustomer=true.
-- Use somente depois de o cliente responder explicitamente se já realizou consulta com o Dr. Matheus.
+- Use somente depois de o cliente responder explicitamente se já realizou consulta na clínica.
 - Se a mesma mensagem trouxer também novos dados cadastrais, use customer.update_profile uma única vez para salvar esses dados e a classificação juntos; não execute as duas ferramentas para a mesma resposta.
 - Nunca deduza retorno apenas porque o contato já existe no CRM.
 - Classificar retorno não implica encaminhamento humano. O servidor aplica relationshipRouting da configuração desta execução; preserve mantém o atendimento atual. Confira serviceStatus retornado e finalize com human_handoff se estiver aguardando humano.`,

@@ -645,7 +645,7 @@ export default function CalendarPage() {
         durationMinutes: current.slotDurationMinutes,
         resourceId: current.resources.some((resource) => resource.id === activeResourceId)
           ? activeResourceId
-          : current.resources[0].id,
+          : current.resources[0]?.id ?? "",
       }],
     } : current);
   }

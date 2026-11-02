@@ -60,9 +60,14 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
 
   try {
     const customer = await findCustomerById(job.customerId.toString());
-    if (!configuration.enabled || !customer) {
+    // A clinic whose agent has no identity yet (new clinics start empty) keeps receiving messages, without AI replies.
+    const configured = configuration.identityPrompt.trim().length > 0;
+    if (!configuration.enabled || !configured || !customer) {
       await completeAutomationJob(job._id, job.revision);
-      return { processed: true as const, skipped: !configuration.enabled ? "agent_disabled" : "missing_context" };
+      return {
+        processed: true as const,
+        skipped: !configuration.enabled ? "agent_disabled" : !configured ? "agent_not_configured" : "missing_context",
+      };
     }
     const synchronization = await processPendingWhatsAppMessageEchoes(customer.phones);
     if (synchronization.pending) return blockReply({ job }, "whatsapp_sync_pending");

@@ -9,7 +9,7 @@ import { getCalendarSettings } from "../../calendar/calendar";
 import { isAssistantToolKey, type AssistantToolKey } from "../tools";
 import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./contracts";
 import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RELATIONSHIP_ROUTING, DEFAULT_RESPONSE_STYLE } from "./defaults";
-import { withCurrentCompany, scopedSettingsId } from "../../companies/context";
+import { currentCompanyId, withCurrentCompany, scopedSettingsId } from "../../companies/context";
 import { tenantDb } from "../../companies/tenant-db";
 
 const DB_NAME = "ai_secretary";
@@ -30,6 +30,7 @@ export async function listPausedAgentCompanyIds(): Promise<ObjectId[]> {
 
 export async function getAgentConfiguration() {
   const collection = await getCollection();
+  const originalClinic = (await currentCompanyId()).equals(legacyCompanyId());
   const existing = await collection.findOne({ _id: await scopedSettingsId("active") });
   if (existing) {
     const existingAuthorization = (existing as AgentConfigurationDocument & {
@@ -41,8 +42,8 @@ export async function getAgentConfiguration() {
     const bookableEventTypeKeys = normalizeBookableEventTypeKeys(existingAuthorization, initialEventTypeKeys);
     const enabledTools = migrateLegacyToolKeys(existing.enabledTools);
     const toolGuidance = normalizeToolGuidance(existing.toolGuidance);
-    const journeyPolicy = normalizeJourneyPolicy(existing.journeyPolicy);
-    const responseStyle = normalizeResponseStyle(existing.responseStyle);
+    const journeyPolicy = normalizeJourneyPolicy(existing.journeyPolicy, originalClinic);
+    const responseStyle = normalizeResponseStyle(existing.responseStyle, originalClinic);
     const loopPolicy = normalizeLoopPolicy(existing.loopPolicy);
     const schedulingPlans = normalizeSchedulingPlans(existing.schedulingPlans);
     const relationshipRouting = normalizeRelationshipRouting(existing.relationshipRouting);
@@ -80,8 +81,8 @@ export async function getAgentConfiguration() {
           ...concurrent,
           enabledTools: migrateLegacyToolKeys(concurrent.enabledTools),
           toolGuidance: normalizeToolGuidance(concurrent.toolGuidance),
-          journeyPolicy: normalizeJourneyPolicy(concurrent.journeyPolicy),
-          responseStyle: normalizeResponseStyle(concurrent.responseStyle),
+          journeyPolicy: normalizeJourneyPolicy(concurrent.journeyPolicy, originalClinic),
+          responseStyle: normalizeResponseStyle(concurrent.responseStyle, originalClinic),
           loopPolicy: normalizeLoopPolicy(concurrent.loopPolicy),
           schedulingPlans: normalizeSchedulingPlans(concurrent.schedulingPlans),
           relationshipRouting: normalizeRelationshipRouting(concurrent.relationshipRouting),
@@ -95,7 +96,7 @@ export async function getAgentConfiguration() {
 
   const calendarSettings = await getCalendarSettings();
   const initial = withContentHash({
-    ...createDefaultAgentConfiguration(),
+    ...createDefaultAgentConfiguration({ blank: !originalClinic }),
     _id: await scopedSettingsId("active"),
     bookableEventTypeKeys: calendarSettings.eventTypes.map((eventType) => eventType.key),
   });
@@ -278,8 +279,10 @@ function validateConfiguration(
   }
 }
 
-function normalizeJourneyPolicy(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : DEFAULT_JOURNEY_POLICY;
+// Only the original clinic falls back to its own texts; other clinics may leave them empty until configured.
+function normalizeJourneyPolicy(value: unknown, originalClinic: boolean) {
+  if (typeof value === "string" && value.trim()) return value;
+  return originalClinic ? DEFAULT_JOURNEY_POLICY : "";
 }
 
 function normalizeRelationshipRouting(value: unknown): RelationshipRoutingPolicy {
@@ -298,8 +301,9 @@ function normalizeRelationshipRouting(value: unknown): RelationshipRoutingPolicy
   return { new: value.new, returning: value.returning };
 }
 
-function normalizeResponseStyle(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : DEFAULT_RESPONSE_STYLE;
+function normalizeResponseStyle(value: unknown, originalClinic: boolean) {
+  if (typeof value === "string" && value.trim()) return value;
+  return originalClinic ? DEFAULT_RESPONSE_STYLE : "";
 }
 
 function normalizeLoopPolicy(value: AgentConfigurationDocument["loopPolicy"]) {
