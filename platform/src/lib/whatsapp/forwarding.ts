@@ -6,6 +6,7 @@ import { getMongoClient } from "../mongodb";
 import { adminTransaction, ManagementError } from "../access/management";
 import type { Principal } from "../access/contracts";
 import { legacyCompanyId } from "../companies/ownership";
+import { isCompanyOperational } from "../companies/status";
 import {
   FORWARDING_ENDPOINT_LIMIT, FORWARDING_MAX_RETRIES,
   type ForwardingDeliveryStatus, type ForwardingEndpoint, type ForwardingResult, type ForwardingSettings,
@@ -176,10 +177,17 @@ export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: str
   const bindings = await db.collection<Binding>("whatsapp_embedded_signup_connections").find({
     wabaId: { $in: wabas }, status: { $in: ["operational", "connected"] },
   }, { projection: { companyId: 1, wabaId: 1, phoneNumberId: 1, status: 1 } }).toArray();
-  const scope = resolveWhatsAppCompany(payload, bindings);
-  if (!await db.collection("companies").findOne({ _id: scope, status: "active" })) {
-    throw new ForwardingRoutingError("WHATSAPP_FORWARDING_COMPANY_INACTIVE");
+  // Forwarding is optional: a payload we can't attribute to exactly one operational company is not
+  // forwarded, but it must never stop the message itself from being processed.
+  let scope: ObjectId;
+  try {
+    scope = resolveWhatsAppCompany(payload, bindings);
+  } catch (error) {
+    if (!(error instanceof ForwardingRoutingError)) throw error;
+    console.warn("WhatsApp forwarding skipped.", { code: error.code, wabas });
+    return 0;
   }
+  if (!await isCompanyOperational(scope)) return 0;
   const configuration = await configurationCollection(db).findOne({ _id: scope, companyId: scope });
   const endpoints = configuration?.endpoints.filter(endpoint => endpoint.enabled) ?? [];
   if (!endpoints.length) return 0;

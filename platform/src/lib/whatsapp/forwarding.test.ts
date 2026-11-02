@@ -68,7 +68,7 @@ beforeEach(() => {
   mocks.configuration.findOne.mockImplementation(async (filter: { companyId?: ObjectId }) =>
     !filter.companyId || filter.companyId.equals(scope) ? configuration : null);
   mocks.companies.findOne.mockImplementation(async (filter: { _id: ObjectId }) =>
-    filter._id.equals(scope) ? { _id: scope, adminUserId: admin } : null);
+    filter._id.equals(scope) ? { _id: scope, adminUserId: admin, status: "active" } : null);
   mocks.companies.findOneAndUpdate.mockResolvedValue({ _id: scope, adminUserId: admin });
   mocks.users.findOne.mockResolvedValue({ _id: admin, disabled: false });
   mocks.session.withTransaction.mockImplementation(async (run: () => Promise<unknown>) => run());
@@ -194,9 +194,19 @@ describe("inbound ownership and durable exact-payload outbox", () => {
     expect(await enqueueWhatsAppForwarding(Buffer.from('{"object":"whatsapp_business_account","entry":[]}'), signature)).toBe(0);
     expect(mocks.deliveries.bulkWrite).not.toHaveBeenCalled();
   });
-  it("fails before any outbox writes for mixed ownership or a persistence error", async () => {
-    await expect(enqueueWhatsAppForwarding(Buffer.from(JSON.stringify({ ...payload, entry: [entry(), entry("waba-b", "phone-b")] })), signature)).rejects.toThrow("MIXED_COMPANIES");
+  it("skips forwarding, without failing the webhook, for payloads it can't attribute to one operational company", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.bindings.find.mockReturnValue({ toArray: async () => [binding, foreignBinding] });
+    const mixed = Buffer.from(JSON.stringify({ ...payload, entry: [entry(), entry("waba-b", "phone-b")] }));
+    const unknown = Buffer.from(JSON.stringify({ ...payload, entry: [entry("waba-z", "phone-z")] }));
+    expect(await enqueueWhatsAppForwarding(mixed, signature)).toBe(0);
+    expect(await enqueueWhatsAppForwarding(unknown, signature)).toBe(0);
+    mocks.bindings.find.mockReturnValue({ toArray: async () => [binding] });
+    mocks.companies.findOne.mockResolvedValueOnce({ _id: scope, status: "suspended" });
+    expect(await enqueueWhatsAppForwarding(rawBody, signature)).toBe(0);
     expect(mocks.deliveries.bulkWrite).not.toHaveBeenCalled();
+  });
+  it("fails before any outbox writes for a persistence error", async () => {
     mocks.deliveries.bulkWrite.mockRejectedValue(new Error("database failed"));
     await expect(enqueueWhatsAppForwarding(rawBody, signature)).rejects.toThrow("database failed");
   });
