@@ -667,15 +667,21 @@ export function getCustomerProfileSnapshot(customer: CustomerDocument): Customer
   };
 }
 
+// Unique per company: the same patient (phone, CPF) may be a customer of several clinics.
+// Partial rather than sparse, because a sparse compound index would still index every document by companyId.
+// src/scripts/migrate-tenant-indexes.mjs removes the former global indexes.
 export async function ensureCustomerIndexes() {
   const customers = await getCustomersCollection();
   await Promise.all([
     customers.createIndex(
-      { "identifiers.kind": 1, "identifiers.value": 1 },
-      { unique: true },
+      { companyId: 1, "identifiers.kind": 1, "identifiers.value": 1 },
+      { name: "company_customer_identifier_unique", unique: true },
     ),
     customers.createIndex({ lastInteractionAt: -1 }),
-    customers.createIndex({ "profile.cpf.hash": 1 }, { unique: true, sparse: true }),
+    customers.createIndex(
+      { companyId: 1, "profile.cpf.hash": 1 },
+      { name: "company_customer_cpf_unique", unique: true, partialFilterExpression: { "profile.cpf.hash": { $exists: true } } },
+    ),
   ]);
 }
 

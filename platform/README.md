@@ -350,6 +350,10 @@ empresa até concluir o isolamento de todas as consultas operacionais.
   `<companyId>:<chave>` (`companyScopedId`). Nenhum documento existente muda.
 - **Credenciais do ambiente** (WhatsApp e Mercado Pago) pertencem somente à empresa
   inicial; outras empresas usam apenas as credenciais próprias armazenadas.
+- **Índices únicos por empresa**: telefone/CPF do cliente e horário ativo por
+  profissional começam por `companyId`. Depois de implantar a versão que os cria,
+  `node src/scripts/migrate-tenant-indexes.mjs` relata os índices globais antigos;
+  `--apply` cria os novos se faltarem e só então remove os antigos.
 
 ### Encaminhamento de webhooks do WhatsApp
 

@@ -1415,16 +1415,19 @@ export async function ensureCalendarIndexes() {
     if (error instanceof MongoServerError && error.code === 26) return [];
     throw error;
   });
-  const activeAppointmentIndexName = "unique_active_appointment_start";
+  // Unique per company: every clinic's providers share ids such as "doctor".
+  // The former global "unique_active_appointment_start" is removed by src/scripts/migrate-tenant-indexes.mjs.
+  const activeAppointmentIndexName = "company_active_appointment_start_unique";
   const legacyIndexes = indexes.filter((index) => (
     index.unique === true &&
+    index.key?.companyId === undefined &&
     index.key?.providerId === 1 &&
     index.key?.startAt === 1 &&
     index.key?.eventType === undefined &&
-    index.name !== activeAppointmentIndexName
+    index.name !== "unique_active_appointment_start"
   ));
   await appointments.createIndex(
-    { providerId: 1, startAt: 1 },
+    { companyId: 1, providerId: 1, startAt: 1 },
     {
       name: activeAppointmentIndexName,
       unique: true,
