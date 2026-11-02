@@ -14,6 +14,7 @@ const COLLECTIONS = [
   "assistant_conversation_states",
   "assistant_runs",
   "assistant_run_steps",
+  "assistant_config_snapshots",
   "ai_task_calls",
   "automation_jobs",
   "calendar_plan_options",
@@ -201,6 +202,7 @@ function buildAudit(data) {
     });
   }
 
+  const snapshotsByHash = new Map(data.assistant_config_snapshots.map((document) => [document.configHash, document.snapshot]));
   for (const run of data.assistant_runs) {
     const customerId = idOf(run.customerId);
     const runId = idOf(run._id);
@@ -257,7 +259,7 @@ function buildAudit(data) {
       });
     }
 
-    const limits = run.configSnapshot?.loopPolicy;
+    const limits = (run.configSnapshot ?? snapshotsByHash.get(run.configHash))?.loopPolicy;
     if (limits && run.modelIterations > limits.maxModelIterations) {
       addIssue(issues, "error", "model_iteration_limit_exceeded", "Execução excedeu o limite de iterações do modelo.", {
         customerId,

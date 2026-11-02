@@ -9,6 +9,7 @@ const {
   runFind,
   runFindForReconciliation,
   runsToArray,
+  snapshotUpdateOne,
   stepFind,
   stepsToArray,
   updateMany,
@@ -19,6 +20,7 @@ const {
   runFind: vi.fn(),
   runFindForReconciliation: vi.fn(),
   runsToArray: vi.fn(),
+  snapshotUpdateOne: vi.fn(),
   stepFind: vi.fn(),
   stepsToArray: vi.fn(),
   updateMany: vi.fn(),
@@ -43,9 +45,12 @@ describe("agent run checkpoints", () => {
     runFind.mockReturnValue({ sort: () => ({ toArray: runsToArray }) });
     stepFind.mockReturnValue({ sort: () => ({ toArray: stepsToArray }) });
     updateMany.mockResolvedValue({ modifiedCount: 0 });
-    collection.mockImplementation((name: string) => name === "assistant_runs"
-      ? { createIndex, find: runFind, insertOne, updateMany }
-      : { find: stepFind });
+    snapshotUpdateOne.mockResolvedValue({ upsertedCount: 1 });
+    collection.mockImplementation((name: string) => {
+      if (name === "assistant_runs") return { createIndex, find: runFind, insertOne, updateMany };
+      if (name === "assistant_config_snapshots") return { updateOne: snapshotUpdateOne };
+      return { find: stepFind };
+    });
   });
 
   it("deduplicates completed tools and preserves cumulative budgets", () => {
@@ -154,6 +159,7 @@ function failedResult(tool: string) {
 
   it("keeps the routing policy in the pinned, credential-free configuration snapshot", async () => {
     const configuration = createDefaultAgentConfiguration();
+    configuration.contentHash = "routing-test-hash";
     configuration.relationshipRouting = { new: "preserve", returning: "waiting_human" };
     configuration.payment.pixKey = "private-test-key";
 
@@ -161,8 +167,25 @@ function failedResult(tool: string) {
       jobId: new ObjectId(), customerId: new ObjectId(), jobRevision: 1, configuration,
     });
 
-    expect(run.configSnapshot.relationshipRouting).toEqual(configuration.relationshipRouting);
-    expect(JSON.stringify(run.configSnapshot)).not.toContain("private-test-key");
+    expect(run).not.toHaveProperty("configSnapshot");
+    expect(run.configHash).toBe("routing-test-hash");
+    const [filter, update, options] = snapshotUpdateOne.mock.calls[0];
+    expect(filter).toEqual({ _id: expect.stringMatching(/:routing-test-hash$/) });
+    expect(options).toEqual({ upsert: true });
+    expect(update.$setOnInsert.snapshot.relationshipRouting).toEqual(configuration.relationshipRouting);
+    expect(JSON.stringify(update)).not.toContain("private-test-key");
+  });
+
+  it("stores each configuration version once per process", async () => {
+    const configuration = createDefaultAgentConfiguration();
+    configuration.contentHash = "dedup-test-hash";
+
+    for (let index = 0; index < 3; index += 1) {
+      await startAgentRun({ jobId: new ObjectId(), customerId: new ObjectId(), jobRevision: 1, configuration });
+    }
+
+    expect(snapshotUpdateOne).toHaveBeenCalledTimes(1);
+    expect(insertOne).toHaveBeenCalledTimes(3);
   });
 
   it("reconciles already orphaned runs referenced by resumed executions", async () => {
@@ -188,7 +211,6 @@ function createRun(counters: Pick<AgentRunDocument, "modelIterations" | "toolExe
     jobRevision: 7,
     configRevision: 3,
     configHash: "config-hash",
-    configSnapshot: {} as AgentRunDocument["configSnapshot"],
     status: "failed",
     ...counters,
     startedAt: new Date(),

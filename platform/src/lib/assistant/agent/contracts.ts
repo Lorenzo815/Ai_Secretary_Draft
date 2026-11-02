@@ -173,6 +173,16 @@ export type AgentConfigurationSnapshot = Omit<
   };
 };
 
+/** One immutable, credential-free copy per configuration version, shared by all runs that used it. */
+export interface AgentConfigurationSnapshotDocument {
+  _id: string;
+  companyId: ObjectId;
+  configHash: string;
+  configRevision: number;
+  snapshot: AgentConfigurationSnapshot;
+  createdAt: Date;
+}
+
 export interface AgentRunDocument {
   _id: ObjectId;
   jobId: ObjectId;
@@ -180,7 +190,8 @@ export interface AgentRunDocument {
   jobRevision: number;
   configRevision: number;
   configHash: string;
-  configSnapshot: AgentConfigurationSnapshot;
+  /** Legacy runs only; new runs reference `assistant_config_snapshots` by `configHash`. */
+  configSnapshot?: AgentConfigurationSnapshot;
   status: "running" | "completed" | "failed" | "superseded";
   modelIterations: number;
   toolExecutions: number;

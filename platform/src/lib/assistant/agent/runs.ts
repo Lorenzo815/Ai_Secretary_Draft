@@ -3,18 +3,47 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
 import clientPromise from "../../mongodb";
-import { withLegacyCompany } from "../../companies/ownership";
+import { legacyCompanyId, withLegacyCompany } from "../../companies/ownership";
 import type { AssistantDecision } from "../tools";
 import type {
   AgentAction,
   AgentConfigurationDocument,
   AgentConfigurationSnapshot,
+  AgentConfigurationSnapshotDocument,
   AgentRunDocument,
   AgentRunStepDocument,
 } from "./contracts";
 import type { AgentToolHistoryEntry } from "./prompt";
 
 const DB_NAME = "ai_secretary";
+const SNAPSHOTS_COLLECTION = "assistant_config_snapshots";
+const persistedSnapshotKeys = new Set<string>();
+
+function configurationSnapshotKey(companyId: ObjectId, configHash: string) {
+  return `${companyId.toHexString()}:${configHash}`;
+}
+
+async function persistConfigurationSnapshot(configuration: AgentConfigurationDocument) {
+  const companyId = legacyCompanyId();
+  const key = configurationSnapshotKey(companyId, configuration.contentHash);
+  if (persistedSnapshotKeys.has(key)) return;
+  await (await clientPromise).db(DB_NAME)
+    .collection<AgentConfigurationSnapshotDocument>(SNAPSHOTS_COLLECTION)
+    .updateOne(
+      { _id: key },
+      {
+        $setOnInsert: {
+          companyId,
+          configHash: configuration.contentHash,
+          configRevision: configuration.revision,
+          snapshot: createConfigurationSnapshot(configuration),
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+  persistedSnapshotKeys.add(key);
+}
 
 export async function listCustomerAgentRuns(customerId: ObjectId, limit = 20) {
   return (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs")
@@ -38,7 +67,6 @@ export async function startAgentRun(input: {
     jobRevision: input.jobRevision,
     configRevision: input.configuration.revision,
     configHash: input.configuration.contentHash,
-    configSnapshot: createConfigurationSnapshot(input.configuration),
     status: "running",
     modelIterations: input.checkpoint?.modelIterations ?? 0,
     toolExecutions: input.checkpoint?.toolExecutions ?? 0,
@@ -46,6 +74,7 @@ export async function startAgentRun(input: {
     ...(input.checkpoint?.runIds.length ? { resumedFromRunIds: input.checkpoint.runIds } : {}),
     startedAt: new Date(),
   };
+  await persistConfigurationSnapshot(input.configuration);
   const collection = (await clientPromise).db(DB_NAME).collection<AgentRunDocument>("assistant_runs");
   if (input.checkpoint?.runIds.length) {
     await collection.updateMany(

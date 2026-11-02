@@ -68,6 +68,13 @@ MongoDB. Regras de automação podem acionar o agente de atendimento ou a
 qualificação independente de leads. O agente usa uma configuração ativa
 mutável, identificada por revisão e hash, que é fixada durante todo o job.
 
+Cada execução (`assistant_runs`) guarda apenas `configRevision` e `configHash`.
+A cópia da configuração usada, sem segredos, é gravada uma única vez por versão
+em `assistant_config_snapshots` (chave `<companyId>:<configHash>`). Execuções
+antigas que ainda contêm `configSnapshot` são migradas com
+`node src/scripts/migrate-config-snapshots.mjs`, que apenas relata o que faria;
+a gravação exige `--apply`.
+
 Em cada iteração o modelo retorna exatamente uma resposta final ou uma
 solicitação de ferramenta. Ferramentas consultam e alteram dados somente no
 servidor, com autorização, validação de argumentos, limites de mutação e regras
