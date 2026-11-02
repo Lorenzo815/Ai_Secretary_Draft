@@ -42,6 +42,17 @@ export function decryptValue(value: unknown): string {
 export function encryptWhatsAppToken(token: string) {
   const key = base64Key("WHATSAPP_TOKEN_ENCRYPTION_KEY");
   if (!key) throw new Error("WHATSAPP_TOKEN_ENCRYPTION_KEY não está configurada no back-office.");
+  return seal(token, key);
+}
+
+/** Same key choice as the platform: AI_CREDENTIALS_ENCRYPTION_KEY, falling back to WHATSAPP_TOKEN_ENCRYPTION_KEY. */
+export function encryptAiCredential(secret: string) {
+  const key = base64Key("AI_CREDENTIALS_ENCRYPTION_KEY") ?? base64Key("WHATSAPP_TOKEN_ENCRYPTION_KEY");
+  if (!key) throw new Error("AI_CREDENTIALS_ENCRYPTION_KEY (ou WHATSAPP_TOKEN_ENCRYPTION_KEY) não está configurada no back-office.");
+  return seal(secret, key);
+}
+
+function seal(token: string, key: Buffer) {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);

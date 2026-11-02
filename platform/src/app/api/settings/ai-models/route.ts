@@ -26,6 +26,11 @@ async function authenticate() {
   return getServerSession(authOptions);
 }
 
+// The AI Gateway key is Oria-wide and paid by Oria, and each clinic's models are chosen by Oria.
+// Both are managed in the Oria back-office; clinics can only read.
+const MANAGED_BY_ORIA = "Os modelos e a chave de IA são gerenciados pela equipe Oria.";
+const managedByOria = () => NextResponse.json({ error: MANAGED_BY_ORIA }, { status: 403 });
+
 export async function GET(request: Request) {
   if (!(await authenticate())) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   try {
@@ -54,6 +59,7 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const session = await authenticate();
   if (!session) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+  if (process.env.AI_SETTINGS_EDITABLE !== "true") return managedByOria();
   const input = await request.json() as {
     expectedRevision?: number;
     activeProvider?: AiProvider;
@@ -95,6 +101,7 @@ export async function PUT(request: Request) {
 export async function PATCH(request: Request) {
   const session = await authenticate();
   if (!session) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+  if (process.env.AI_SETTINGS_EDITABLE !== "true") return managedByOria();
   const input = await request.json() as { apiKey?: string; clear?: boolean };
   try {
     if (input.clear) await clearStoredVercelGatewayApiKey();
@@ -110,6 +117,7 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   if (!(await authenticate())) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+  if (process.env.AI_SETTINGS_EDITABLE !== "true") return managedByOria();
   const input = await request.json() as {
     provider?: AiProvider;
     model?: string;

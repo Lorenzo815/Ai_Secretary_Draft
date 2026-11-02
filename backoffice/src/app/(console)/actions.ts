@@ -5,6 +5,7 @@ import { runAction } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth";
 import * as companies from "@/lib/companies";
 import * as explorer from "@/lib/explorer";
+import * as oria from "@/lib/oria-settings";
 
 // ---------- data explorer ----------
 
@@ -61,6 +62,22 @@ export async function bulkWriteAction(input: {
 export async function revealFieldAction(collection: string, id: string, path: string) {
   const actor = await requireOwner();
   return runAction(() => explorer.revealField(actor, collection, id, path));
+}
+
+// ---------- Oria-wide settings ----------
+
+export async function gatewayCreditsAction() {
+  await requireOwner();
+  return runAction(() => oria.getGatewayCredits());
+}
+
+export async function replaceGatewayKeyAction(apiKey: string, confirmation?: string) {
+  const actor = await requireOwner();
+  return runAction(async () => {
+    const credits = await oria.replaceGatewayKey(actor, apiKey, confirmation);
+    revalidatePath("/settings");
+    return credits;
+  }, "Chave do AI Gateway substituída.");
 }
 
 // ---------- clinics ----------
