@@ -21,7 +21,40 @@ vi.mock("../mongodb", () => ({
   }),
 }));
 
-import { ChatHistoryInProgressError, clearChatHistoryForCustomer, clearDynamicDataForCustomer, CUSTOMER_CHAT_COLLECTIONS, DYNAMIC_COLLECTIONS } from "./database";
+import { ChatHistoryInProgressError, clearChatHistoryForCustomer, clearDynamicData, clearDynamicDataForCustomer, CUSTOMER_CHAT_COLLECTIONS, DYNAMIC_COLLECTIONS } from "./database";
+import { runWithCompany } from "../companies/context";
+import { TENANT_SCOPED_COLLECTIONS } from "../companies/tenant-db";
+
+describe("clearDynamicData (Sistema › Apagar dados › todos)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deleteMany.mockResolvedValue({ deletedCount: 3 });
+    collection.mockImplementation(() => ({ deleteMany }));
+  });
+
+  it("deletes only the clinic in scope, in every collection", async () => {
+    const clinic = new ObjectId();
+
+    await runWithCompany(clinic, () => clearDynamicData());
+
+    expect(deleteMany).toHaveBeenCalledTimes(DYNAMIC_COLLECTIONS.length);
+    for (const [filter] of deleteMany.mock.calls) expect(filter).toEqual({ companyId: clinic });
+  });
+
+  it("only touches collections that are confined to a clinic", () => {
+    for (const name of DYNAMIC_COLLECTIONS) expect(TENANT_SCOPED_COLLECTIONS.has(name)).toBe(true);
+  });
+
+  it("deletes nothing when no clinic can be resolved (strict tenancy)", async () => {
+    vi.stubEnv("TENANT_STRICT", "true");
+    try {
+      await expect(clearDynamicData()).rejects.toThrow();
+      expect(deleteMany).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("clearDynamicDataForCustomer", () => {
   beforeEach(() => {
