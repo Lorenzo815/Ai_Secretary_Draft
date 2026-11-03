@@ -5,6 +5,7 @@ import { processNextAutomationJob } from "@/lib/automation";
 import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 import { processPendingWhatsAppMessageEchoes } from "@/lib/whatsapp/message-echoes";
 import { refreshWhatsAppTemplateCatalog } from "@/lib/whatsapp/templates";
+import { processAppointmentConfirmations } from "@/lib/confirmations/service";
 
 export const maxDuration = 300;
 
@@ -13,11 +14,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  const [forwarding, result, templates] = await Promise.allSettled([
+  const [forwarding, result, templates, confirmations] = await Promise.allSettled([
     processForwardingDeliveries(),
     processAssistantBatch(),
     refreshWhatsAppTemplateCatalog(),
+    processAppointmentConfirmations(),
   ]);
+  // Reminders are retried on the next tick; they never block the rest of the worker.
+  if (confirmations.status === "rejected") {
+    console.error("Appointment confirmation worker failed.", { errorType: confirmations.reason instanceof Error ? confirmations.reason.name : "Unknown" });
+  }
   if (result.status === "rejected") throw result.reason;
   if (forwarding.status === "rejected") {
     console.error("WhatsApp forwarding worker failed.", { errorType: forwarding.reason instanceof Error ? forwarding.reason.name : "Unknown" });
@@ -33,7 +39,10 @@ export async function POST(request: Request) {
       error: "Há eventos do WhatsApp pendentes de sincronização. O worker tentará novamente.",
     }, { status: 503 });
   }
-  return NextResponse.json({ ...result.value, forwardingProcessed: forwarding.value, templateCatalog: templates.value });
+  return NextResponse.json({
+    ...result.value, forwardingProcessed: forwarding.value, templateCatalog: templates.value,
+    confirmations: confirmations.status === "fulfilled" ? confirmations.value : null,
+  });
 }
 
 async function processAssistantBatch() {

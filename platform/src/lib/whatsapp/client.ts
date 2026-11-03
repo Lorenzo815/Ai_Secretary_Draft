@@ -52,6 +52,8 @@ export interface SendWhatsAppTemplateInput {
   bodyParameters?: string[];
   headerParameters?: string[];
   buttonUrlParameters?: Array<{ index: number; value: string }>;
+  /** Returned in the patient's reply (button.payload) when a quick reply button is tapped. */
+  quickReplyPayloads?: Array<{ index: number; payload: string }>;
 }
 
 export function getWhatsAppConfig(): WhatsAppConfig | null {
@@ -163,6 +165,12 @@ export async function sendWhatsAppTemplate(input: SendWhatsAppTemplateInput) {
       sub_type: "url",
       index: String(parameter.index),
       parameters: [{ type: "text", text: parameter.value }],
+    })),
+    ...(input.quickReplyPayloads ?? []).map((button) => ({
+      type: "button",
+      sub_type: "quick_reply",
+      index: String(button.index),
+      parameters: [{ type: "payload", payload: button.payload }],
     })),
   ].filter(Boolean);
   const payload = {

@@ -8,7 +8,8 @@ describe("tool registry", () => {
   it("derives public metadata from every registered tool", () => {
     const metadata = listToolMetadata();
 
-    expect(metadata.map((tool) => tool.key)).toEqual(Object.keys(toolRegistry));
+    // The confirmation tool is enabled per run by the confirmation task, not in the Studio list.
+    expect(metadata.map((tool) => tool.key)).toEqual(Object.keys(toolRegistry).filter((key) => key !== "calendar.confirm_attendance"));
     expect(metadata.every((tool) => tool.label && tool.description)).toBe(true);
     expect(metadata.find((tool) => tool.key === "calendar.book")?.mutates).toBe(true);
     expect(metadata.find((tool) => tool.key === "calendar.reschedule")?.mutates).toBe(true);

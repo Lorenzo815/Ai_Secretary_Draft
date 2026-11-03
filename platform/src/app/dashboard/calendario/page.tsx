@@ -49,7 +49,7 @@ interface Appointment {
   eventType?: CalendarEventType;
   customTitle?: string;
   durationMinutes?: number;
-  confirmationStatus?: "pending" | "confirmed";
+  confirmationStatus?: "pending" | "confirmed" | "unconfirmed";
   notes?: string;
   contactPhone?: string;
   source: "assistant" | "manual";

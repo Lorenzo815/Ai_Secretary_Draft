@@ -38,6 +38,7 @@ const {
 
 vi.mock("../../calendar", () => ({
   attachPaymentToAppointments,
+  findAppointmentsByIds: vi.fn(async () => []),
   bookAppointment: vi.fn(),
   findAvailableSlots: vi.fn(),
   findCustomerAppointments,
@@ -54,6 +55,7 @@ vi.mock("../../calendar/plans", () => ({
   holdSchedulingPlanOption,
   rescheduleSchedulingPlanOption,
 }));
+vi.mock("../../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 vi.mock("../../crm", () => ({
   findCustomerById,
   getCustomerProfileSnapshot,

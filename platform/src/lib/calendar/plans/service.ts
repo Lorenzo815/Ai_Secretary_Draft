@@ -418,6 +418,8 @@ export async function bookSchedulingPlanOption(input: {
         startAt: step.slot.startAt,
         eventType: step.eventTypeKey,
         source: "assistant",
+        // Booked directly (no deposit): attendance is confirmed later by the patient ("A confirmar").
+        confirmationStatus: "pending",
         visitGroupId: appointmentGroupId,
         deferQualificationTrigger: true,
       });

@@ -115,6 +115,13 @@ export interface AgentRuntimeContext {
     /** A deposit paid earlier that confirmed no booking (its hold expired); calendar.book applies it. */
     unallocatedPaidDeposit: { amountCents: number } | null;
     activeSchedulingOption: unknown | null;
+    /** Reminder waiting for the patient's answer about attendance ("A confirmar"), if any. */
+    appointmentConfirmation: {
+      status: string;
+      localDate: string;
+      remindersSent: number;
+      appointments: Array<{ eventType: string; eventTypeName: string; localDate: string | null; localTime: string; startAt: string }>;
+    } | null;
   };
   clinic: {
     eventTypes: Array<{

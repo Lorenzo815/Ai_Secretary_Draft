@@ -7,6 +7,8 @@ export const COMPANY_OWNED_COLLECTIONS = [
   "ai_model_config",
   "ai_provider_credentials",
   "ai_task_calls",
+  "appointment_confirmation_config",
+  "appointment_confirmations",
   "assistant_agent_config",
   "assistant_conversation_states",
   "assistant_follow_up_config",

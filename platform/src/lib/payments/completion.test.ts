@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./payments", () => ({ setPaymentAppointments: mocks.setPaymentAppointments }));
+vi.mock("../calendar/calendar", () => ({ getCalendarSettings: async () => ({ timezone: "America/Sao_Paulo", eventTypes: [{ key: "consultation", name: "Consulta" }] }) }));
 
 vi.mock("../automation", () => ({ emitAutomationEvent: mocks.emitAutomationEvent }));
 vi.mock("../calendar/plans", () => ({
@@ -23,8 +24,10 @@ vi.mock("../whatsapp", () => ({
   saveWhatsAppMessage: mocks.saveWhatsAppMessage,
   sendTextMessage: mocks.sendTextMessage,
 }));
+vi.mock("../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 
 import { completePaymentTransition } from "./completion";
+import { applyAttendanceAfterPayment } from "../confirmations/service";
 
 describe("payment completion scheduling holds", () => {
   const customerId = new ObjectId();
@@ -65,6 +68,19 @@ describe("payment completion scheduling holds", () => {
       body: "Sinal confirmado pela equipe. Seu horário está agendado; vamos confirmar sua presença mais perto da data.",
     }));
     expect(mocks.releaseHeldSchedulingPlanOptions).not.toHaveBeenCalled();
+  });
+
+  it("says the time is confirmed when the deposit confirmed attendance directly", async () => {
+    const appointment = { _id: new ObjectId(), startAt: new Date("2026-11-06T13:00:00Z"), eventType: "consultation" };
+    mocks.confirmHeldSchedulingPlanOptions.mockResolvedValue([appointment]);
+    vi.mocked(applyAttendanceAfterPayment).mockResolvedValueOnce("confirmed");
+
+    await completePaymentTransition({ ...payment, provider: "mercado_pago" }, "paid");
+
+    expect(applyAttendanceAfterPayment).toHaveBeenCalledWith({ customerId, appointments: [appointment] });
+    expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Sinal confirmado pelo Mercado Pago. Seu horário está confirmado para sexta-feira, 06/11 às 10:00. Te esperamos!",
+    }));
   });
 
   it("explains that no appointment was confirmed when there is no active hold", async () => {

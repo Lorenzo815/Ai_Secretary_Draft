@@ -40,6 +40,7 @@ export function routePolicy(path: string, method: string): RoutePolicy {
   if (path === "/api/calendar/access-events") return access("calendar", ["GET", "POST"]);
   if (/^\/api\/calendar\/(appointments|access-events)\/[a-f0-9]{24}$/i.test(path)) return access("calendar", ["PATCH", "DELETE"]);
   if (path === "/api/assistant/studio") return access("studio", ["GET", "PUT"]);
+  if (path === "/api/assistant/confirmation") return access("studio", ["GET", "PUT", "POST"]);
   if (path === "/api/finance") return access("finance", ["GET", "POST"]);
   if (path === "/api/finance/appointments") return access("finance", ["GET"]);
   if (/^\/api\/finance\/[a-f0-9]{24}$/i.test(path)) return access("finance", ["PATCH", "DELETE"]);

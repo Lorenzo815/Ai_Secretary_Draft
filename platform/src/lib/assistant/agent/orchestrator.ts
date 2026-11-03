@@ -24,6 +24,8 @@ import { getAssistantConfig } from "../config";
 import { getGroundedToolReply, wasToolSuccessfullyExecuted } from "../tools/execution";
 import { generateAgentAction } from "./model";
 import { getAgentConfiguration } from "./repository";
+import { getOpenConfirmationForCustomer } from "../../confirmations/service";
+import { APPOINTMENT_CONFIRMATION_TOOL } from "../tools/confirmation-definitions";
 import { buildAgentRuntimeContext } from "./runtime-context";
 import {
   fingerprintAgentToolRequest,
@@ -54,7 +56,7 @@ const DETERMINISTIC_REPLY_TOOLS = new Set(["calendar.book", "calendar.reschedule
 export async function processCustomerAgentJob(job: AutomationJobDocument) {
   const runtimeConfig = getAssistantConfig();
 
-  const configuration = await getAgentConfiguration();
+  let configuration = await getAgentConfiguration();
   let run: Awaited<ReturnType<typeof startAgentRun>> | undefined;
   let modelIterations = 0;
   let toolExecutions = 0;
@@ -70,6 +72,10 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
         processed: true as const,
         skipped: !configuration.enabled ? "agent_disabled" : !configured ? "agent_not_configured" : "missing_context",
       };
+    }
+    // While a reminder is waiting for this patient's answer, the AI can record it from free text.
+    if (await getOpenConfirmationForCustomer(customer._id) && !configuration.enabledTools.includes(APPOINTMENT_CONFIRMATION_TOOL)) {
+      configuration = { ...configuration, enabledTools: [...configuration.enabledTools, APPOINTMENT_CONFIRMATION_TOOL] };
     }
     const synchronization = await processPendingWhatsAppMessageEchoes(customer.phones);
     if (synchronization.pending) return blockReply({ job }, "whatsapp_sync_pending");

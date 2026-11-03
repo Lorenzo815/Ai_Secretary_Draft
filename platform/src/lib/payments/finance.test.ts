@@ -46,6 +46,7 @@ vi.mock("../companies/tenant-db", () => ({
     }),
   }),
 }));
+vi.mock("../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 
 import { allocatePayment, FinanceError, listFinance, registerManualPayment, removeManualPayment } from "./finance";
 

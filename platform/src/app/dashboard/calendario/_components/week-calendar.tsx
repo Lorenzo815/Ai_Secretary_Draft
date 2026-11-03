@@ -29,7 +29,7 @@ interface Appointment {
   status: "held" | "scheduled" | "cancelled" | "completed";
   eventType?: string;
   customTitle?: string;
-  confirmationStatus?: "pending" | "confirmed";
+  confirmationStatus?: "pending" | "confirmed" | "unconfirmed";
   notes?: string;
   source: "assistant" | "manual";
   recurrence?: {
@@ -318,6 +318,7 @@ export default function WeekCalendar({
               <option value="">Situações</option>
               <option value="pending">A confirmar</option>
               <option value="confirmed">Confirmados</option>
+              <option value="unconfirmed">Sem confirmação</option>
               <option value="held">Aguardando sinal</option>
               <option value="completed">Concluídos</option>
               <option value="cancelled">Cancelados</option>
@@ -379,7 +380,7 @@ export default function WeekCalendar({
                     <td className="sticky right-0 bg-white px-3 py-3 shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)] group-hover:bg-soft-ivory">
                       <div className="flex justify-end gap-1 whitespace-nowrap">
                         {(appointment.customerId || appointment.contactPhone) && <button type="button" onClick={() => void onOpenWhatsApp(appointment)} disabled={busy} aria-label="Abrir WhatsApp Web" title="Consultar o telefone atual do cadastro e abrir o WhatsApp Web" className="flex h-8 w-8 items-center justify-center rounded text-emerald-700 hover:bg-emerald-50 disabled:opacity-30"><MessageCircle className="h-4 w-4" /></button>}
-                        {isPendingConfirmation(appointment)
+                        {isPendingConfirmation(appointment) || (appointment.status === "scheduled" && appointment.confirmationStatus === "unconfirmed")
                           ? <button type="button" onClick={() => void onSetConfirmation(appointment._id, "confirmed")} disabled={busy} aria-label="Confirmar evento" title="Confirmar evento" className="flex h-8 w-8 items-center justify-center rounded text-deep-teal hover:bg-deep-teal/5 disabled:opacity-30"><Check className="h-4 w-4" /></button>
                           : appointment.status === "scheduled" && <button type="button" onClick={() => void onSetConfirmation(appointment._id, "pending")} disabled={busy} aria-label="Marcar como pendente" title="Marcar como pendente" className="flex h-8 w-8 items-center justify-center rounded text-amber-700 hover:bg-amber-50 disabled:opacity-30"><Clock3 className="h-4 w-4" /></button>}
                         <button type="button" onClick={() => onEditEvent(appointment)} disabled={appointment.status === "cancelled" || appointment.status === "completed"} aria-label="Editar evento" className="flex h-8 w-8 items-center justify-center rounded text-stone hover:bg-deep-teal/5 hover:text-deep-teal disabled:opacity-30"><Pencil className="h-4 w-4" /></button>
@@ -449,10 +450,8 @@ function matchesStatus(appointment: Appointment, status: string) {
   if (status === "pending") {
     return isPendingConfirmation(appointment);
   }
-  if (status === "confirmed") {
-    return appointment.status === "scheduled"
-      && !(appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
-  }
+  if (status === "confirmed") return appointment.status === "scheduled" && appointment.confirmationStatus !== "unconfirmed" && !isPendingConfirmation(appointment);
+  if (status === "unconfirmed") return appointment.status === "scheduled" && appointment.confirmationStatus === "unconfirmed";
   return appointment.status === status;
 }
 
@@ -483,15 +482,19 @@ function recurrenceLabel(recurrence: NonNullable<Appointment["recurrence"]>) {
 function StatusBadge({ appointment }: { appointment: Appointment }) {
   const pending = appointment.status === "scheduled"
     && (appointment.confirmationStatus === "pending" || (!appointment.confirmationStatus && appointment.source === "manual"));
+  // No answer to the confirmation reminders: the clinic decides what to do with the booking.
+  const unconfirmed = appointment.status === "scheduled" && appointment.confirmationStatus === "unconfirmed";
   const label = appointment.status === "held"
     ? "Aguardando sinal"
     : appointment.status === "cancelled"
       ? "Cancelado"
       : appointment.status === "completed"
         ? "Concluído"
-        : pending ? "A confirmar" : "Confirmado";
+        : unconfirmed ? "Sem confirmação" : pending ? "A confirmar" : "Confirmado";
   const tone = appointment.status === "cancelled"
     ? "bg-stone/10 text-stone"
+    : unconfirmed
+      ? "bg-red-100 text-red-700"
     : pending || appointment.status === "held"
       ? "bg-amber-100 text-amber-800"
       : "bg-emerald-100 text-emerald-800";

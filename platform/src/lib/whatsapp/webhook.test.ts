@@ -52,8 +52,10 @@ vi.mock("./messages", () => ({
 }));
 vi.mock("./message-echoes", () => ({ processWhatsAppMessageEchoes }));
 vi.mock("./template-context", () => ({ hydrateWhatsAppTemplateContext }));
+vi.mock("../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 
 import { processWhatsAppWebhook } from "./webhook";
+import { handleConfirmationButton } from "../confirmations/service";
 
 describe("WhatsApp webhook isolation", () => {
   beforeEach(() => {
@@ -285,6 +287,40 @@ describe("WhatsApp webhook isolation", () => {
     expect(cancelAutomationJob).toHaveBeenCalledWith("customer_follow_up", customerId);
     expect(cancelAutomationJob.mock.invocationCallOrder[0]).toBeLessThan(emitAutomationEvent.mock.invocationCallOrder[0]);
     expect(emitAutomationEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "message.received" }), { immediate: true });
+  });
+
+  describe("appointment confirmation buttons", () => {
+    function tap(payload: string) {
+      return processWhatsAppWebhook(JSON.stringify({
+        object: "whatsapp_business_account",
+        entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+          metadata: { phone_number_id: "1111111111" },
+          contacts: [{ profile: { name: "Cliente" } }],
+          messages: [{ id: "wamid.tap", from: "5511999999999", timestamp: "1788700000", type: "button", button: { text: "Confirmar presença", payload } }],
+        } }] }],
+      }));
+    }
+
+    beforeEach(() => {
+      findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: new ObjectId(), name: "Ana", phones: ["5511999999999"], serviceStatus: "human_active" });
+      saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    });
+
+    it("answers confirm and cancel without triggering the AI", async () => {
+      vi.mocked(handleConfirmationButton).mockResolvedValue({ handled: true, runAgent: false });
+      await tap("oria_cc:6ae96860755f1d727b495812:confirm");
+
+      expect(handleConfirmationButton).toHaveBeenCalledWith(expect.objectContaining({ payload: "oria_cc:6ae96860755f1d727b495812:confirm" }));
+      expect(emitAutomationEvent).not.toHaveBeenCalled();
+      expect(cancelAutomationJob).toHaveBeenCalledWith("customer_follow_up", expect.anything());
+    });
+
+    it("triggers the AI for a new time even when a human was attending", async () => {
+      vi.mocked(handleConfirmationButton).mockResolvedValue({ handled: true, runAgent: true });
+      await tap("oria_cc:6ae96860755f1d727b495812:reschedule");
+
+      expect(emitAutomationEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "message.received" }), { immediate: true });
+    });
   });
 
   it("preserves image metadata and the quoted message snapshot", async () => {

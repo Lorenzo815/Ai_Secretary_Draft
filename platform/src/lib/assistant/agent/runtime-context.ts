@@ -10,6 +10,7 @@ import {
 import type { CustomerDocument } from "../../crm";
 import { getCustomerProfileSnapshot } from "../../crm";
 import type { AgentConfigurationDocument, AgentRuntimeContext, DataCollectionRule } from "./contracts";
+import { getOpenConfirmationForCustomer } from "../../confirmations/service";
 
 export async function buildAgentRuntimeContext(input: {
   customer: CustomerDocument;
@@ -19,12 +20,13 @@ export async function buildAgentRuntimeContext(input: {
   followUpAttempt?: number;
   iteration: number;
 }): Promise<AgentRuntimeContext> {
-  const [calendarSettings, payment, activeSchedulingOption, paymentProvider, unallocatedPaidDeposit] = await Promise.all([
+  const [calendarSettings, payment, activeSchedulingOption, paymentProvider, unallocatedPaidDeposit, appointmentConfirmation] = await Promise.all([
     getCalendarSettings(),
     getLatestPaymentRequest(input.customer._id),
     getActiveSchedulingPlanOption(input.customer._id),
     getPaymentProviderConfiguration(),
     findUnallocatedPaidPayment(input.customer._id),
+    getOpenConfirmationForCustomer(input.customer._id),
   ]);
   const profile = getCustomerProfileSnapshot(input.customer);
   const configuredMissingFields = getConfiguredMissingFields(profile, input.configuration.dataCollectionRules);
@@ -70,6 +72,7 @@ export async function buildAgentRuntimeContext(input: {
       maxInstallments: paymentProvider.mercadoPago.maxInstallments,
       unallocatedPaidDeposit: unallocatedPaidDeposit ? { amountCents: unallocatedPaidDeposit.amountCents } : null,
       activeSchedulingOption: visibleSchedulingOption,
+      appointmentConfirmation,
     },
     clinic: {
       eventTypes: calendarSettings.eventTypes.filter((eventType) => bookableEventTypes.has(eventType.key)).map((eventType) => {

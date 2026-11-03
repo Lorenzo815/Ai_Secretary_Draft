@@ -62,6 +62,9 @@ export interface AppointmentRecurrenceMetadata {
   isException?: boolean;
 }
 
+/** Attendance: "A confirmar", "Confirmado" or "Sem confirmação" (no answer to the confirmation reminders). */
+export type AppointmentConfirmationStatus = "pending" | "confirmed" | "unconfirmed";
+
 export interface AppointmentDocument {
   _id: ObjectId;
   providerId: string;
@@ -78,7 +81,7 @@ export interface AppointmentDocument {
   customTitle?: string;
   durationMinutes?: number;
   allowOutsideAvailability?: boolean;
-  confirmationStatus?: "pending" | "confirmed";
+  confirmationStatus?: AppointmentConfirmationStatus;
   visitGroupId?: ObjectId;
   recurrence?: AppointmentRecurrenceMetadata;
   notes?: string;
@@ -1159,7 +1162,7 @@ export async function updateManualAppointmentSeries(input: {
   return updated;
 }
 
-export async function updateAppointmentConfirmation(id: string, confirmationStatus: "pending" | "confirmed") {
+export async function updateAppointmentConfirmation(id: string, confirmationStatus: AppointmentConfirmationStatus) {
   if (!ObjectId.isValid(id)) throw new Error("Evento inválido.");
   const appointment = await (await getAppointmentsCollection()).findOneAndUpdate(
     { _id: new ObjectId(id), status: "scheduled" },
@@ -1296,6 +1299,8 @@ export async function updateCustomerAppointments(input: {
               endAt: nextEnd.toJSDate(),
               eventType,
               providerId,
+              // A booking moved to another time needs its attendance confirmed again.
+              ...(!input.hold && nextStart.toMillis() !== current.startAt.getTime() ? { confirmationStatus: "pending" as const } : {}),
               ...(input.hold ? { holdExpiresAt: input.hold.expiresAt } : {}),
               ...(update.notes?.trim() ? { notes: update.notes.trim().slice(0, 1_000) } : {}),
               updatedAt: now,
@@ -1783,4 +1788,36 @@ export async function listAllocatableAppointments(customerId: ObjectId) {
 export async function findAppointmentsByIds(appointmentIds: ObjectId[]) {
   if (appointmentIds.length === 0) return [];
   return (await getAppointmentsCollection()).find({ _id: { $in: appointmentIds } }).toArray();
+}
+
+/** "A confirmar": bookings awaiting attendance confirmation (staff bookings without a status count too). */
+export const AWAITING_CONFIRMATION_FILTER = {
+  status: "scheduled" as const,
+  $or: [{ confirmationStatus: "pending" as const }, { confirmationStatus: { $exists: false }, source: "manual" as const }],
+};
+
+export async function listAppointmentsAwaitingConfirmation(input: { from: Date; to: Date }) {
+  return (await getAppointmentsCollection()).find({
+    ...AWAITING_CONFIRMATION_FILTER,
+    customerId: { $exists: true },
+    startAt: { $gt: input.from, $lte: input.to },
+  }).sort({ startAt: 1 }).limit(2_000).toArray();
+}
+
+/** Sets the attendance of bookings still in one of the `from` states (never touches cancelled or moved ones). */
+export async function setAppointmentsConfirmation(input: {
+  appointmentIds: ObjectId[];
+  customerId: ObjectId;
+  from: Array<AppointmentConfirmationStatus | "missing">;
+  to: AppointmentConfirmationStatus;
+}) {
+  if (input.appointmentIds.length === 0) return 0;
+  const states = input.from.map((state) => state === "missing"
+    ? { confirmationStatus: { $exists: false } }
+    : { confirmationStatus: state });
+  const result = await (await getAppointmentsCollection()).updateMany(
+    { _id: { $in: input.appointmentIds }, customerId: input.customerId, status: "scheduled", $or: states },
+    { $set: { confirmationStatus: input.to, updatedAt: new Date() } },
+  );
+  return result.modifiedCount;
 }

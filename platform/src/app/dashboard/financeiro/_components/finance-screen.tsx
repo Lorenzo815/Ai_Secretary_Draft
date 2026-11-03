@@ -290,7 +290,7 @@ function AppointmentLabel({ appointment, timezone }: { appointment: FinanceAppoi
     ? "reservado, aguardando sinal"
     : appointment.status === "completed"
       ? "realizado"
-      : appointment.confirmationStatus === "confirmed" ? "confirmado" : "a confirmar";
+      : appointment.confirmationStatus === "confirmed" ? "confirmado" : appointment.confirmationStatus === "unconfirmed" ? "sem confirmação" : "a confirmar";
   return <span><strong className="font-semibold text-slate-ink">{formatDateTime(appointment.startAt, timezone)}</strong> · {appointment.eventTypeName} · {state}</span>;
 }
 

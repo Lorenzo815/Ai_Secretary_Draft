@@ -11,7 +11,7 @@ describe("assistant commercial conduct", () => {
       runtime: {
         time: { nowUtc: "2026-10-25T18:00:00Z", clinicLocalNow: "2026-10-25T15:00:00-03:00", clinicTimezone: "America/Sao_Paulo", customerTimezone: null },
         customer: {},
-        operations: { serviceStatus: "ai_active", paymentStatus: null, paymentProvider: "manual", paymentMethods: ["pix"], paymentLinkMethods: [], maxInstallments: 1, unallocatedPaidDeposit: null, activeSchedulingOption: null },
+        operations: { serviceStatus: "ai_active", paymentStatus: null, paymentProvider: "manual", paymentMethods: ["pix"], paymentLinkMethods: [], maxInstallments: 1, unallocatedPaidDeposit: null, activeSchedulingOption: null, appointmentConfirmation: null },
         clinic: { eventTypes: [], resources: [], schedulingPlans: [] },
         execution: { trigger: "inbound_message", iteration: 1, remainingModelIterations: 1 },
         followUp: null,

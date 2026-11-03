@@ -1,12 +1,13 @@
 "use client";
 
-import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
+import { BookOpen, Braces, CalendarCheck, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import ConfirmationEditor from "./confirmation-editor";
 import type { PlanPaymentRequirement, RelationshipRoutingPolicy } from "@/lib/assistant/agent/contracts";
 import { formatBrl, PLAN_PAYMENT_LABELS, PLAN_PAYMENT_REQUIREMENTS } from "@/lib/payments/plan-payment";
 
-type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
+type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "confirmation" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
 type Condition = { field: string; operator: Operator; value?: string | number | boolean };
 type ConditionGroup = { all?: Condition[]; any?: Condition[] };
@@ -138,6 +139,7 @@ const tabs: Array<{ id: Tab; label: string; group: "Agente" | "Operação" | "Ta
   { id: "limits", label: "Execução", group: "Operação", icon: Gauge, description: "Controle a proteção contra loops e consulte a configuração de pagamento.", configKey: "agent_config.loopPolicy" },
   { id: "qualification", label: "Qualificação", group: "Tarefas", icon: UserCheck, description: "Configure a análise independente de aderência e contexto dos leads.", configKey: "lead_qualification_config" },
   { id: "follow_up", label: "Follow-up", group: "Tarefas", icon: Send, description: "Defina quando e como retomar conversas que ficaram sem resposta.", configKey: "follow_up_config" },
+  { id: "confirmation", label: "Confirmação de consulta", group: "Tarefas", icon: CalendarCheck, description: "Lembre os pacientes com eventos \"A confirmar\" e registre a resposta pelos botões do modelo do WhatsApp.", configKey: "appointment_confirmation_config" },
   { id: "automation", label: "Automação", group: "Tarefas", icon: Workflow, description: "Crie gatilhos condicionais para iniciar processos a partir de eventos.", configKey: "automation_rules" },
   { id: "preview", label: "Contrato compilado", group: "Técnico", icon: Braces, description: "Inspecione o prompt e os schemas finais enviados ao modelo.", configKey: "runtime preview · somente leitura" },
 ];
@@ -249,7 +251,7 @@ export function AgentStudio() {
   const followUpDirty = Boolean(payload && followUp && JSON.stringify(payload.followUp) !== JSON.stringify(followUp));
   const automationDirty = Boolean(payload && JSON.stringify(payload.automationRules) !== JSON.stringify(automation));
   const activeTab = tabs.find((item) => item.id === tab) ?? tabs[0];
-  const activeDirty = tab === "qualification" ? qualificationDirty : tab === "follow_up" ? followUpDirty : tab === "automation" ? automationDirty : agentDirty;
+  const activeDirty = tab === "qualification" ? qualificationDirty : tab === "follow_up" ? followUpDirty : tab === "automation" ? automationDirty : tab === "confirmation" ? false : agentDirty;
   const hasUnsavedChanges = agentDirty || qualificationDirty || followUpDirty || automationDirty;
 
   useEffect(() => {
@@ -333,7 +335,7 @@ export function AgentStudio() {
     <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)]">
     <nav aria-label="Seções do Agent Studio" className="overflow-x-auto border-b border-mist lg:overflow-visible lg:border-b-0 lg:border-r lg:pr-5">
       <div role="tablist" aria-orientation="vertical" className="flex min-w-max gap-2 pb-3 lg:block lg:min-w-0 lg:space-y-5 lg:pb-0">
-        {(["Agente", "Operação", "Tarefas", "Técnico"] as const).map((group) => <div key={group} className="flex gap-1 lg:block lg:space-y-1"><p className="hidden px-3 pb-1 text-[10px] font-semibold uppercase text-stone lg:block">{group}</p>{tabs.filter((item) => item.group === group).map((item) => { const Icon = item.icon; const dirty = item.id === "qualification" ? qualificationDirty : item.id === "follow_up" ? followUpDirty : item.id === "automation" ? automationDirty : item.id === "preview" ? false : agentDirty; return <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => { setTab(item.id); setFeedback(""); }} className={`relative inline-flex min-h-10 items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-semibold lg:flex lg:w-full ${tab === item.id ? "bg-deep-teal text-white" : "text-stone hover:bg-white hover:text-slate-ink"}`}><Icon aria-hidden="true" className="h-4 w-4 shrink-0" /><span className="lg:min-w-0 lg:truncate">{item.label}</span>{dirty && <span aria-label="Alterações não salvas" className={`ml-auto h-1.5 w-1.5 rounded-full ${tab === item.id ? "bg-white" : "bg-burnt-coral"}`} />}</button>; })}</div>)}
+        {(["Agente", "Operação", "Tarefas", "Técnico"] as const).map((group) => <div key={group} className="flex gap-1 lg:block lg:space-y-1"><p className="hidden px-3 pb-1 text-[10px] font-semibold uppercase text-stone lg:block">{group}</p>{tabs.filter((item) => item.group === group).map((item) => { const Icon = item.icon; const dirty = item.id === "qualification" ? qualificationDirty : item.id === "follow_up" ? followUpDirty : item.id === "automation" ? automationDirty : item.id === "preview" || item.id === "confirmation" ? false : agentDirty; return <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => { setTab(item.id); setFeedback(""); }} className={`relative inline-flex min-h-10 items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-semibold lg:flex lg:w-full ${tab === item.id ? "bg-deep-teal text-white" : "text-stone hover:bg-white hover:text-slate-ink"}`}><Icon aria-hidden="true" className="h-4 w-4 shrink-0" /><span className="lg:min-w-0 lg:truncate">{item.label}</span>{dirty && <span aria-label="Alterações não salvas" className={`ml-auto h-1.5 w-1.5 rounded-full ${tab === item.id ? "bg-white" : "bg-burnt-coral"}`} />}</button>; })}</div>)}
       </div>
     </nav>
 
@@ -353,14 +355,15 @@ export function AgentStudio() {
       {tab === "limits" && <LimitsEditor value={agent} change={setAgent} paymentStatus={payload.paymentStatus} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
       {tab === "follow_up" && <FollowUpEditor value={followUp} change={setFollowUp} />}
+      {tab === "confirmation" && <ConfirmationEditor />}
       {tab === "automation" && <AutomationEditor rules={automation} change={setAutomation} />}
       {tab === "preview" && <Preview value={payload.previews} />}
     </main>
 
-    <footer className="flex items-center justify-between border-t border-mist pt-5">
+    {tab !== "confirmation" && <footer className="flex items-center justify-between border-t border-mist pt-5">
       <p className="text-xs text-stone">{activeDirty ? "Alterações ainda não salvas" : `Atualizado por ${tab === "qualification" ? qualification.updatedBy : tab === "follow_up" ? followUp.updatedBy : tab === "automation" ? "automação" : agent.updatedBy}`}</p>
       <button type="button" onClick={() => void save()} disabled={!activeDirty || saving || tab === "preview"} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-45">{saving ? "Salvando..." : "Salvar configuração ativa"}</button>
-    </footer>
+    </footer>}
     </div>
     </div>
   </div>;

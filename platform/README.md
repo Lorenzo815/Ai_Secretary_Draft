@@ -118,9 +118,11 @@ paciente lista todos os seus pagamentos e os eventos cobertos.
 ### Confirmação e registro financeiro
 
 - Um sinal confirmado (pelo Mercado Pago ou pela equipe) transforma a reserva em
-  agendamento **A confirmar** (`status: scheduled`, `confirmationStatus: pending`),
-  ligado ao pagamento (`paymentRequestId`, `paidAt`). A confirmação de presença é uma
-  etapa separada.
+  agendamento ligado ao pagamento (`paymentRequestId`, `paidAt`). Fica **Confirmado** se a
+  tarefa "Confirmação de consulta" estiver desligada ou se o primeiro evento já estiver
+  dentro do prazo do primeiro lembrete (ex.: 24 h); senão fica **A confirmar**
+  (`confirmationStatus: pending`) e os lembretes confirmam a presença. A mesma regra vale ao
+  vincular um pagamento em Financeiro e quando um sinal já pago é usado num agendamento.
 - `payment_transactions` é o livro-caixa: uma linha por evento processado
   (aprovado, recusado, estornado, contestado), com valor pago, taxas e líquido do
   Mercado Pago, meio, parcelas e data, além das conferências da equipe (Pix manual,
@@ -130,6 +132,36 @@ paciente lista todos os seus pagamentos e os eventos cobertos.
   editadas; uma mudança de status gera uma nova linha.
 - Teste opcional contra o sandbox, com as credenciais de uma clínica (nunca no CI):
   `MP_LIVE_TEST=1 MP_TEST_COMPANY_ID=<id> npx vitest run src/lib/payments/mercado-pago.live.test.ts`.
+
+## Confirmação de consulta
+
+Tarefa do Agent Studio (Tarefas › Confirmação de consulta, `appointment_confirmation_config`),
+desligada por padrão. Só pode ser ativada com o modelo `oria_confirmacao_consulta` (Utilidade,
+pt_BR) aprovado pela Meta: lembretes chegam fora da janela de 24 h de conversa, onde o WhatsApp
+só aceita modelos. A Oria cria o modelo com texto editável (`{{1}}` nome, `{{2}}` dia, `{{3}}`
+horários) e três respostas rápidas: **Confirmar presença**, **Escolher novo horário** e
+**Cancelar consulta**. Sem o modelo aprovado, Agent Studio, Modelos WhatsApp e (com a tarefa
+ligada) a Visão geral mostram um alerta.
+
+- Eventos "A confirmar" (`confirmationStatus: pending`, ou eventos da equipe sem status) com
+  paciente entram num ciclo por paciente e dia (`appointment_confirmations`): uma mensagem lista
+  todos os eventos do dia. Agendamentos da IA sem sinal agora também ficam "A confirmar", e um
+  evento movido para outro horário volta para "A confirmar".
+- 1º envio X horas antes do primeiro evento (padrão 24 h), dentro da janela (padrão 08–20 h, no
+  fuso da clínica; fora dela, no início da próxima). Até N envios (padrão 3), a cada intervalo
+  (padrão 2 h), nunca depois do início. Agendamentos feitos há menos de 12 h antes do 1º envio não
+  recebem lembretes, salvo se o sinal foi pago.
+- Sem resposta um intervalo depois do último envio (limitado ao início), os eventos ficam
+  **Sem confirmação** (`unconfirmed`): o calendário mostra o selo e o filtro, a Visão geral
+  alerta, e a clínica decide. A IA nunca desmarca.
+- Botões (payload `oria_cc:<ciclo>:<ação>`): Confirmar → eventos do dia "Confirmado" e resposta
+  curta, sem a IA; Escolher novo horário → reativa a IA (mesmo em atendimento humano), que
+  reagenda mantendo o horário atual até o novo; Cancelar → atendimento "Aguardando humano" e aviso
+  ao paciente. Respostas depois de "Sem confirmação" vão para a equipe, sem mudar nada.
+- Respostas em texto: enquanto há um ciclo aberto, a IA vê `operations.appointmentConfirmation`
+  e recebe a ferramenta `calendar.confirm_attendance` (confirm, reschedule ou cancel, com as
+  mesmas regras).
+- O worker processa a tarefa no máximo uma vez por minuto, por clínica com a tarefa ligada.
 
 ## Assistente
 

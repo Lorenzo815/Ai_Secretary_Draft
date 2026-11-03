@@ -36,6 +36,7 @@ vi.mock("./runs", () => ({
   recordAgentRunStep: mocks.step, startAgentRun: mocks.start,
 }));
 vi.mock("./tool-policy", () => ({ executeAgentTool: mocks.execute }));
+vi.mock("../../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 
 import { processCustomerAgentJob } from "./orchestrator";
 

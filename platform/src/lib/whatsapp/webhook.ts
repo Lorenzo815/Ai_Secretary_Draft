@@ -19,6 +19,7 @@ import {
 } from "./embedded-signup";
 import { getMessageBody, getMessageMedia, getMessageReferral, getMessageSelection, type WebhookMessage } from "./message-payload";
 import { processWhatsAppMessageEchoes } from "./message-echoes";
+import { handleConfirmationButton } from "../confirmations/service";
 import { hydrateWhatsAppTemplateContext } from "./template-context";
 
 interface WebhookValue extends Record<string, unknown> {
@@ -144,7 +145,14 @@ async function processMessagesChange(
       status: "received",
       timestamp,
     });
-    if (saved.inserted && (!customer.serviceStatus || customer.serviceStatus === "ai_active")) {
+    // Taps on the appointment confirmation reminder buttons are answered without the AI, except
+    // "Escolher novo horário", which hands the conversation to the AI.
+    const confirmation = saved.inserted && selection?.type === "button" && selection.payload
+      ? await handleConfirmationButton({ customer, payload: selection.payload })
+      : { handled: false as const };
+    if (confirmation.handled && !confirmation.runAgent) {
+      await cancelAutomationJob("customer_follow_up", customer._id);
+    } else if (saved.inserted && (confirmation.handled || !customer.serviceStatus || customer.serviceStatus === "ai_active")) {
       await cancelAutomationJob("customer_follow_up", customer._id);
       const processes = await emitAutomationEvent({
         type: "message.received",

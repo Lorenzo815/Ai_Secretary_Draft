@@ -7,6 +7,7 @@ import {
   listAllocatableAppointments, type AppointmentDocument,
 } from "../calendar";
 import { tenantDb } from "../companies/tenant-db";
+import { applyAttendanceAfterPayment } from "../confirmations/service";
 import { listTransactionsForRequests, recordManualEntryRemoval } from "./ledger";
 import { MANUAL_METHOD_LABELS, MANUAL_PAYMENT_METHODS, type ManualPaymentMethod } from "./manual-methods";
 import {
@@ -27,7 +28,7 @@ export interface FinanceAppointment {
   eventTypeName: string;
   startAt: string;
   status: AppointmentDocument["status"];
-  confirmationStatus: "pending" | "confirmed" | null;
+  confirmationStatus: "pending" | "confirmed" | "unconfirmed" | null;
   holdExpiresAt: string | null;
 }
 
@@ -108,7 +109,7 @@ export async function allocatePayment(input: { paymentRequestId: ObjectId; appoi
   if (!payment) throw new FinanceError("Pagamento não encontrado.", 404);
   if (payment.status !== "paid") throw new FinanceError("Só pagamentos recebidos podem ser vinculados a agendamentos.");
   const wanted = uniqueIds(input.appointmentIds);
-  await assertAllocatable(payment.customerId, wanted);
+  const linked = await assertAllocatable(payment.customerId, wanted);
   const current = payment.appointmentIds ?? [];
   const removed = current.filter((id) => !wanted.some((other) => other.equals(id)));
   if (removed.length > 0) await detachPaymentFromAppointments(payment._id, removed);
@@ -119,6 +120,7 @@ export async function allocatePayment(input: { paymentRequestId: ObjectId; appoi
     paymentRequestId: payment._id,
     paidAt: payment.paidAt ?? payment.reviewedAt ?? payment.updatedAt,
   });
+  await applyAttendanceAfterPayment({ customerId: payment.customerId, appointments: linked.filter((appointment) => appointment.status === "held") });
   return setPaymentAppointments(payment._id, wanted);
 }
 
@@ -135,12 +137,13 @@ export async function registerManualPayment(input: {
   const customer = await (await tenantDb()).collection("crm_customers").findOne({ _id: input.customerId }, { projection: { _id: 1 } });
   if (!customer) throw new FinanceError("Paciente não encontrado.", 404);
   const appointmentIds = uniqueIds(input.appointmentIds);
-  await assertAllocatable(input.customerId, appointmentIds);
+  const linked = await assertAllocatable(input.customerId, appointmentIds);
   const payment = await createManualPaymentEntry({ ...input, method: input.method as ManualPaymentMethod, appointmentIds });
   await unlinkAppointmentsFromOtherPayments(appointmentIds, payment._id);
   await attachPaymentToAppointments({
     customerId: input.customerId, appointmentIds, paymentRequestId: payment._id, paidAt: input.receivedAt,
   });
+  await applyAttendanceAfterPayment({ customerId: input.customerId, appointments: linked.filter((appointment) => appointment.status === "held") });
   return payment;
 }
 
@@ -179,6 +182,7 @@ async function assertAllocatable(customerId: ObjectId, appointmentIds: ObjectId[
   if (valid.length !== appointmentIds.length) {
     throw new FinanceError("Algum agendamento não é deste paciente, foi cancelado ou a reserva expirou.");
   }
+  return valid;
 }
 
 async function serializePayments(

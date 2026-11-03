@@ -13,6 +13,7 @@ export const DYNAMIC_COLLECTIONS = [
   "assistant_run_steps",
   "ai_task_calls",
   "calendar_plan_options",
+  "appointment_confirmations",
   "lead_qualification_history",
   "payment_requests",
   "calendar_appointments",

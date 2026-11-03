@@ -6,7 +6,8 @@ import { bookAppointment, findAvailableSlots, findCustomerAppointments, findUpco
 import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, holdSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
-import { attachPaymentToAppointments } from "../../calendar";
+import { attachPaymentToAppointments, findAppointmentsByIds } from "../../calendar";
+import { applyAttendanceAfterPayment } from "../../confirmations/service";
 import { depositForPlan, findUnallocatedPaidPayment, formatBrl, setPaymentAppointments, withoutPaymentConditions } from "../../payments";
 import type { AgentConfigurationDocument, SchedulingPlan } from "../agent/contracts";
 import { getConfiguredMissingFields } from "../agent/runtime-context";
@@ -188,6 +189,7 @@ async function executeCalendarAction(input: {
             paidAt: depositCredit.payment.paidAt ?? new Date(),
           });
           await setPaymentAppointments(depositCredit.payment._id, result.appointmentIds);
+          await applyAttendanceAfterPayment({ customerId: input.customerId, appointments: await findAppointmentsByIds(result.appointmentIds) });
         }
         return {
           output: JSON.stringify({

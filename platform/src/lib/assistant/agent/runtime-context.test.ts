@@ -33,6 +33,7 @@ vi.mock("../../payments", async () => {
   };
 });
 vi.mock("../../crm", () => ({ getCustomerProfileSnapshot: mocks.getCustomerProfileSnapshot }));
+vi.mock("../../confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
 
 import { buildAgentRuntimeContext } from "./runtime-context";
 
@@ -102,6 +103,7 @@ describe("agent runtime event authorization", () => {
       maxInstallments: 3,
       unallocatedPaidDeposit: null,
       activeSchedulingOption: null,
+      appointmentConfirmation: null,
     });
     expect(JSON.stringify(runtime)).not.toContain("server-only-metadata");
   });

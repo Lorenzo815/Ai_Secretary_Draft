@@ -14,6 +14,10 @@ import {
 import { CustomerOperationsDocument, listCustomerOperations } from "@/lib/crm";
 import { getDashboardOverview } from "@/lib/dashboard/overview";
 import AutoRefresh from "./_components/auto-refresh";
+import ConfirmationAlert from "./_components/confirmation-alert";
+import { getAppointmentConfirmationConfiguration } from "@/lib/confirmations/config";
+import { getConfirmationTemplateStatus } from "@/lib/confirmations/template";
+import { countUnconfirmedUpcoming } from "@/lib/confirmations/service";
 import { PanelHeader, SectionHeader } from "./_components/dashboard-section-header";
 import BrowserDateTime from "@/components/browser-date-time";
 
@@ -26,7 +30,11 @@ export default async function DashboardPage({
 }) {
   const query = await searchParams;
   const periodDays = parsePeriod(query.period);
-  const [customers, overview] = await Promise.all([listCustomerOperations(), getDashboardOverview(periodDays)]);
+  const [customers, overview, confirmation, unconfirmedUpcoming] = await Promise.all([
+    listCustomerOperations(), getDashboardOverview(periodDays), getAppointmentConfirmationConfiguration(), countUnconfirmedUpcoming(),
+  ]);
+  // The template only matters here while the task is on (reminders stopped).
+  const confirmationTemplate = confirmation.enabled ? await getConfirmationTemplateStatus() : null;
   const waitingHuman = customers.filter((customer) => customer.serviceStatus === "waiting_human").length;
   const messagesAfterClosure = customers.filter((customer) => customer.messageAfterClosure);
   const customerById = new Map(customers.map((customer) => [customer._id.toString(), customer]));
@@ -119,6 +127,7 @@ export default async function DashboardPage({
           <span className="text-xs text-stone">Atualizado <BrowserDateTime value={overview.generatedAt.toISOString()} dateStyle={null} /></span>
         </div>
       </header>
+      <ConfirmationAlert template={confirmationTemplate} taskEnabled={confirmation.enabled} unconfirmedUpcoming={unconfirmedUpcoming} />
 
       {messagesAfterClosure.length > 0 && (
         <section role="alert" className="flex flex-col justify-between gap-3 border-l-4 border-burnt-coral bg-burnt-coral/[0.06] px-4 py-3 sm:flex-row sm:items-center">
