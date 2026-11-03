@@ -84,7 +84,11 @@ async function readPaymentResponse(response: Response) {
     currency_id?: string;
     point_of_interaction?: { transaction_data?: { qr_code?: string; qr_code_base64?: string; ticket_url?: string } };
     message?: string;
+    cause?: Array<{ code?: number | string; description?: string }>;
   };
-  if (!response.ok) throw new Error(body.message || `O Mercado Pago respondeu HTTP ${response.status}.`);
+  if (!response.ok) {
+    const cause = body.cause?.map((item) => [item.code, item.description].filter(Boolean).join(" ")).filter(Boolean).join("; ");
+    throw new Error(`Mercado Pago HTTP ${response.status}: ${body.message ?? "erro"}${cause ? ` (${cause})` : ""}`.slice(0, 300));
+  }
   return body;
 }

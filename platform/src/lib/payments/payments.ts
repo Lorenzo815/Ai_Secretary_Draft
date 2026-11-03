@@ -19,6 +19,7 @@ export interface PaymentRequestDocument {
   payerEmail?: string;
   externalPaymentId?: string;
   providerStatus?: string;
+  providerError?: string;
   qrCode?: string;
   qrCodeBase64?: string;
   ticketUrl?: string;
@@ -163,9 +164,12 @@ export async function createMercadoPagoPaymentRequest(input: {
     );
     return updated ?? request;
   } catch (error) {
+    // Keep the provider's reason (no secrets: Mercado Pago only returns a message and error codes).
+    const providerError = error instanceof Error ? error.message.slice(0, 300) : "Erro desconhecido";
+    console.error("Mercado Pago charge creation failed.", { paymentRequestId: request._id.toHexString(), providerError });
     await requests.updateOne(
       { _id: request._id, status: "awaiting_provider_confirmation" },
-      { $set: { status: "provider_error", providerStatus: "creation_failed", updatedAt: new Date() } },
+      { $set: { status: "provider_error", providerStatus: "creation_failed", providerError, updatedAt: new Date() } },
     );
     throw error;
   }
