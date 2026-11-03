@@ -4,7 +4,7 @@ import { Badge, Card, PageHeader, Stat, StatusBadge } from "@/components/ui";
 import { AUDIT_COLLECTION } from "@/lib/audit";
 import { listCompanyOverview } from "@/lib/companies";
 import { listCollectionsInfo } from "@/lib/explorer";
-import { formatBytes, formatDate, formatNumber } from "@/lib/format";
+import { formatAtlasClusterMb, formatBytes, formatDate, formatNumber } from "@/lib/format";
 import { getDb } from "@/lib/mongodb";
 
 export default async function OverviewPage() {
@@ -26,7 +26,7 @@ export default async function OverviewPage() {
         <Stat label="Pacientes" value={formatNumber(sum("customers"))} />
         <Stat label="Mensagens (30 dias)" value={formatNumber(sum("messages30d"))} />
         <Stat label="Execuções de IA (30 dias)" value={formatNumber(sum("runs30d"))} />
-        <Stat label="Data Size" value={formatBytes(dataSize)} hint={`Storage ${formatBytes(storageSize)} · índices ${formatBytes(indexSize)} · ${collections.length} coleções · limite M0 512 MB (dados + índices: ${Math.round(((dataSize + indexSize) / 512e6) * 100)}%)`} />
+        <Stat label="Data size (Atlas)" value={`${formatAtlasClusterMb(dataSize + indexSize)} / 512 MB`} hint={`${Math.floor(((dataSize + indexSize) / (512 * 1_048_576)) * 100)}% do limite M0 · dados ${formatBytes(dataSize)} + índices ${formatBytes(indexSize)} · ${formatBytes(storageSize)} em disco · ${collections.length} coleções`} />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.6fr_1fr]">
