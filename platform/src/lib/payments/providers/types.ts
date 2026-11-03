@@ -44,6 +44,8 @@ export interface MercadoPagoOrder {
   currency: string;
   status: string;
   statusDetail: string;
+  /** The order's own payments, in the same shape as /v1/payments (statuses mapped: processed = approved). */
+  payments: MercadoPagoPayment[];
 }
 
 /** A single payment attempt as Mercado Pago records it (card, Pix, boleto, account money). */

@@ -15,6 +15,9 @@ export type MercadoPagoTopic = "order" | "payment";
  * Mercado Pago recorded for the request is saved in the ledger, and the request becomes paid when one attempt is
  * approved for the full amount. A rejected card attempt doesn't end the request (the patient may try again on
  * the same link); only a cancelled or expired Pix order does.
+ *
+ * For a Pix in the chat the order is the source of truth: its mirror in /v1/payments can stay "pending" after
+ * the order is processed (seen in the sandbox), so the order is always read, whichever topic arrived.
  */
 export async function processMercadoPagoWebhook(input: {
   topic: MercadoPagoTopic;
@@ -28,19 +31,22 @@ export async function processMercadoPagoWebhook(input: {
     throw new WebhookError("Assinatura inválida.", 401);
   }
 
-  const order = input.topic === "order" ? await getOrder(input.dataId) : null;
+  const notifiedOrder = input.topic === "order" ? await getOrder(input.dataId) : null;
   const notifiedPayment = input.topic === "payment" ? await getPayment(input.dataId) : null;
-  const reference = order?.externalReference ?? notifiedPayment?.externalReference ?? "";
+  const reference = notifiedOrder?.externalReference ?? notifiedPayment?.externalReference ?? "";
   const request = await findPaymentRequestById(reference);
   if (!request || request.provider !== "mercado_pago") {
-    throw new WebhookError("Cobrança local não encontrada.", 404);
+    throw new WebhookError(`Cobrança local não encontrada (referência "${reference.slice(0, 40)}").`, 404);
   }
+  const order = notifiedOrder ?? (request.channel !== "payment_link" && request.externalPaymentId?.startsWith("ORD")
+    ? await getOrder(request.externalPaymentId)
+    : null);
   if (order && (order.orderId !== request.externalPaymentId || order.amountCents !== request.amountCents || order.currency !== "BRL")) {
     throw new WebhookError("Os dados da cobrança não conferem.", 409);
   }
 
   const channel = request.channel ?? "pix";
-  const payments = mergePayments(await findPaymentsByReference(reference), notifiedPayment);
+  const payments = mergePayments(await findPaymentsByReference(reference), [notifiedPayment, ...(order?.payments ?? [])]);
   for (const payment of payments) {
     await recordMercadoPagoPayment({ paymentRequestId: request._id, customerId: request.customerId, channel, payment });
   }
@@ -74,9 +80,11 @@ export async function processMercadoPagoWebhook(input: {
 const ORDER_FAILURES = new Set(["canceled", "failed", "expired"]);
 const REVERSALS = new Set(["refunded", "charged_back"]);
 
-function mergePayments(found: MercadoPagoPayment[], notified: MercadoPagoPayment | null) {
-  if (!notified || found.some((payment) => payment.paymentId === notified.paymentId)) return found;
-  return [...found, notified];
+/** Search results plus payments read directly (fresher than the search index), by payment id. */
+function mergePayments(found: MercadoPagoPayment[], direct: Array<MercadoPagoPayment | null>) {
+  const merged = new Map(found.map((payment) => [payment.paymentId, payment]));
+  for (const payment of direct) if (payment?.paymentId) merged.set(payment.paymentId, payment);
+  return [...merged.values()];
 }
 
 export class WebhookError extends Error {

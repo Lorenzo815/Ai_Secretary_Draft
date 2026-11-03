@@ -44,7 +44,8 @@ describe("Mercado Pago webhook processing", () => {
     _id: paymentRequestId, customerId: new ObjectId(), amountCents: 10_000, provider: "mercado_pago", channel: "pix",
     externalPaymentId: "ORD01ABC", status: "awaiting_provider_confirmation",
   };
-  const order = (status: string) => ({ orderId: "ORD01ABC", externalReference: reference, amountCents: 10_000, currency: "BRL", status, statusDetail: "" });
+  const order = (status: string, payments: unknown[] = []) => ({ orderId: "ORD01ABC", externalReference: reference, amountCents: 10_000, currency: "BRL", status, statusDetail: "", payments });
+  const orderPayment = (status: string) => attempt({ paymentId: "PAY01XYZ", externalReference: reference, status, feeCents: null, netReceivedCents: null });
   const notify = (topic: "order" | "payment", dataId: string) =>
     processMercadoPagoWebhook({ topic, dataId, signature: "signature", requestId: "request" });
 
@@ -68,6 +69,39 @@ describe("Mercado Pago webhook processing", () => {
     expect(mocks.markPaymentRefunded).toHaveBeenCalledWith(paymentRequestId, "refunded");
     expect(mocks.recordMercadoPagoPayment).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ status: "refunded" }) }));
     expect(mocks.completePaymentTransition).not.toHaveBeenCalled();
+  });
+
+  describe("Pix in the chat: the order is the source of truth", () => {
+    // Seen in the sandbox: the order is processed while its /v1/payments mirror stays pending.
+    const pendingMirror = attempt({ externalReference: reference, status: "pending", statusDetail: "pending_waiting_transfer" });
+
+    beforeEach(() => {
+      mocks.findPaymentsByReference.mockResolvedValue([pendingMirror]);
+      mocks.getOrder.mockResolvedValue(order("processed", [orderPayment("approved")]));
+    });
+
+    it("pays the request when the order notification says processed", async () => {
+      await expect(notify("order", "ORD01ABC")).resolves.toMatchObject({ processed: true, status: "processed" });
+      expect(mocks.applyProviderPaymentStatus).toHaveBeenCalledWith({
+        paymentRequestId, status: "paid", providerStatus: "approved", providerPaymentId: "PAY01XYZ",
+      });
+      expect(mocks.recordMercadoPagoPayment).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ paymentId: "PAY01XYZ", status: "approved" }) }));
+    });
+
+    it("reads the order also when only the (still pending) payment notification arrives", async () => {
+      mocks.getPayment.mockResolvedValue(pendingMirror);
+
+      await expect(notify("payment", "111")).resolves.toMatchObject({ processed: true });
+      expect(mocks.getOrder).toHaveBeenCalledWith("ORD01ABC");
+      expect(mocks.completePaymentTransition).toHaveBeenCalledWith(expect.objectContaining({ status: "paid" }), "paid");
+    });
+
+    it("keeps waiting while the order is not paid", async () => {
+      mocks.getOrder.mockResolvedValue(order("action_required", [orderPayment("pending")]));
+
+      await expect(notify("order", "ORD01ABC")).resolves.toMatchObject({ processed: false, status: "action_required" });
+      expect(mocks.applyProviderPaymentStatus).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects notifications with an invalid signature before reading anything", async () => {

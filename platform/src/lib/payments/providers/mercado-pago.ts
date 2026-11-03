@@ -86,8 +86,33 @@ export async function getOrder(orderId: string): Promise<MercadoPagoOrder> {
     currency: order.currency ?? order.currency_id ?? (order.country_code === "BRA" ? "BRL" : ""),
     status: order.status ?? "",
     statusDetail: order.status_detail ?? "",
+    payments: (order.transactions?.payments ?? []).map((payment) => ({
+      paymentId: payment.id ?? "",
+      externalReference: order.external_reference ?? "",
+      amountCents: cents(payment.amount),
+      paidAmountCents: cents(payment.paid_amount ?? 0),
+      netReceivedCents: null,
+      feeCents: null,
+      currency: order.currency ?? order.currency_id ?? (order.country_code === "BRA" ? "BRL" : ""),
+      status: ORDER_PAYMENT_STATUS[payment.status ?? ""] ?? payment.status ?? "",
+      statusDetail: payment.status_detail ?? "",
+      paymentType: payment.payment_method?.type ?? "",
+      paymentMethod: payment.payment_method?.id ?? "",
+      installments: null,
+      payerEmail: null,
+      createdAt: order.created_date ? new Date(order.created_date) : null,
+      approvedAt: payment.status === "processed" && order.last_updated_date ? new Date(order.last_updated_date) : null,
+      liveMode: null,
+    })),
   };
 }
+
+// Order payment statuses, in /v1/payments terms (the ledger and refunds use those).
+// https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-management/status/transaction-status
+const ORDER_PAYMENT_STATUS: Record<string, string> = {
+  processed: "approved", action_required: "pending", processing: "in_process", failed: "rejected",
+  canceled: "cancelled", expired: "cancelled", refunded: "refunded", charged_back: "charged_back",
+};
 
 export async function getPayment(paymentId: string): Promise<MercadoPagoPayment> {
   const credential = await requireCredential();
@@ -206,10 +231,16 @@ interface OrderResponse {
   currency?: string;
   currency_id?: string;
   country_code?: string;
+  created_date?: string;
+  last_updated_date?: string;
   transactions?: { payments?: Array<{
     id?: string;
+    amount?: string | number;
+    paid_amount?: string | number;
+    status?: string;
+    status_detail?: string;
     date_of_expiration?: string;
-    payment_method?: { qr_code?: string; qr_code_base64?: string; ticket_url?: string };
+    payment_method?: { id?: string; type?: string; qr_code?: string; qr_code_base64?: string; ticket_url?: string };
   }> };
 }
 

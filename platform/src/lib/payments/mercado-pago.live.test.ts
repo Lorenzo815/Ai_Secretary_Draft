@@ -18,6 +18,7 @@ vi.mock("./payments", () => ({
     local.applied(input);
     return { ...local.requests.get(input.paymentRequestId.toHexString()), status: input.status };
   },
+  markPaymentRefunded: vi.fn(),
 }));
 vi.mock("./completion", () => ({ completePaymentTransition: async (...args: unknown[]) => { local.completed(...args); return {}; } }));
 vi.mock("./ledger", () => ({ recordMercadoPagoPayment: async (entry: unknown) => { local.ledger(entry); } }));

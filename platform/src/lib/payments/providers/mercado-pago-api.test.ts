@@ -73,7 +73,11 @@ describe("Mercado Pago adapter", () => {
 
   it("reads an order and a payment with fees and net amount", async () => {
     vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(json({ id: "ORD01ABC", status: "processed", status_detail: "accredited", external_reference: "ref", total_amount: "100.00", country_code: "BRA" }))
+      .mockResolvedValueOnce(json({
+        id: "ORD01ABC", status: "processed", status_detail: "accredited", external_reference: "ref", total_amount: "100.00", country_code: "BRA",
+        currency: "BRL", last_updated_date: "2026-11-03T04:20:59.839Z",
+        transactions: { payments: [{ id: "PAY01", amount: "100.00", paid_amount: "100.00", status: "processed", status_detail: "accredited", payment_method: { id: "pix", type: "bank_transfer" } }] },
+      }))
       .mockResolvedValueOnce(json({
         id: 123, status: "approved", status_detail: "accredited", external_reference: "ref", transaction_amount: 100, currency_id: "BRL",
         payment_type_id: "credit_card", payment_method_id: "visa", installments: 3, date_approved: "2026-11-03T03:00:00Z",
@@ -82,6 +86,11 @@ describe("Mercado Pago adapter", () => {
       })));
     await expect(getOrder("ORD01ABC")).resolves.toEqual({
       orderId: "ORD01ABC", externalReference: "ref", amountCents: 10_000, currency: "BRL", status: "processed", statusDetail: "accredited",
+      payments: [expect.objectContaining({
+        paymentId: "PAY01", externalReference: "ref", amountCents: 10_000, paidAmountCents: 10_000, currency: "BRL",
+        status: "approved", statusDetail: "accredited", paymentType: "bank_transfer", paymentMethod: "pix",
+        approvedAt: new Date("2026-11-03T04:20:59.839Z"),
+      })],
     });
     await expect(getPayment("123")).resolves.toMatchObject({
       paymentId: "123", status: "approved", amountCents: 10_000, paidAmountCents: 10_000, netReceivedCents: 9_502, feeCents: 498,
