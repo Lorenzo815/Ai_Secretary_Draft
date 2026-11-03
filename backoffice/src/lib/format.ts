@@ -10,10 +10,10 @@ export function formatNumber(value: number) {
   return number.format(value);
 }
 
-/** Decimal units (1 MB = 1,000,000 bytes), the same as the MongoDB Atlas UI. */
+/** Same format as the MongoDB Atlas UI: decimal units (1 MB = 1,000,000 bytes), two decimals ("66.40 MB", "506.00 B"). */
 export function formatBytes(bytes: number) {
   if (!bytes) return "0 B";
   const units = ["B", "kB", "MB", "GB"];
-  const index = Math.min(Math.floor(Math.log10(bytes) / 3), units.length - 1);
-  return `${(bytes / 1000 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
+  const index = Math.min(Math.max(Math.floor(Math.log10(bytes) / 3), 0), units.length - 1);
+  return `${(bytes / 1000 ** index).toFixed(2)} ${units[index]}`;
 }

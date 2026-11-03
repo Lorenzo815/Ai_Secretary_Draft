@@ -19,19 +19,21 @@ export async function listCollectionsInfo() {
   return Promise.all(collections.map(async (name) => {
     const [count, stats] = await Promise.all([
       db.collection(name).estimatedDocumentCount(),
-      db.collection(name).aggregate<{ storageStats?: { size?: number; storageSize?: number; totalIndexSize?: number } }>(
+      db.collection(name).aggregate<{ storageStats?: { size?: number; count?: number; avgObjSize?: number; storageSize?: number; nindexes?: number; totalIndexSize?: number } }>(
         [{ $collStats: { storageStats: {} } }],
       ).toArray().catch(() => []),
     ]);
     const storage = stats[0]?.storageStats;
-    const dataBytes = storage?.size ?? 0;
-    const indexBytes = storage?.totalIndexSize ?? 0;
+    // Same fields as the Atlas collection list: Storage size, Data size, Documents, Avg. document size,
+    // Indexes and Total index size.
     return {
-      name, count, dataBytes, indexBytes,
-      // What Atlas counts against the M0/Flex storage limit: uncompressed data + indexes.
-      usedBytes: dataBytes + indexBytes,
-      // Compressed size on disk (Atlas "Storage size") + indexes.
-      diskBytes: (storage?.storageSize ?? 0) + indexBytes,
+      name,
+      count: storage?.count ?? count,
+      dataBytes: storage?.size ?? 0,
+      storageBytes: storage?.storageSize ?? 0,
+      avgDocumentBytes: storage?.avgObjSize ?? 0,
+      indexCount: storage?.nindexes ?? 0,
+      indexBytes: storage?.totalIndexSize ?? 0,
     };
   }));
 }
