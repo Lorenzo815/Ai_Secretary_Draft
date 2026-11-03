@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getPayment: vi.fn(),
   findPaymentsByReference: vi.fn(),
   recordMercadoPagoPayment: vi.fn(),
+  markPaymentRefunded: vi.fn(),
   verifySignature: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock("./ledger", () => ({ recordMercadoPagoPayment: mocks.recordMercadoPagoPa
 vi.mock("./payments", () => ({
   applyProviderPaymentStatus: mocks.applyProviderPaymentStatus,
   findPaymentRequestById: mocks.findPaymentRequestById,
+  markPaymentRefunded: mocks.markPaymentRefunded,
 }));
 vi.mock("./provider-credentials", () => ({ getMercadoPagoCredential: mocks.getMercadoPagoCredential }));
 vi.mock("./providers/mercado-pago", () => ({
@@ -55,6 +57,17 @@ describe("Mercado Pago webhook processing", () => {
     mocks.findPaymentRequestById.mockResolvedValue(pixRequest);
     mocks.applyProviderPaymentStatus.mockImplementation(async (input) => ({ ...pixRequest, status: input.status }));
     mocks.completePaymentTransition.mockResolvedValue({});
+  });
+
+  it("marks a paid deposit as refunded so it no longer counts as a previous deposit, keeping the booking", async () => {
+    mocks.findPaymentRequestById.mockResolvedValue({ ...pixRequest, status: "paid", providerPaymentId: "111" });
+    mocks.getPayment.mockResolvedValue(attempt({ externalReference: reference, status: "refunded" }));
+    mocks.findPaymentsByReference.mockResolvedValue([attempt({ externalReference: reference, status: "refunded" })]);
+
+    await expect(notify("payment", "111")).resolves.toMatchObject({ processed: false, status: "refunded" });
+    expect(mocks.markPaymentRefunded).toHaveBeenCalledWith(paymentRequestId, "refunded");
+    expect(mocks.recordMercadoPagoPayment).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ status: "refunded" }) }));
+    expect(mocks.completePaymentTransition).not.toHaveBeenCalled();
   });
 
   it("rejects notifications with an invalid signature before reading anything", async () => {

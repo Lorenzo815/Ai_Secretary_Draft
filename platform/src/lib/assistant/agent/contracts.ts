@@ -35,6 +35,18 @@ export type SchedulingConstraint =
   | { type: "gap"; from: string; to: string; minMinutes: number; maxMinutes: number }
   | { type: "same_day"; steps: string[] };
 
+/**
+ * Deposit rule of a scheduling plan. One deposit covers every event of the booking.
+ * - always: every booking of the plan needs a paid deposit before it is confirmed;
+ * - first_time: only when the patient never had a paid deposit at this clinic (any plan);
+ * - none: no deposit; the plan is booked directly.
+ */
+export type PlanPaymentRequirement = "always" | "first_time" | "none";
+export interface SchedulingPlanPayment {
+  requirement: PlanPaymentRequirement;
+  amountCents: number;
+}
+
 export interface SchedulingPlan {
   key: string;
   name: string;
@@ -43,6 +55,8 @@ export interface SchedulingPlan {
   steps: SchedulingPlanStep[];
   constraints: SchedulingConstraint[];
   prerequisites: AgentConditionGroup;
+  /** Missing on plans saved before deposits were per plan; see resolvePlanPayment. */
+  payment?: SchedulingPlanPayment;
   proposalExpiryMinutes: number;
   holdDurationMinutes: number;
 }
@@ -98,6 +112,8 @@ export interface AgentRuntimeContext {
     paymentMethods: Array<"pix" | "payment_link">;
     paymentLinkMethods: string[];
     maxInstallments: number;
+    /** A deposit paid earlier that confirmed no booking (its hold expired); calendar.book applies it. */
+    unallocatedPaidDeposit: { amountCents: number } | null;
     activeSchedulingOption: unknown | null;
   };
   clinic: {
@@ -112,7 +128,10 @@ export interface AgentRuntimeContext {
       id: string;
       name: string;
     }>;
-    schedulingPlans: SchedulingPlan[];
+    schedulingPlans: Array<SchedulingPlan & {
+      /** The plan's deposit rule and whether a new booking by this patient needs a deposit now. */
+      deposit: SchedulingPlanPayment & { requiredNow: boolean };
+    }>;
   };
   execution: {
     trigger: "inbound_message" | "follow_up";

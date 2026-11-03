@@ -2,7 +2,7 @@ import "server-only";
 
 import { completePaymentTransition } from "./completion";
 import { recordMercadoPagoPayment } from "./ledger";
-import { applyProviderPaymentStatus, findPaymentRequestById, type PaymentRequestDocument } from "./payments";
+import { applyProviderPaymentStatus, findPaymentRequestById, markPaymentRefunded, type PaymentRequestDocument } from "./payments";
 import { getMercadoPagoCredential } from "./provider-credentials";
 import { findPaymentsByReference, getOrder, getPayment } from "./providers/mercado-pago";
 import { verifyMercadoPagoWebhookSignature } from "./providers/mercado-pago-signature";
@@ -44,6 +44,12 @@ export async function processMercadoPagoWebhook(input: {
   for (const payment of payments) {
     await recordMercadoPagoPayment({ paymentRequestId: request._id, customerId: request.customerId, channel, payment });
   }
+  const reversed = payments.find((payment) => payment.paymentId === request.providerPaymentId && REVERSALS.has(payment.status));
+  if (request.status === "paid" && reversed) {
+    // The booking stays as staff left it; the refund only stops counting as a previous deposit.
+    await markPaymentRefunded(request._id, reversed.status);
+    return { processed: false, status: reversed.status, recorded: payments.length };
+  }
 
   const approved = payments.find((payment) =>
     payment.status === "approved" && payment.amountCents === request.amountCents && (payment.currency || "BRL") === "BRL");
@@ -66,6 +72,7 @@ export async function processMercadoPagoWebhook(input: {
 
 // Order statuses: https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-management/status/order-status
 const ORDER_FAILURES = new Set(["canceled", "failed", "expired"]);
+const REVERSALS = new Set(["refunded", "charged_back"]);
 
 function mergePayments(found: MercadoPagoPayment[], notified: MercadoPagoPayment | null) {
   if (!notified || found.some((payment) => payment.paymentId === notified.paymentId)) return found;

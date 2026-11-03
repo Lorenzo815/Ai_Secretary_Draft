@@ -11,6 +11,7 @@ import type { AgentConfigurationDocument, RelationshipRoutingPolicy } from "./co
 import { createDefaultAgentConfiguration, DEFAULT_JOURNEY_POLICY, DEFAULT_RELATIONSHIP_ROUTING, DEFAULT_RESPONSE_STYLE } from "./defaults";
 import { currentCompanyId, withCurrentCompany, scopedSettingsId } from "../../companies/context";
 import { tenantDb } from "../../companies/tenant-db";
+import { validatePlanPayment, withoutPaymentConditions } from "../../payments/plan-payment";
 
 const DB_NAME = "ai_secretary";
 const COLLECTION_NAME = "assistant_agent_config";
@@ -117,6 +118,10 @@ export async function updateAgentConfiguration(input: {
     ...withoutMetadata(input.configuration),
     toolGuidance: normalizeToolGuidance(input.configuration.toolGuidance),
     relationshipRouting: normalizeRelationshipRouting(input.configuration.relationshipRouting),
+    // A plan with its own payment rule no longer carries the legacy "payment = paid" prerequisite.
+    schedulingPlans: input.configuration.schedulingPlans.map((plan) => plan.payment
+      ? { ...plan, payment: validatePlanPayment(plan.payment, plan.name), prerequisites: withoutPaymentConditions(plan.prerequisites) }
+      : plan),
   };
   const calendarSettings = await getCalendarSettings();
   validateConfiguration(configuration, new Set(calendarSettings.eventTypes.map((eventType) => eventType.key)));

@@ -27,7 +27,7 @@ vi.mock("../qualification/triggers", () => ({
 }));
 
 import {
-  confirmAppointmentHolds, extendAppointmentHolds,
+  attachPaymentToAppointments, confirmAppointmentHolds, extendAppointmentHolds,
   findCustomerAppointments, findUpcomingCustomerAppointments, getCalendarSettings, updateCalendarSettings,
   type AppointmentDocument, type CalendarSettingsDocument,
 } from "./calendar";
@@ -181,6 +181,48 @@ describe("deposit confirmation and holds", () => {
     expect(update.$set).toMatchObject({ status: "scheduled", confirmationStatus: "pending", paymentRequestId, paidAt: expect.any(Date) });
     expect(update.$unset).toEqual({ holdExpiresAt: "", schedulingOptionId: "" });
     expect(confirmed).toMatchObject({ status: "scheduled", confirmationStatus: "pending", paymentRequestId });
+  });
+
+  it("confirms only the booking the deposit was requested for", async () => {
+    const paymentRequestId = new ObjectId();
+    const allocated = held(new Date(Date.now() + 3_600_000));
+    mocks.toArray.mockResolvedValueOnce([allocated]);
+    mocks.updateMany.mockResolvedValue({ modifiedCount: 1 });
+    const paidAt = new Date("2026-10-01T12:00:00Z");
+
+    const confirmed = await confirmAppointmentHolds(customerId, { paymentRequestId, appointmentIds: [allocated._id], paidAt });
+
+    expect(mocks.find).toHaveBeenCalledWith(expect.objectContaining({ customerId, status: "held", _id: { $in: [allocated._id] } }));
+    expect(mocks.find).toHaveBeenCalledTimes(1);
+    expect(mocks.updateMany.mock.calls[0][1].$set).toMatchObject({ paymentRequestId, paidAt });
+    expect(confirmed.map((appointment) => appointment._id)).toEqual([allocated._id]);
+  });
+
+  it("confirms the patient's current holds when the allocated hold was replaced by another time", async () => {
+    const current = held(new Date(Date.now() + 3_600_000));
+    mocks.toArray.mockResolvedValueOnce([]).mockResolvedValueOnce([current]);
+    mocks.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    const confirmed = await confirmAppointmentHolds(customerId, { paymentRequestId: new ObjectId(), appointmentIds: [new ObjectId()] });
+
+    expect(confirmed.map((appointment) => appointment._id)).toEqual([current._id]);
+  });
+
+  it("links a payment set by staff: held appointments become 'A confirmar', bookings only record it", async () => {
+    const paymentRequestId = new ObjectId();
+    const hold = held(new Date(Date.now() + 3_600_000));
+    const booked = new ObjectId();
+    mocks.toArray.mockResolvedValueOnce([{ _id: hold._id }]);
+    mocks.updateMany.mockResolvedValue({ matchedCount: 2 });
+    const paidAt = new Date("2026-10-01T12:00:00Z");
+
+    await attachPaymentToAppointments({ customerId, appointmentIds: [hold._id, booked], paymentRequestId, paidAt });
+
+    const [[heldFilter, heldUpdate], [bookedFilter, bookedUpdate]] = mocks.updateMany.mock.calls;
+    expect(heldFilter).toMatchObject({ _id: { $in: [hold._id] }, status: "held" });
+    expect(heldUpdate.$set).toMatchObject({ status: "scheduled", confirmationStatus: "pending", paymentRequestId, paidAt });
+    expect(bookedFilter).toMatchObject({ _id: { $in: [hold._id, booked] }, customerId, status: { $in: ["scheduled", "completed"] } });
+    expect(bookedUpdate.$set).toMatchObject({ paymentRequestId, paidAt });
   });
 
   it("extends holds until the payment expires, never past the appointment's start and never shortening them", async () => {

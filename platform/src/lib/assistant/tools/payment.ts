@@ -1,11 +1,11 @@
 import "server-only";
 
-import { extendHeldSchedulingPlanOptions } from "../../calendar/plans";
+import { extendHeldSchedulingPlanOptions, getHeldSchedulingPlanOption } from "../../calendar/plans";
 import { currentCompanyId } from "../../companies/context";
 import { legacyCompanyId } from "../../companies/ownership";
 import {
-  createMercadoPagoPaymentRequest, createPaymentRequest, enabledPaymentMethods, getPaymentProviderConfiguration,
-  MERCADO_PAGO_WEBHOOK_PATH, type MercadoPagoChannel, type PaymentRequestDocument,
+  createMercadoPagoPaymentRequest, createPaymentRequest, depositForPlan, enabledPaymentMethods, getPaymentProviderConfiguration,
+  MERCADO_PAGO_WEBHOOK_PATH, type MercadoPagoChannel, type PaymentAllocation, type PaymentRequestDocument,
 } from "../../payments";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
 
@@ -21,6 +21,24 @@ export async function executePaymentRequestTool(
   }
   try {
     const settings = context.configuration;
+    // The deposit is for one booking: the slots the patient is holding, under that plan's rule and amount.
+    const held = await getHeldSchedulingPlanOption(context.customerId);
+    if (!held) {
+      return validationError("booking", "held_booking_required",
+        "Não há reserva temporária ativa. Reserve o horário escolhido com calendar.hold antes de pedir o sinal.");
+    }
+    const plan = settings.schedulingPlans.find((item) => item.key === held.option.planKey);
+    const deposit = plan ? await depositForPlan(context.customerId, plan, settings.payment.signalAmountCents) : null;
+    if (!plan || !deposit?.required) {
+      return validationError("booking", "deposit_not_required",
+        "O plano desta reserva não exige sinal. Não peça pagamento; encaminhe para a equipe concluir o agendamento.");
+    }
+    const amountCents = deposit.amountCents;
+    const allocation: PaymentAllocation = {
+      planKey: plan.key,
+      schedulingOptionId: held.option._id,
+      appointmentIds: held.appointmentIds,
+    };
     const providerSettings = await getPaymentProviderConfiguration();
     const methods = enabledPaymentMethods(providerSettings);
     const requested = args.method === "pix" || args.method === "payment_link" ? args.method : null;
@@ -39,26 +57,29 @@ export async function executePaymentRequestTool(
       payment = usesMercadoPago && channel
         ? await createMercadoPagoPaymentRequest({
             customerId: context.customerId,
-            amountCents: settings.payment.signalAmountCents,
+            amountCents,
             payerEmail: typeof args.payerEmail === "string" ? args.payerEmail : "",
             payerName: context.customerName,
             channel,
             settings: providerSettings.mercadoPago,
             notificationUrl: await notificationUrl(),
+            allocation,
           })
         : await createPaymentRequest({
             customerId: context.customerId,
-            amountCents: settings.payment.signalAmountCents,
+            amountCents,
             pixKey: settings.payment.pixKey,
             recipientName: settings.payment.recipientName,
+            allocation,
           });
     } catch (error) {
       if (!usesMercadoPago || !providerSettings.humanFallbackEnabled) throw error;
       payment = await createPaymentRequest({
         customerId: context.customerId,
-        amountCents: settings.payment.signalAmountCents,
+        amountCents,
         pixKey: settings.payment.pixKey,
         recipientName: settings.payment.recipientName,
+        allocation,
       });
     }
 
@@ -68,6 +89,7 @@ export async function executePaymentRequestTool(
       await extendHeldSchedulingPlanOptions(
         context.customerId,
         new Date(payment.expiresAt.getTime() + (boleto ? BOLETO_CLEARING_MS : 0)),
+        held.option._id,
       );
     }
 
@@ -78,6 +100,7 @@ export async function executePaymentRequestTool(
         paymentRequestId: payment._id.toString(),
         status: payment.status,
         amountCents: payment.amountCents,
+        planName: plan.name,
         provider: payment.provider ?? "manual",
         channel: payment.provider === "mercado_pago" ? payment.channel ?? "pix" : "manual_pix",
         pixKey: payment.pixKeySnapshot,

@@ -3,7 +3,8 @@
 import { BookOpen, Braces, CalendarDays, ChevronDown, Database, Gauge, ListOrdered, MessageCircle, PenLine, Plus, Send, Trash2, UserCheck, Workflow, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import type { RelationshipRoutingPolicy } from "@/lib/assistant/agent/contracts";
+import type { PlanPaymentRequirement, RelationshipRoutingPolicy } from "@/lib/assistant/agent/contracts";
+import { formatBrl, PLAN_PAYMENT_LABELS, PLAN_PAYMENT_REQUIREMENTS } from "@/lib/payments/plan-payment";
 
 type Tab = "conversation" | "style" | "journey" | "knowledge" | "data" | "scheduling" | "tools" | "limits" | "qualification" | "follow_up" | "automation" | "preview";
 type Operator = "eq" | "neq" | "is_present" | "is_absent" | "gte" | "lte";
@@ -49,6 +50,7 @@ interface AgentConfiguration {
     steps: Array<{ key: string; eventTypeKey: string; label: string; required: boolean }>;
     constraints: Constraint[];
     prerequisites: ConditionGroup;
+    payment: { requirement: PlanPaymentRequirement; amountCents: number };
     proposalExpiryMinutes: number;
     holdDurationMinutes: number;
   }>;
@@ -174,8 +176,13 @@ const collectableDataFields = [
 const schedulingConditionFields: ConditionField[] = [
   ...customerConditionFields,
   { key: "customer.missingFieldsCount", label: "Quantidade de dados obrigatórios pendentes", group: "Cadastro", description: "Número calculado a partir dos campos obrigatórios da aba Dados." },
-  { key: "operations.paymentStatus", label: "Status do pagamento", group: "Operação", description: "Estado da solicitação de sinal mais recente.", values: [{ value: "awaiting_human_confirmation", label: "Aguardando confirmação" }, { value: "paid", label: "Pago" }, { value: "rejected", label: "Rejeitado" }] },
 ];
+
+const PLAN_PAYMENT_HELP: Record<PlanPaymentRequirement, string> = {
+  always: "Cada agendamento deste plano fica reservado até o sinal ser pago; o pagamento confirma o agendamento (fica \"A confirmar\").",
+  first_time: "Só cobra o sinal de quem nunca pagou um sinal nesta clínica, em qualquer plano. Quem já pagou agenda direto.",
+  none: "O agendamento é confirmado direto, sem cobrança. A IA não fala de pagamento neste plano.",
+};
 
 const automationConditionFields: ConditionField[] = [
   { key: "event.type", label: "Tipo do evento", group: "Evento", description: "Evento que disparou a regra." },
@@ -341,7 +348,7 @@ export function AgentStudio() {
       {tab === "journey" && <JourneyEditor value={agent} change={setAgent} />}
       {tab === "knowledge" && <Field label="Conhecimento autorizado" fieldKey="knowledge"><textarea rows={22} value={agent.knowledge} onChange={(event) => setAgent({ ...agent, knowledge: event.target.value })} className={`${textareaClass} font-mono text-xs`} /></Field>}
       {tab === "data" && <DataEditor rules={agent.dataCollectionRules} change={(dataCollectionRules) => setAgent({ ...agent, dataCollectionRules })} />}
-      {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} bookableEventTypeKeys={agent.bookableEventTypeKeys} eventTypes={payload.calendarEventTypes} change={(schedulingPlans, bookableEventTypeKeys) => setAgent({ ...agent, schedulingPlans, bookableEventTypeKeys })} />}
+      {tab === "scheduling" && <SchedulingEditor plans={agent.schedulingPlans} bookableEventTypeKeys={agent.bookableEventTypeKeys} eventTypes={payload.calendarEventTypes} defaultDepositCents={agent.payment.signalAmountCents} change={(schedulingPlans, bookableEventTypeKeys) => setAgent({ ...agent, schedulingPlans, bookableEventTypeKeys })} />}
       {tab === "tools" && <ToolsEditor tools={payload.availableTools} enabled={agent.enabledTools} guidance={agent.toolGuidance} change={(enabledTools, toolGuidance) => setAgent({ ...agent, enabledTools, toolGuidance })} />}
       {tab === "limits" && <LimitsEditor value={agent} change={setAgent} paymentStatus={payload.paymentStatus} />}
       {tab === "qualification" && <QualificationEditor value={qualification} change={setQualification} />}
@@ -451,12 +458,12 @@ function DataEditor({ rules, change }: { rules: AgentConfiguration["dataCollecti
   </div>;
 }
 
-function SchedulingEditor({ plans, bookableEventTypeKeys, eventTypes, change }: { plans: AgentConfiguration["schedulingPlans"]; bookableEventTypeKeys: string[]; eventTypes: StudioPayload["calendarEventTypes"]; change: (plans: AgentConfiguration["schedulingPlans"], bookableEventTypeKeys: string[]) => void }) {
+function SchedulingEditor({ plans, bookableEventTypeKeys, eventTypes, defaultDepositCents, change }: { plans: AgentConfiguration["schedulingPlans"]; bookableEventTypeKeys: string[]; eventTypes: StudioPayload["calendarEventTypes"]; defaultDepositCents: number; change: (plans: AgentConfiguration["schedulingPlans"], bookableEventTypeKeys: string[]) => void }) {
   function updatePlan(index: number, patch: Partial<AgentConfiguration["schedulingPlans"][number]>) {
     change(plans.map((plan, planIndex) => planIndex === index ? { ...plan, ...patch } : plan), bookableEventTypeKeys);
   }
   function addPlan() {
-    change([...plans, { key: `plan_${plans.length + 1}`, name: "Novo plano", description: "", enabled: false, steps: [{ key: "step_1", eventTypeKey: bookableEventTypeKeys[0] ?? eventTypes[0]?.key ?? "", label: "Etapa 1", required: true }], constraints: [], prerequisites: {}, proposalExpiryMinutes: 60, holdDurationMinutes: 48 * 60 }], bookableEventTypeKeys);
+    change([...plans, { key: `plan_${plans.length + 1}`, name: "Novo plano", description: "", enabled: false, steps: [{ key: "step_1", eventTypeKey: bookableEventTypeKeys[0] ?? eventTypes[0]?.key ?? "", label: "Etapa 1", required: true }], constraints: [], prerequisites: {}, payment: { requirement: "none", amountCents: defaultDepositCents }, proposalExpiryMinutes: 60, holdDurationMinutes: 48 * 60 }], bookableEventTypeKeys);
   }
   const blockedPlans = plans.filter((plan) => plan.enabled && plan.steps.some((step) => !bookableEventTypeKeys.includes(step.eventTypeKey)));
   return <div className="space-y-6">
@@ -490,10 +497,30 @@ function SchedulingEditor({ plans, bookableEventTypeKeys, eventTypes, change }: 
         <Field label="Expiração da proposta (minutos)" fieldKey="proposalExpiryMinutes"><input type="number" min={1} max={10080} value={plan.proposalExpiryMinutes} onChange={(event) => updatePlan(index, { proposalExpiryMinutes: Number(event.target.value) })} className={inputClass} /></Field>
         <Field label="Reserva aguardando sinal (horas)" fieldKey="holdDurationMinutes"><input type="number" min={1} max={168} value={plan.holdDurationMinutes / 60} onChange={(event) => updatePlan(index, { holdDurationMinutes: Math.round(Number(event.target.value) * 60) })} className={inputClass} /><p className="mt-1 text-[11px] leading-4 text-stone">Começa quando o cliente confirma uma opção. O horário é liberado se o sinal não for confirmado neste prazo.</p></Field>
       </div></div>
+      <PlanPaymentEditor value={plan.payment} change={(payment) => updatePlan(index, { payment })} />
       <ConstraintEditor constraints={plan.constraints} steps={plan.steps} change={(constraints) => updatePlan(index, { constraints })} />
       <div><p className="text-sm font-semibold text-slate-ink">Pré-requisitos</p><p className="mt-1 text-xs text-stone">Escolha um dado disponível, a comparação e o valor esperado.</p><ConditionEditor value={plan.prerequisites} fields={schedulingConditionFields} change={(prerequisites) => updatePlan(index, { prerequisites })} /></div>
     </section>)}
   </div>;
+}
+
+function PlanPaymentEditor({ value, change }: { value: AgentConfiguration["schedulingPlans"][number]["payment"]; change: (value: AgentConfiguration["schedulingPlans"][number]["payment"]) => void }) {
+  const [amountText, setAmountText] = useState((value.amountCents / 100).toFixed(2).replace(".", ","));
+  function changeAmount(text: string) {
+    setAmountText(text);
+    // "1.234,50" (Brazilian) or "1234.50".
+    const reais = Number(text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text);
+    if (Number.isFinite(reais)) change({ ...value, amountCents: Math.round(reais * 100) });
+  }
+  return <section className="rounded-lg border border-mist bg-cloud/40 p-4">
+    <p className="text-sm font-semibold text-slate-ink">Pagamento (sinal)</p>
+    <p className="mt-1 text-xs leading-5 text-stone">Um sinal cobre todos os eventos deste agendamento. Meios aceitos e chave Pix ficam em Configurações › Sistema.</p>
+    <div className="mt-3 grid gap-3 md:grid-cols-[1fr_200px]">
+      <Field label="Exigência" fieldKey="payment.requirement"><select value={value.requirement} onChange={(event) => change({ ...value, requirement: event.target.value as PlanPaymentRequirement })} className={inputClass}>{PLAN_PAYMENT_REQUIREMENTS.map((requirement) => <option key={requirement} value={requirement}>{PLAN_PAYMENT_LABELS[requirement]}</option>)}</select></Field>
+      <Field label="Valor do sinal (R$)" fieldKey="payment.amountCents"><input inputMode="decimal" disabled={value.requirement === "none"} value={amountText} onChange={(event) => changeAmount(event.target.value)} onBlur={() => setAmountText((value.amountCents / 100).toFixed(2).replace(".", ","))} className={inputClass} /></Field>
+    </div>
+    <p className="mt-2 text-xs leading-5 text-stone">{PLAN_PAYMENT_HELP[value.requirement]}</p>
+  </section>;
 }
 
 function ConstraintEditor({ constraints, steps, change }: { constraints: Constraint[]; steps: AgentConfiguration["schedulingPlans"][number]["steps"]; change: (constraints: Constraint[]) => void }) {
@@ -535,10 +562,12 @@ function LimitsEditor({ value, change, paymentStatus }: { value: AgentConfigurat
       <h2 className="text-sm font-semibold text-slate-ink">Pagamento · somente leitura</h2>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         <div>
-          <p className="text-sm text-stone">Valor do sinal</p>
-          <p className="mt-1 text-lg font-semibold text-slate-ink">{new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value.payment.signalAmountCents / 100)}</p>
-          <p className="mt-1 text-xs leading-5 text-stone">Mesmo valor para Mercado Pago, modo humano e fallback. Cobranças pendentes mantêm o valor original.</p>
-          <Link href="/dashboard/settings/system#payment-settings-title" className="mt-2 inline-block text-sm font-semibold text-deep-teal hover:underline">Editar nas configurações de pagamento</Link>
+          <p className="text-sm text-stone">Sinal por plano de agendamento</p>
+          {value.schedulingPlans.length === 0
+            ? <p className="mt-1 text-sm text-stone">Nenhum plano configurado.</p>
+            : <ul className="mt-1 space-y-1 text-sm">{value.schedulingPlans.map((plan) => <li key={plan.key}><strong className="text-slate-ink">{plan.name}</strong>: {plan.payment.requirement === "none" ? "sem sinal" : `${formatBrl(plan.payment.amountCents)} · ${PLAN_PAYMENT_LABELS[plan.payment.requirement].toLowerCase()}`}</li>)}</ul>}
+          <p className="mt-1 text-xs leading-5 text-stone">Edite na aba Agenda, em cada plano. Cobranças pendentes mantêm o valor original.</p>
+          <Link href="/dashboard/settings/system#payment-settings-title" className="mt-2 inline-block text-sm font-semibold text-deep-teal hover:underline">Meios de pagamento e chave Pix</Link>
         </div>
         <div className="space-y-2 text-sm text-stone">
           <p>Confirmação ativa: <strong className="text-slate-ink">{paymentStatus.activeProvider === "mercado_pago" ? "Mercado Pago" : "Humana"}</strong></p>

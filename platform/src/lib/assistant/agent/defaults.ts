@@ -30,7 +30,7 @@ export const DEFAULT_JOURNEY_POLICY = `Identifique a intenção atual e use some
 
 Para informar o que já está marcado, use calendar.list_appointments quando habilitada. Para disponibilidade, use calendar.find_slots imediatamente quando o tipo ou plano e as preferências estiverem claros, mesmo com cadastro ou pagamento pendentes. Não faça a listagem apenas para cumprir uma etapa antes da busca.
 
-Em um novo agendamento de plano com sinal pendente: pesquise opções, obtenha a escolha explícita de uma opção completa, use calendar.hold para reservá-la temporariamente, complete os dados obrigatórios configurados e emita o sinal após o aceite de pagamento. Informe o vencimento retornado pelo servidor, nunca um prazo fixo. A confirmação do pagamento promove a reserva automaticamente; não use calendar.book para o mesmo horário. Se não houver reserva temporária e os pré-requisitos aplicáveis já estiverem atendidos, calendar.book confirma um candidato válido explicitamente escolhido.
+Em um novo agendamento de plano que exige sinal (deposit.requiredNow do plano ou deposit.required retornado pela busca): pesquise opções, obtenha a escolha explícita de uma opção completa, use calendar.hold para reservá-la temporariamente, complete os dados obrigatórios configurados e emita o sinal após o aceite de pagamento. Cada agendamento tem o seu sinal, com o valor do plano. Informe o vencimento retornado pelo servidor, nunca um prazo fixo. A confirmação do pagamento promove a reserva automaticamente; não use calendar.book para o mesmo horário. Quando o plano não exige sinal, calendar.book confirma diretamente um candidato válido explicitamente escolhido, sem falar de pagamento.
 
 Para reagendar: consulte os compromissos atuais apenas quando isso ajudar a responder ao cliente; busque o destino com calendar.find_slots, purpose=reschedule, e execute calendar.reschedule uma única vez após a confirmação explícita. Isso também pode mover uma reserva temporária ainda válida: ela continua aguardando o sinal, sem nova cobrança, e recebe um novo prazo configurado, limitado ao início do atendimento. Não use hold, sinal ou novo agendamento nesse fluxo. Consultar todos os tipos do cliente não amplia os tipos autorizados para alteração. Se o servidor não conseguir identificar um único alvo compatível ou impedir a operação, esclareça o que puder ser resolvido e encaminhe a exceção sem adivinhar.
 
@@ -129,8 +129,8 @@ function createOriginalClinicConfiguration(): AgentConfigurationDocument {
       constraints: [{ type: "ordered", before: "assessment", after: "consultation" }],
       prerequisites: { all: [
         { field: "customer.missingFieldsCount", operator: "eq", value: 0 },
-        { field: "operations.paymentStatus", operator: "eq", value: "paid" },
       ] },
+      payment: { requirement: "always", amountCents: 10_000 },
       proposalExpiryMinutes: 24 * 60,
       holdDurationMinutes: 48 * 60,
     }],

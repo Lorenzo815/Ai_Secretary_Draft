@@ -3,7 +3,10 @@ import "server-only";
 import { DateTime } from "luxon";
 import type { CustomerProfileSnapshot } from "../../crm";
 import { getActiveSchedulingPlanOption, getCalendarSettings } from "../../calendar";
-import { enabledPaymentMethods, getLatestPaymentRequest, getPaymentProviderConfiguration } from "../../payments";
+import {
+  depositForPlan, enabledPaymentMethods, findUnallocatedPaidPayment, getLatestPaymentRequest, getPaymentProviderConfiguration,
+  withoutPaymentConditions,
+} from "../../payments";
 import type { CustomerDocument } from "../../crm";
 import { getCustomerProfileSnapshot } from "../../crm";
 import type { AgentConfigurationDocument, AgentRuntimeContext, DataCollectionRule } from "./contracts";
@@ -16,11 +19,12 @@ export async function buildAgentRuntimeContext(input: {
   followUpAttempt?: number;
   iteration: number;
 }): Promise<AgentRuntimeContext> {
-  const [calendarSettings, payment, activeSchedulingOption, paymentProvider] = await Promise.all([
+  const [calendarSettings, payment, activeSchedulingOption, paymentProvider, unallocatedPaidDeposit] = await Promise.all([
     getCalendarSettings(),
     getLatestPaymentRequest(input.customer._id),
     getActiveSchedulingPlanOption(input.customer._id),
     getPaymentProviderConfiguration(),
+    findUnallocatedPaidPayment(input.customer._id),
   ]);
   const profile = getCustomerProfileSnapshot(input.customer);
   const configuredMissingFields = getConfiguredMissingFields(profile, input.configuration.dataCollectionRules);
@@ -28,6 +32,14 @@ export async function buildAgentRuntimeContext(input: {
   const bookablePlans = input.configuration.schedulingPlans.filter((plan) => (
     plan.enabled && plan.steps.every((step) => bookableEventTypes.has(step.eventTypeKey))
   ));
+  const plansWithDeposit = await Promise.all(bookablePlans.map(async (plan) => {
+    const deposit = await depositForPlan(input.customer._id, plan, input.configuration.payment.signalAmountCents);
+    return {
+      ...plan,
+      prerequisites: withoutPaymentConditions(plan.prerequisites),
+      deposit: { requirement: deposit.requirement, amountCents: deposit.amountCents, requiredNow: deposit.required },
+    };
+  }));
   const activeOptionPlanKey = activeSchedulingOption && typeof activeSchedulingOption === "object"
     ? (activeSchedulingOption as { planKey?: unknown }).planKey
     : null;
@@ -56,6 +68,7 @@ export async function buildAgentRuntimeContext(input: {
       paymentMethods: enabledPaymentMethods(paymentProvider),
       paymentLinkMethods: paymentProvider.mercadoPago.paymentLink ? paymentProvider.mercadoPago.linkMethods : [],
       maxInstallments: paymentProvider.mercadoPago.maxInstallments,
+      unallocatedPaidDeposit: unallocatedPaidDeposit ? { amountCents: unallocatedPaidDeposit.amountCents } : null,
       activeSchedulingOption: visibleSchedulingOption,
     },
     clinic: {
@@ -73,7 +86,7 @@ export async function buildAgentRuntimeContext(input: {
         id: resource.id,
         name: resource.name,
       })),
-      schedulingPlans: bookablePlans,
+      schedulingPlans: plansWithDeposit,
     },
     execution: {
       trigger: input.trigger,

@@ -19,7 +19,7 @@ export interface PaymentTransactionDocument {
   customerId: ObjectId;
   provider: "mercado_pago" | "manual";
   /** How the request was offered: Pix code in the chat, payment link, or the clinic's own Pix key. */
-  channel: "pix" | "payment_link" | "manual_pix";
+  channel: "pix" | "payment_link" | "manual_pix" | "manual_entry";
   providerPaymentId: string;
   status: string;
   statusDetail?: string;
@@ -35,7 +35,7 @@ export interface PaymentTransactionDocument {
   liveMode?: boolean | null;
   occurredAt: Date;
   recordedAt: Date;
-  source: "mercado_pago_webhook" | "staff_review";
+  source: "mercado_pago_webhook" | "staff_review" | "staff_entry";
   reviewedBy?: string;
   note?: string;
 }
@@ -133,4 +133,48 @@ export async function listPaymentTransactions(input: { customerId?: ObjectId; li
     .sort({ occurredAt: -1 })
     .limit(Math.min(Math.max(input.limit ?? 100, 1), 500))
     .toArray();
+}
+
+/** A payment received outside the system and registered by staff. */
+export async function recordManualEntry(input: {
+  paymentRequestId: ObjectId;
+  customerId: ObjectId;
+  amountCents: number;
+  method: string;
+  receivedAt: Date;
+  createdBy: string;
+  note?: string;
+}) {
+  await insertOnce({
+    key: `manual_entry:${input.paymentRequestId.toHexString()}:approved`,
+    paymentRequestId: input.paymentRequestId,
+    customerId: input.customerId,
+    provider: "manual",
+    channel: "manual_entry",
+    providerPaymentId: input.paymentRequestId.toHexString(),
+    status: "approved",
+    paymentMethod: input.method,
+    currency: "BRL",
+    amountCents: input.amountCents,
+    paidAmountCents: input.amountCents,
+    occurredAt: input.receivedAt,
+    source: "staff_entry",
+    reviewedBy: input.createdBy,
+    note: input.note?.trim().slice(0, 500) || undefined,
+  });
+}
+
+/** Ledger rows for a set of payment requests (fees, refunds, attempts), grouped by request. */
+export async function listTransactionsForRequests(paymentRequestIds: ObjectId[]) {
+  if (paymentRequestIds.length === 0) return new Map<string, PaymentTransactionDocument[]>();
+  const rows = await (await getCollection())
+    .find({ paymentRequestId: { $in: paymentRequestIds } })
+    .sort({ occurredAt: 1 })
+    .toArray();
+  const grouped = new Map<string, PaymentTransactionDocument[]>();
+  for (const row of rows) {
+    const key = row.paymentRequestId.toHexString();
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+  }
+  return grouped;
 }

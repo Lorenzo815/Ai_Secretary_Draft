@@ -10,6 +10,11 @@ const {
   getCalendarSettings,
   getCustomerProfileSnapshot,
   getLatestPaymentRequest,
+  findUnallocatedPaidPayment,
+  hasPaidDepositBefore,
+  setPaymentAppointments,
+  attachPaymentToAppointments,
+  bookSchedulingPlanOption,
   getSchedulingPlanOption,
   holdSchedulingPlanOption,
   rescheduleSchedulingPlanOption,
@@ -21,12 +26,18 @@ const {
   getCalendarSettings: vi.fn(),
   getCustomerProfileSnapshot: vi.fn(),
   getLatestPaymentRequest: vi.fn(),
+  findUnallocatedPaidPayment: vi.fn(),
+  hasPaidDepositBefore: vi.fn(),
+  setPaymentAppointments: vi.fn(),
+  attachPaymentToAppointments: vi.fn(),
+  bookSchedulingPlanOption: vi.fn(),
   getSchedulingPlanOption: vi.fn(),
   holdSchedulingPlanOption: vi.fn(),
   rescheduleSchedulingPlanOption: vi.fn(),
 }));
 
 vi.mock("../../calendar", () => ({
+  attachPaymentToAppointments,
   bookAppointment: vi.fn(),
   findAvailableSlots: vi.fn(),
   findCustomerAppointments,
@@ -35,7 +46,7 @@ vi.mock("../../calendar", () => ({
   updateCustomerAppointments: vi.fn(),
 }));
 vi.mock("../../calendar/plans", () => ({
-  bookSchedulingPlanOption: vi.fn(),
+  bookSchedulingPlanOption,
   findSchedulingPlanOption: vi.fn(),
   findSchedulingPlanOptions,
   getActiveSchedulingPlanOption: vi.fn(),
@@ -47,7 +58,21 @@ vi.mock("../../crm", () => ({
   findCustomerById,
   getCustomerProfileSnapshot,
 }));
-vi.mock("../../payments", () => ({ getLatestPaymentRequest }));
+vi.mock("../../payments", async () => {
+  const planPayment = await import("../../payments/plan-payment");
+  return {
+    ...planPayment,
+    getLatestPaymentRequest,
+    findUnallocatedPaidPayment,
+    setPaymentAppointments,
+    depositForPlan: async (customerId: ObjectId, plan: Parameters<typeof planPayment.resolvePlanPayment>[0] & { key: string }, legacyAmountCents: number) => {
+      const payment = plan.key.startsWith("event:")
+        ? { requirement: "none" as const, amountCents: legacyAmountCents }
+        : planPayment.resolvePlanPayment(plan, legacyAmountCents);
+      return { ...payment, required: planPayment.depositRequired(payment, { hasPaidDepositBefore: await hasPaidDepositBefore(customerId) }) };
+    },
+  };
+});
 
 import { executeRegisteredCalendarTool, executeUpcomingAppointmentsTool } from "./calendar";
 import { executeAgentTool } from "../agent/tool-policy";
@@ -76,6 +101,8 @@ describe("calendar tools", () => {
       settings: { timezone: "America/Sao_Paulo" },
       options: [],
     });
+    findUnallocatedPaidPayment.mockResolvedValue(null);
+    hasPaidDepositBefore.mockResolvedValue(false);
   });
 
   describe("runtime-scoped upcoming appointment lookup", () => {
@@ -328,6 +355,7 @@ describe("calendar tools", () => {
       ok: true,
       tool: "calendar.find_slots",
       candidates: [],
+      deposit: { required: true, amountCents: 10_000 },
       unavailability: {
         cause: "undetermined",
         scope: "complete_criteria",
@@ -375,8 +403,7 @@ describe("calendar tools", () => {
       planKey: "first_visit",
     });
     findCustomerById.mockResolvedValue({ _id: customerId });
-    getCustomerProfileSnapshot.mockReturnValue({});
-    getLatestPaymentRequest.mockResolvedValue(null);
+    getCustomerProfileSnapshot.mockReturnValue({ missingFields: ["fullName"] });
 
     const execution = await executeRegisteredCalendarTool("book", context, {
       candidateId: new ObjectId().toString(),
@@ -390,6 +417,94 @@ describe("calendar tools", () => {
     });
     expect(result.errors[0]).toMatchObject({ field: "prerequisites" });
     expect(findSchedulingPlanOptions).not.toHaveBeenCalled();
+  });
+
+  describe("deposits per booking", () => {
+    const optionId = new ObjectId();
+    const createdIds = [new ObjectId(), new ObjectId()];
+    const bookingOption = { _id: optionId, customerId, planKey: "first_visit", purpose: "book", expiresAt: new Date("2026-10-01T12:00:00Z"), steps: [] };
+
+    beforeEach(() => {
+      getSchedulingPlanOption.mockResolvedValue(bookingOption);
+      findCustomerById.mockResolvedValue({ _id: customerId });
+      getCustomerProfileSnapshot.mockReturnValue({ missingFields: [] });
+      bookSchedulingPlanOption.mockResolvedValue({
+        option: bookingOption, appointmentGroupId: new ObjectId(), appointmentIds: createdIds, settings: { timezone: "America/Sao_Paulo" },
+      });
+    });
+
+    function withPlanPayment(requirement: "always" | "first_time" | "none") {
+      const copy = structuredClone(configuration);
+      copy.schedulingPlans[0].payment = { requirement, amountCents: 15_000 };
+      return { ...context, configuration: copy };
+    }
+
+    it("refuses to book a plan whose deposit is due and points to hold + deposit", async () => {
+      const result = JSON.parse((await executeRegisteredCalendarTool("book", withPlanPayment("always"), {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      expect(result).toMatchObject({ ok: false, errors: [expect.objectContaining({ field: "payment" })] });
+      expect(result.errors[0].message).toContain("150,00");
+      expect(bookSchedulingPlanOption).not.toHaveBeenCalled();
+    });
+
+    it("books directly when the plan has no deposit", async () => {
+      const result = JSON.parse((await executeRegisteredCalendarTool("book", withPlanPayment("none"), {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      expect(result).toMatchObject({ ok: true, tool: "calendar.book" });
+      expect(attachPaymentToAppointments).not.toHaveBeenCalled();
+    });
+
+    it("books a first-time plan directly for a patient who already paid a deposit", async () => {
+      hasPaidDepositBefore.mockResolvedValue(true);
+
+      const result = JSON.parse((await executeRegisteredCalendarTool("book", withPlanPayment("first_time"), {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      expect(result).toMatchObject({ ok: true });
+    });
+
+    it("applies a paid deposit that confirmed nothing to the new booking", async () => {
+      const credit = { _id: new ObjectId(), amountCents: 15_000, paidAt: new Date("2026-10-01T12:00:00Z") };
+      findUnallocatedPaidPayment.mockResolvedValue(credit);
+
+      const result = JSON.parse((await executeRegisteredCalendarTool("book", withPlanPayment("always"), {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      expect(result).toMatchObject({ ok: true, depositApplied: { paymentRequestId: credit._id.toHexString(), amountCents: 15_000 } });
+      expect(attachPaymentToAppointments).toHaveBeenCalledWith({
+        customerId, appointmentIds: createdIds, paymentRequestId: credit._id, paidAt: credit.paidAt,
+      });
+      expect(setPaymentAppointments).toHaveBeenCalledWith(credit._id, createdIds);
+    });
+
+    it("doesn't hold when the plan needs no deposit", async () => {
+      const result = JSON.parse((await executeRegisteredCalendarTool("hold", withPlanPayment("none"), {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      expect(result).toMatchObject({ ok: false, errors: [expect.objectContaining({ field: "payment" })] });
+      expect(holdSchedulingPlanOption).not.toHaveBeenCalled();
+    });
+
+    it("ignores the legacy payment prerequisite: the plan's rule decides", async () => {
+      const copy = structuredClone(configuration);
+      delete copy.schedulingPlans[0].payment;
+      copy.schedulingPlans[0].prerequisites = { all: [{ field: "operations.paymentStatus", operator: "eq", value: "paid" }] };
+
+      const result = JSON.parse((await executeRegisteredCalendarTool("book", { ...context, configuration: copy }, {
+        candidateId: optionId.toHexString(), confirmedByCustomer: true,
+      }))!.output);
+
+      // Legacy plans with that prerequisite read as "always", with the clinic-wide amount.
+      expect(result).toMatchObject({ ok: false, errors: [expect.objectContaining({ field: "payment" })] });
+      expect(result.errors[0].message).toContain("100,00");
+    });
   });
 
   it.each(["held", "scheduled"])("binds a unique %s group to server-side rescheduling candidates", async (status) => {
@@ -473,7 +588,6 @@ describe("calendar tools", () => {
     getCustomerProfileSnapshot.mockReturnValue({
       missingFields: ["relationshipStatus", "fullName", "birthDate", "cpf", "postalCode", "addressNumber", "profession"],
     });
-    getLatestPaymentRequest.mockResolvedValue(null);
     holdSchedulingPlanOption.mockResolvedValue({
       option,
       appointmentGroupId: new ObjectId(),
@@ -490,6 +604,7 @@ describe("calendar tools", () => {
       ok: true,
       tool: "calendar.hold",
       holdExpiresAt: expiresAt.toISOString(),
+      deposit: { amountCents: 10_000 },
     });
     expect(holdSchedulingPlanOption).toHaveBeenCalledWith(expect.objectContaining({
       customerId,
@@ -532,8 +647,7 @@ describe("calendar tools", () => {
       _id: new ObjectId(), planKey: "first_visit", purpose: "reschedule", targetAppointmentStatus: "scheduled",
     });
     findCustomerById.mockResolvedValue({ _id: customerId });
-    getCustomerProfileSnapshot.mockReturnValue({});
-    getLatestPaymentRequest.mockResolvedValue(null);
+    getCustomerProfileSnapshot.mockReturnValue({ missingFields: ["fullName"] });
 
     const result = await executeRegisteredCalendarTool("reschedule", context, {
       candidateId: new ObjectId().toHexString(), confirmedByCustomer: true,
@@ -582,7 +696,7 @@ describe("calendar tools", () => {
     expect(holdSchedulingPlanOption).not.toHaveBeenCalled();
   });
 
-  it("does not hold an option after payment confirmation", async () => {
+  it("does not hold an option when a paid deposit is waiting for a booking", async () => {
     const optionId = new ObjectId();
     getSchedulingPlanOption.mockResolvedValue({
       _id: optionId,
@@ -592,7 +706,7 @@ describe("calendar tools", () => {
       status: "proposed",
       expiresAt: new Date("2026-09-23T15:00:00.000Z"),
     });
-    getLatestPaymentRequest.mockResolvedValue({ status: "paid" });
+    findUnallocatedPaidPayment.mockResolvedValue({ _id: new ObjectId(), status: "paid", amountCents: 10_000 });
 
     const execution = await executeRegisteredCalendarTool("hold", context, {
       candidateId: optionId.toString(),

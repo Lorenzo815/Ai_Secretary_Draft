@@ -13,6 +13,7 @@ export function pagePolicy(path: string): RoutePolicy {
     "/dashboard/conversas": "conversations", "/dashboard/calendario": "calendar",
     "/dashboard/fluxos": "studio", "/dashboard/operacoes": "operations",
     "/dashboard/whatsapp": "whatsapp", "/dashboard/settings/system": "system",
+    "/dashboard/financeiro": "finance",
   };
   return pages[path] ? [read(pages[path])] : null;
 }
@@ -39,6 +40,9 @@ export function routePolicy(path: string, method: string): RoutePolicy {
   if (path === "/api/calendar/access-events") return access("calendar", ["GET", "POST"]);
   if (/^\/api\/calendar\/(appointments|access-events)\/[a-f0-9]{24}$/i.test(path)) return access("calendar", ["PATCH", "DELETE"]);
   if (path === "/api/assistant/studio") return access("studio", ["GET", "PUT"]);
+  if (path === "/api/finance") return access("finance", ["GET", "POST"]);
+  if (path === "/api/finance/appointments") return access("finance", ["GET"]);
+  if (/^\/api\/finance\/[a-f0-9]{24}$/i.test(path)) return access("finance", ["PATCH"]);
   if (path === "/api/settings") return method === "DELETE" ? "admin" : access("system", ["PUT", "PATCH", "POST"]);
   if (path === "/api/settings/ai-models") return access("system", ["GET", "PUT", "PATCH", "POST"]);
   if (path === "/api/whatsapp/inbox") return access("conversations", ["GET", "PATCH"]);

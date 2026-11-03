@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   saveWhatsAppMessage: vi.fn(),
   sendTextMessage: vi.fn(),
   updateCustomerServiceStatus: vi.fn(),
+  setPaymentAppointments: vi.fn(),
 }));
+
+vi.mock("./payments", () => ({ setPaymentAppointments: mocks.setPaymentAppointments }));
 
 vi.mock("../automation", () => ({ emitAutomationEvent: mocks.emitAutomationEvent }));
 vi.mock("../calendar/plans", () => ({
@@ -49,12 +52,15 @@ describe("payment completion scheduling holds", () => {
     mocks.sendTextMessage.mockResolvedValue({ messageId: "wamid.1" });
   });
 
-  it("promotes an active hold after payment approval", async () => {
-    mocks.confirmHeldSchedulingPlanOptions.mockResolvedValue([{ _id: new ObjectId() }]);
+  it("promotes the held booking the deposit was requested for and records what it covers", async () => {
+    const heldIds = [new ObjectId()];
+    const paidAt = new Date("2026-10-01T12:00:00Z");
+    mocks.confirmHeldSchedulingPlanOptions.mockResolvedValue([{ _id: heldIds[0] }]);
 
-    await completePaymentTransition(payment, "paid");
+    await completePaymentTransition({ ...payment, appointmentIds: heldIds, paidAt }, "paid");
 
-    expect(mocks.confirmHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId, { paymentRequestId: payment._id });
+    expect(mocks.confirmHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId, { paymentRequestId: payment._id, appointmentIds: heldIds, paidAt });
+    expect(mocks.setPaymentAppointments).toHaveBeenCalledWith(payment._id, heldIds);
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
       body: "Sinal confirmado pela equipe. Seu horário está agendado; vamos confirmar sua presença mais perto da data.",
     }));
@@ -63,6 +69,9 @@ describe("payment completion scheduling holds", () => {
 
   it("explains that no appointment was confirmed when there is no active hold", async () => {
     await completePaymentTransition(payment, "paid");
+
+    // The deposit stays unallocated: it can confirm the next booking or be linked in Financeiro.
+    expect(mocks.setPaymentAppointments).toHaveBeenCalledWith(payment._id, []);
 
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
       body: "Sinal confirmado pela equipe. Como não havia mais uma reserva temporária ativa, nenhum horário foi confirmado automaticamente. Vamos escolher uma nova opção para concluir seu agendamento. Para quando você prefere?",
@@ -82,10 +91,11 @@ describe("payment completion scheduling holds", () => {
     }));
   });
 
-  it("releases active holds after payment rejection", async () => {
-    await completePaymentTransition({ ...payment, status: "rejected" }, "rejected");
+  it("releases the booking's holds after payment rejection", async () => {
+    const schedulingOptionId = new ObjectId();
+    await completePaymentTransition({ ...payment, status: "rejected", schedulingOptionId }, "rejected");
 
-    expect(mocks.releaseHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId);
+    expect(mocks.releaseHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId, schedulingOptionId);
     expect(mocks.updateCustomerServiceStatus).toHaveBeenCalledWith(customerId, "human_active");
     expect(mocks.confirmHeldSchedulingPlanOptions).not.toHaveBeenCalled();
     expect(mocks.sendTextMessage).not.toHaveBeenCalled();

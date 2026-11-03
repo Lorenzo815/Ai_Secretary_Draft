@@ -8,19 +8,28 @@ const mocks = vi.hoisted(() => ({
   createMercadoPagoPaymentRequest: vi.fn(),
   getPaymentProviderConfiguration: vi.fn(),
   extendHeldSchedulingPlanOptions: vi.fn(),
+  getHeldSchedulingPlanOption: vi.fn(),
 }));
 
 vi.mock("../../payments", async () => {
   const { enabledPaymentMethods } = await import("../../payments/payment-methods");
+  const { depositRequired, resolvePlanPayment } = await import("../../payments/plan-payment");
   return {
     enabledPaymentMethods,
+    depositForPlan: async (_customerId: unknown, plan: Parameters<typeof resolvePlanPayment>[0], legacyAmountCents: number) => {
+      const payment = resolvePlanPayment(plan, legacyAmountCents);
+      return { ...payment, required: depositRequired(payment, { hasPaidDepositBefore: false }) };
+    },
     MERCADO_PAGO_WEBHOOK_PATH: "/api/webhooks/mercado-pago",
     createPaymentRequest: mocks.createPaymentRequest,
     createMercadoPagoPaymentRequest: mocks.createMercadoPagoPaymentRequest,
     getPaymentProviderConfiguration: mocks.getPaymentProviderConfiguration,
   };
 });
-vi.mock("../../calendar/plans", () => ({ extendHeldSchedulingPlanOptions: mocks.extendHeldSchedulingPlanOptions }));
+vi.mock("../../calendar/plans", () => ({
+  extendHeldSchedulingPlanOptions: mocks.extendHeldSchedulingPlanOptions,
+  getHeldSchedulingPlanOption: mocks.getHeldSchedulingPlanOption,
+}));
 
 import { executePaymentRequestTool } from "./payment";
 
@@ -34,6 +43,9 @@ function provider(overrides: Record<string, unknown> = {}, methods: Record<strin
 
 describe("payment.request_deposit", () => {
   let context: ToolExecutionContext;
+  const optionId = new ObjectId();
+  const appointmentIds = [new ObjectId(), new ObjectId()];
+  const allocation = { planKey: "first_visit", schedulingOptionId: optionId, appointmentIds };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -41,7 +53,8 @@ describe("payment.request_deposit", () => {
     const configuration = createDefaultAgentConfiguration();
     configuration.payment = { pixKey: "manual-key", recipientName: "Clinic", signalAmountCents: 12_345 };
     context = { customerId: new ObjectId(), customerName: "Customer", contactPhone: "", configuration };
-    const payment = { _id: new ObjectId(), amountCents: 12_345, status: "awaiting_human_confirmation" };
+    mocks.getHeldSchedulingPlanOption.mockResolvedValue({ option: { _id: optionId, planKey: "first_visit" }, appointmentIds });
+    const payment = { _id: new ObjectId(), amountCents: 10_000, status: "awaiting_human_confirmation" };
     mocks.createPaymentRequest.mockResolvedValue({ ...payment, provider: "manual", pixKeySnapshot: "manual-key", recipientNameSnapshot: "Clinic" });
     mocks.createMercadoPagoPaymentRequest.mockImplementation(async (input: { channel: string }) => ({
       ...payment, status: "awaiting_provider_confirmation", provider: "mercado_pago", channel: input.channel,
@@ -50,15 +63,15 @@ describe("payment.request_deposit", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("uses the configured amount for manual Pix, without expiry or hold extension", async () => {
+  it("charges the held plan's amount for manual Pix and links it to the held appointments", async () => {
     mocks.getPaymentProviderConfiguration.mockResolvedValue(provider({ activeProvider: "manual" }));
 
     const result = JSON.parse((await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: null, method: null })).output);
 
     expect(mocks.createPaymentRequest).toHaveBeenCalledWith({
-      customerId: context.customerId, amountCents: 12_345, pixKey: "manual-key", recipientName: "Clinic",
+      customerId: context.customerId, amountCents: 10_000, pixKey: "manual-key", recipientName: "Clinic", allocation,
     });
-    expect(result).toMatchObject({ ok: true, amountCents: 12_345, channel: "manual_pix", pixKey: "manual-key" });
+    expect(result).toMatchObject({ ok: true, amountCents: 10_000, planName: "Primeira consulta", channel: "manual_pix", pixKey: "manual-key" });
     expect(mocks.createMercadoPagoPaymentRequest).not.toHaveBeenCalled();
     expect(mocks.extendHeldSchedulingPlanOptions).not.toHaveBeenCalled();
   });
@@ -69,9 +82,40 @@ describe("payment.request_deposit", () => {
     await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: null });
 
     expect(mocks.createMercadoPagoPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({
-      customerId: context.customerId, amountCents: 12_345, payerEmail: "customer@example.com", payerName: "Customer",
-      channel: "pix", notificationUrl: "https://oria.test/api/webhooks/mercado-pago",
+      customerId: context.customerId, amountCents: 10_000, payerEmail: "customer@example.com", payerName: "Customer",
+      channel: "pix", notificationUrl: "https://oria.test/api/webhooks/mercado-pago", allocation,
     }));
+  });
+
+  it("requires an active held booking", async () => {
+    mocks.getPaymentProviderConfiguration.mockResolvedValue(provider());
+    mocks.getHeldSchedulingPlanOption.mockResolvedValue(null);
+
+    const result = JSON.parse((await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "pix" })).output);
+
+    expect(result).toMatchObject({ ok: false, errors: [{ code: "held_booking_required" }] });
+    expect(mocks.createMercadoPagoPaymentRequest).not.toHaveBeenCalled();
+  });
+
+  it("doesn't charge when the held plan doesn't require a deposit", async () => {
+    mocks.getPaymentProviderConfiguration.mockResolvedValue(provider());
+    context.configuration.schedulingPlans[0].payment = { requirement: "none", amountCents: 10_000 };
+
+    const result = JSON.parse((await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "pix" })).output);
+
+    expect(result).toMatchObject({ ok: false, errors: [{ code: "deposit_not_required" }] });
+    expect(mocks.createMercadoPagoPaymentRequest).not.toHaveBeenCalled();
+  });
+
+  it("uses the clinic-wide amount for plans saved before deposits were per plan", async () => {
+    mocks.getPaymentProviderConfiguration.mockResolvedValue(provider());
+    const plan = context.configuration.schedulingPlans[0];
+    delete plan.payment;
+    plan.prerequisites = { all: [{ field: "operations.paymentStatus", operator: "eq", value: "paid" }] };
+
+    await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "pix" });
+
+    expect(mocks.createMercadoPagoPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 12_345 }));
   });
 
   it("asks which method when the clinic accepts more than one", async () => {
@@ -98,7 +142,7 @@ describe("payment.request_deposit", () => {
     const result = JSON.parse((await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "payment_link" })).output);
 
     expect(result).toMatchObject({ ok: true, channel: "payment_link", linkMethods: ["credit_card", "ticket"], maxInstallments: 3 });
-    expect(mocks.extendHeldSchedulingPlanOptions).toHaveBeenCalledWith(context.customerId, new Date("2026-11-06T12:00:00Z"));
+    expect(mocks.extendHeldSchedulingPlanOptions).toHaveBeenCalledWith(context.customerId, new Date("2026-11-06T12:00:00Z"), optionId);
   });
 
   it("keeps a Pix slot held until the code expires", async () => {
@@ -106,7 +150,7 @@ describe("payment.request_deposit", () => {
 
     await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "pix" });
 
-    expect(mocks.extendHeldSchedulingPlanOptions).toHaveBeenCalledWith(context.customerId, new Date("2026-11-03T12:00:00Z"));
+    expect(mocks.extendHeldSchedulingPlanOptions).toHaveBeenCalledWith(context.customerId, new Date("2026-11-03T12:00:00Z"), optionId);
   });
 
   it("falls back to manual Pix (human confirmation) when Mercado Pago fails", async () => {
@@ -115,8 +159,8 @@ describe("payment.request_deposit", () => {
 
     const result = JSON.parse((await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com", method: "pix" })).output);
 
-    expect(mocks.createPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 12_345 }));
-    expect(result).toMatchObject({ ok: true, amountCents: 12_345, provider: "manual", channel: "manual_pix" });
+    expect(mocks.createPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 10_000, allocation }));
+    expect(result).toMatchObject({ ok: true, amountCents: 10_000, provider: "manual", channel: "manual_pix" });
   });
 
   it("reports the failure when Mercado Pago fails and fallback is off", async () => {

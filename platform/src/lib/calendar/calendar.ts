@@ -778,16 +778,22 @@ export async function replaceAppointmentHolds(input: {
  * A confirmed deposit turns the customer's held slots into bookings awaiting attendance confirmation
  * ("A confirmar"): the patient confirms the time later, in a separate step.
  */
-export async function confirmAppointmentHolds(customerId: ObjectId, payment?: { paymentRequestId: ObjectId }) {
+export async function confirmAppointmentHolds(
+  customerId: ObjectId,
+  payment?: { paymentRequestId: ObjectId; appointmentIds?: ObjectId[]; paidAt?: Date },
+) {
   const appointments = await getAppointmentsCollection();
   await releaseExpiredAppointmentHolds();
   const now = new Date();
-  const held = await appointments.find({
-    customerId,
-    status: "held",
-    holdExpiresAt: { $gt: now },
-  }).sort({ startAt: 1 }).toArray();
+  const activeHolds = { customerId, status: "held" as const, holdExpiresAt: { $gt: now } };
+  // The deposit confirms the booking it was requested for. When that hold was replaced by another
+  // option (the patient changed the time after paying), it confirms the patient's current holds.
+  const allocated = payment?.appointmentIds?.length
+    ? await appointments.find({ ...activeHolds, _id: { $in: payment.appointmentIds } }).sort({ startAt: 1 }).toArray()
+    : [];
+  const held = allocated.length > 0 ? allocated : await appointments.find(activeHolds).sort({ startAt: 1 }).toArray();
   if (held.length === 0) return [];
+  const paidAt = payment?.paidAt ?? now;
   const result = await appointments.updateMany(
     {
       _id: { $in: held.map((appointment) => appointment._id) },
@@ -798,7 +804,7 @@ export async function confirmAppointmentHolds(customerId: ObjectId, payment?: { 
     {
       $set: {
         status: "scheduled", confirmationStatus: "pending", updatedAt: now,
-        ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt: now } : {}),
+        ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt } : {}),
       },
       $unset: { holdExpiresAt: "", schedulingOptionId: "" },
     },
@@ -814,7 +820,7 @@ export async function confirmAppointmentHolds(customerId: ObjectId, payment?: { 
     ...appointment,
     status: "scheduled" as const,
     confirmationStatus: "pending" as const,
-    ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt: now } : {}),
+    ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt } : {}),
     updatedAt: now,
     holdExpiresAt: undefined,
     schedulingOptionId: undefined,
@@ -825,10 +831,13 @@ export async function confirmAppointmentHolds(customerId: ObjectId, payment?: { 
  * Keeps the customer's active holds until `until` (never shortening them, never past the appointment's start),
  * so a slot isn't released while the patient can still pay.
  */
-export async function extendAppointmentHolds(customerId: ObjectId, until: Date) {
+export async function extendAppointmentHolds(customerId: ObjectId, until: Date, appointmentIds?: ObjectId[]) {
   const appointments = await getAppointmentsCollection();
   const now = new Date();
-  const held = await appointments.find({ customerId, status: "held", holdExpiresAt: { $gt: now } }).toArray();
+  const held = await appointments.find({
+    customerId, status: "held", holdExpiresAt: { $gt: now },
+    ...(appointmentIds?.length ? { _id: { $in: appointmentIds } } : {}),
+  }).toArray();
   if (held.length === 0) return null;
   const firstStart = Math.min(...held.map((appointment) => appointment.startAt.getTime()));
   const target = new Date(Math.min(until.getTime(), firstStart));
@@ -839,13 +848,14 @@ export async function extendAppointmentHolds(customerId: ObjectId, until: Date) 
   return target;
 }
 
-export async function releaseAppointmentHolds(customerId: ObjectId, preserveVisitGroupId?: ObjectId) {
+export async function releaseAppointmentHolds(customerId: ObjectId, preserveVisitGroupId?: ObjectId, onlyAppointmentIds?: ObjectId[]) {
   const now = new Date();
   const result = await (await getAppointmentsCollection()).updateMany(
     {
       customerId,
       status: "held",
       ...(preserveVisitGroupId ? { visitGroupId: { $ne: preserveVisitGroupId } } : {}),
+      ...(onlyAppointmentIds?.length ? { _id: { $in: onlyAppointmentIds } } : {}),
     },
     {
       $set: { status: "cancelled", updatedAt: now },
@@ -1718,4 +1728,59 @@ function normalizeResources(value: unknown, fallback: WeeklyAvailability[], orig
     }
   }
   return resources;
+}
+/**
+ * Links a payment to appointments (staff allocation or a deposit reused at booking). Held appointments
+ * become bookings awaiting attendance confirmation ("A confirmar"); booked ones only record the payment.
+ */
+export async function attachPaymentToAppointments(input: {
+  customerId: ObjectId;
+  appointmentIds: ObjectId[];
+  paymentRequestId: ObjectId;
+  paidAt: Date;
+}) {
+  if (input.appointmentIds.length === 0) return 0;
+  const appointments = await getAppointmentsCollection();
+  const now = new Date();
+  const scope = { _id: { $in: input.appointmentIds }, customerId: input.customerId };
+  const held = await appointments.find({ ...scope, status: "held", holdExpiresAt: { $gt: now } }, { projection: { _id: 1 } }).toArray();
+  if (held.length > 0) {
+    await appointments.updateMany(
+      { _id: { $in: held.map((appointment) => appointment._id) }, status: "held" },
+      {
+        $set: { status: "scheduled", confirmationStatus: "pending", paymentRequestId: input.paymentRequestId, paidAt: input.paidAt, updatedAt: now },
+        $unset: { holdExpiresAt: "", schedulingOptionId: "" },
+      },
+    );
+    await scheduleFirstAppointmentQualification(input.customerId, held.map((appointment) => appointment._id));
+  }
+  const result = await appointments.updateMany(
+    { ...scope, status: { $in: ["scheduled", "completed"] } },
+    { $set: { paymentRequestId: input.paymentRequestId, paidAt: input.paidAt, updatedAt: now } },
+  );
+  return result.matchedCount;
+}
+
+export async function detachPaymentFromAppointments(paymentRequestId: ObjectId, appointmentIds?: ObjectId[]) {
+  await (await getAppointmentsCollection()).updateMany(
+    { paymentRequestId, ...(appointmentIds ? { _id: { $in: appointmentIds } } : {}) },
+    { $unset: { paymentRequestId: "", paidAt: "" }, $set: { updatedAt: new Date() } },
+  );
+}
+
+/** Appointments of a patient that a payment can be linked to: active holds and bookings from the last 90 days on. */
+export async function listAllocatableAppointments(customerId: ObjectId) {
+  const now = new Date();
+  return (await getAppointmentsCollection()).find({
+    customerId,
+    $or: [
+      { status: "held", holdExpiresAt: { $gt: now } },
+      { status: { $in: ["scheduled", "completed"] }, startAt: { $gte: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000) } },
+    ],
+  }).sort({ startAt: 1 }).limit(100).toArray();
+}
+
+export async function findAppointmentsByIds(appointmentIds: ObjectId[]) {
+  if (appointmentIds.length === 0) return [];
+  return (await getAppointmentsCollection()).find({ _id: { $in: appointmentIds } }).toArray();
 }

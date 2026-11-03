@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
-import { Activity, Bot, Building2, CalendarDays, ChevronLeft, ContactRound, LayoutDashboard, LogOut, Menu, MessageCircle, MessageSquareText, Settings2, SlidersHorizontal } from "lucide-react";
+import { Activity, Bot, Building2, CalendarDays, ChevronLeft, ContactRound, LayoutDashboard, LogOut, Menu, MessageCircle, MessageSquareText, Settings2, SlidersHorizontal, Wallet } from "lucide-react";
 import { OriaLogo, OriaSymbol } from "@/components/oria-logo";
 import { useEffect, useState, useCallback } from "react";
 import { allows, pagePolicy } from "@/lib/access/policy";
@@ -14,6 +14,7 @@ const navigationGroups = [
     { href: "/dashboard/conversas", label: "Conversas", icon: MessageCircle },
     { href: "/dashboard/clientes", label: "Clientes", icon: ContactRound },
     { href: "/dashboard/calendario", label: "Calendário", icon: CalendarDays },
+    { href: "/dashboard/financeiro", label: "Financeiro", icon: Wallet },
   ] },
   { label: "Inteligência", items: [
     { href: "/dashboard/fluxos", label: "Agent Studio", icon: Bot },

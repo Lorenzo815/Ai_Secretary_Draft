@@ -15,6 +15,7 @@ export const ACCESS_MODULES = [
   { key: "operations", label: "Operações" },
   { key: "whatsapp", label: "Modelos WhatsApp" },
   { key: "system", label: "Sistema" },
+  { key: "finance", label: "Financeiro" },
 ] as const;
 
 export type AccessModule = typeof ACCESS_MODULES[number]["key"];

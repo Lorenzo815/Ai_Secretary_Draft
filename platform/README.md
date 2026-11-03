@@ -50,16 +50,49 @@ vinculado, ou cujo cliente foi excluído, preservam o nome salvo no evento.
 
 ## Pagamentos
 
-O **Valor do sinal** é editado somente em **Configurações do sistema → Pagamentos
-e sinal via Pix** (`/dashboard/settings/system`). O mesmo valor, de R$ 1,00 a
-R$ 10.000,00, é usado para Mercado Pago, modo humano e fallback. O Agent Studio
-mostra um resumo somente leitura com um link para essas configurações e
-indicadores separados das credenciais Mercado Pago e do Pix manual.
+### Sinal por plano de agendamento
 
-Chave Pix e favorecido são exclusivos do modo humano e fallback e têm um
-salvamento independente do valor do sinal. Mercado Pago usa as credenciais da
-conta configurada. Alterações não modificam cobranças pendentes nem a
-configuração já carregada por uma execução do agente em andamento.
+Cada plano em **Agent Studio → Agenda** define seu sinal (`schedulingPlans[].payment`):
+
+- **Obrigatório em todo agendamento** (`always`): cada agendamento do plano é reservado
+  (`calendar.hold`) e só é confirmado quando o sinal é pago.
+- **Somente na primeira vez** (`first_time`): cobra apenas de quem nunca teve um sinal
+  pago na clínica, em qualquer plano (pagamentos registrados manualmente contam;
+  estornos e contestações não).
+- **Não obrigatório** (`none`): `calendar.book` confirma direto, sem falar de pagamento.
+
+O valor (R$ 1,00 a R$ 10.000,00) é do plano e vale para Mercado Pago, modo humano e
+fallback. Um sinal cobre todos os eventos do agendamento: a solicitação guarda o plano,
+a opção reservada e os eventos (`planKey`, `schedulingOptionId`, `appointmentIds`), e o
+pagamento confirma só esses eventos. `payment.request_deposit` exige uma reserva ativa
+de um plano que exige sinal. Se a reserva expirar antes do pagamento, o sinal pago fica
+sem agendamento e confirma o próximo `calendar.book` do paciente (ou é vinculado pela
+equipe em Financeiro). Eventos avulsos (`event:<tipo>`) não exigem sinal.
+
+Planos salvos antes dessa regra são lidos como antes: com o pré-requisito
+`operations.paymentStatus = paid`, `always` com o valor geral
+(`payment.signalAmountCents`); sem ele, `none`. O Agent Studio grava a regra explícita
+no próximo salvamento, e `node src/scripts/migrate-plan-payments.mjs` (somente relata;
+grava com `--apply`) faz o mesmo para todas as clínicas, preenche `paidAt` dos sinais
+antigos e vincula cada sinal antigo aos eventos que ele confirmou quando isso é
+inequívoco. Rode o script só depois de publicar esta versão: versões anteriores não
+conhecem `payment` e agendariam sem sinal.
+
+Chave Pix, favorecido, meios aceitos e o provedor ficam em **Configurações do sistema →
+Recebimento de pagamentos** (`/dashboard/settings/system`). Alterações não modificam
+cobranças pendentes nem a configuração já carregada por uma execução do agente em
+andamento.
+
+### Financeiro
+
+`/dashboard/financeiro` (permissão **Financeiro**, nova; usuários existentes começam sem
+acesso, e o administrador concede em Usuários) lista os pagamentos recebidos (padrão) ou
+todos, com filtros de período, paciente e origem, e totais de recebido, taxas do Mercado
+Pago, líquido e pagamentos sem agendamento. Permite registrar pagamentos recebidos fora
+do sistema (dinheiro, maquininha, Pix ou transferência direto na conta, convênio) e
+vincular ou desvincular um pagamento a eventos do paciente. Vincular uma reserva ativa a
+confirma (**A confirmar**); cada evento fica ligado a um único pagamento. A página do
+paciente lista todos os seus pagamentos e os eventos cobertos.
 
 ### Meios de pagamento (Mercado Pago)
 
@@ -88,7 +121,9 @@ configuração já carregada por uma execução do agente em andamento.
 - `payment_transactions` é o livro-caixa: uma linha por evento processado
   (aprovado, recusado, estornado, contestado), com valor pago, taxas e líquido do
   Mercado Pago, meio, parcelas e data, além das conferências da equipe (Pix manual,
-  fallback e confirmação manual de uma cobrança do Mercado Pago). Linhas não são
+  fallback e confirmação manual de uma cobrança do Mercado Pago) e os pagamentos
+  registrados em Financeiro. Um estorno ou contestação do Mercado Pago marca o sinal
+  (`refundedAt`) sem desfazer o agendamento. Linhas não são
   editadas; uma mudança de status gera uma nova linha.
 - Teste opcional contra o sandbox, com as credenciais de uma clínica (nunca no CI):
   `MP_LIVE_TEST=1 MP_TEST_COMPANY_ID=<id> npx vitest run src/lib/payments/mercado-pago.live.test.ts`.

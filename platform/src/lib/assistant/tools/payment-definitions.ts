@@ -3,7 +3,7 @@ import type { ToolDefinition } from "./contracts";
 export const paymentToolDefinitions = {
   "payment.request_deposit": {
     label: "Solicitar sinal via Pix",
-    description: "Cria uma solicitação de sinal usando a configuração administrativa atual.",
+    description: "Cria a solicitação de sinal da reserva temporária ativa, com o valor do plano reservado.",
     mutates: true,
     argumentsSchema: {
       type: "object",
@@ -17,7 +17,8 @@ export const paymentToolDefinitions = {
     },
     promptInstructions: `payment.request_deposit exige confirmedByCustomer=true.
 - Use somente depois de o cliente aceitar explicitamente a emissão da cobrança e o pagamento do sinal; não é necessário já ter pago para gerar a solicitação.
-- Chave, favorecido e valor vêm exclusivamente da configuração administrativa; nunca os invente.
+- Exige uma reserva temporária ativa (calendar.hold) de um plano que exige sinal: o sinal é desse agendamento. Chave, favorecido e valor (o do plano) vêm exclusivamente da configuração administrativa; nunca os invente.
+- Se o resultado indicar held_booking_required, reserve primeiro o horário escolhido com calendar.hold; se indicar deposit_not_required, não fale de pagamento.
 - Consulte runtime.operations.paymentProvider: para mercado_pago, use o e-mail real do pagador já informado ou colete-o antes de chamar e envie em payerEmail; para manual, envie null e não peça e-mail. Não presuma um provedor fixo a partir de orientações antigas.
 - runtime.operations.paymentMethods lista os meios aceitos. "pix" envia um código Pix copia e cola no chat; "payment_link" envia um link do Mercado Pago (runtime.operations.paymentLinkMethods diz o que ele aceita: cartão de crédito, débito, boleto, Pix; e o máximo de parcelas). Se houver mais de um meio, pergunte ao cliente qual prefere antes de chamar e envie method; com um só meio, envie esse meio. Em modo manual, envie method=null.
 - Nunca peça nem aceite dados de cartão pelo WhatsApp: cartão e boleto só pelo link de pagamento.

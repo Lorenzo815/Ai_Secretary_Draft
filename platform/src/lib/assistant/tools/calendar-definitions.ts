@@ -90,7 +90,8 @@ export const calendarToolDefinitions = {
     }),
     promptInstructions: `calendar.book exige candidateId retornado por calendar.find_slots com purpose=book e confirmedByCustomer=true.
 - Use somente após o cliente confirmar explicitamente todas as etapas e horários daquele candidato.
-- O servidor valida os pré-requisitos aplicáveis. Se houver uma reserva temporária aguardando sinal, não chame calendar.book: a confirmação do pagamento promove essa reserva automaticamente.
+- O servidor valida os pré-requisitos aplicáveis e a exigência de sinal do plano. Se o plano exigir sinal, use calendar.hold e payment.request_deposit; se houver uma reserva temporária aguardando sinal, não chame calendar.book: a confirmação do pagamento promove essa reserva automaticamente.
+- Se o resultado trouxer depositApplied, um sinal já pago pelo cliente foi usado para este agendamento.
 - Nunca use esta ferramenta para reagendar e nunca monte horários, customerId ou IDs manualmente.
 - Uma proposta expirada, substituída ou já consumida deve ser pesquisada novamente.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("book", context, args),
@@ -105,12 +106,12 @@ export const calendarToolDefinitions = {
       confirmedByCustomer: { type: "boolean" },
     }),
     promptInstructions: `calendar.hold exige candidateId retornado por calendar.find_slots com purpose=book e confirmedByCustomer=true.
-- Use somente para um plano ativo configurado, quando o cliente escolher explicitamente uma opção completa e o sinal ainda não estiver confirmado. Esta ferramenta não aceita candidatos de eventos avulsos.
+- Use somente para um plano ativo configurado que exige sinal neste agendamento (deposit.required na busca ou deposit.requiredNow do plano), quando o cliente escolher explicitamente uma opção completa. Esta ferramenta não aceita candidatos de eventos avulsos; sem sinal exigido, use calendar.book.
 - Não bloqueie todas as opções apresentadas. Bloqueie apenas o candidateId escolhido pelo cliente.
 - Esta ferramenta cria uma reserva temporária pelo prazo configurado no plano. Ela não confirma o agendamento e não substitui o pagamento.
 - Informe o vencimento usando holdExpiresAt retornado pelo servidor, no fuso da clínica; nunca presuma uma duração fixa.
 - Depois de uma reserva bem-sucedida, complete os dados obrigatórios configurados e prossiga com payment.request_deposit quando o cliente já tiver aceitado pagar; caso contrário, explique o prazo da reserva e peça confirmação para emitir o sinal.
-- Se o sinal já estiver pago, não use esta ferramenta. Use calendar.book somente se não houver reserva temporária da opção; uma opção já reservada é promovida automaticamente após o pagamento.
+- Se o cliente já tiver um sinal pago sem horário (runtime.operations.unallocatedPaidDeposit), não use esta ferramenta: use calendar.book. Uma opção já reservada é promovida automaticamente após o pagamento.
 - Nunca use para reagendamento, nunca monte IDs ou horários manualmente e nunca afirme que o agendamento está confirmado enquanto o resultado estiver apenas reservado.`,
     execute: async (context, args) => (await import("./calendar")).executeRegisteredCalendarTool("hold", context, args),
   }),

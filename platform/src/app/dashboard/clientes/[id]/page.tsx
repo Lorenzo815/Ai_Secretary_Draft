@@ -5,12 +5,15 @@ import { getAssistantConversationState } from "@/lib/assistant/context";
 import { listCustomerAgentRuns } from "@/lib/assistant/agent";
 import { getCustomerCalendarOverview } from "@/lib/calendar";
 import { getManualMessageAvailability, listWhatsAppMessagesForCustomer } from "@/lib/whatsapp";
-import { getLatestPaymentRequest } from "@/lib/payments";
+import { findPaymentRequestsForCustomer, listPatientPayments } from "@/lib/payments";
+import { canAccess } from "@/lib/access/contracts";
+import { requirePrincipal } from "@/lib/access/server";
 import AutoRefresh from "../../_components/auto-refresh";
 import CustomerDetailTabs from "./_components/customer-detail-tabs";
 import CustomerAgentPanel from "./_components/customer-agent-panel";
 import LeadQualificationPanel from "./_components/lead-qualification-panel";
 import PaymentReviewPanel from "./_components/payment-review-panel";
+import PatientPayments from "./_components/patient-payments";
 import WhatsAppConversation from "./_components/whatsapp-conversation";
 import CpfDetail from "./_components/cpf-detail";
 import BrowserDateTime from "@/components/browser-date-time";
@@ -29,14 +32,20 @@ export default async function CustomerPage({
   if (!customer) notFound();
   const profile = getCustomerProfileSnapshot(customer);
 
-  const [messages, agentRuns, conversationState, calendarOverview, payment, messageAvailability] = await Promise.all([
+  const [messages, agentRuns, conversationState, calendarOverview, paymentRequests, messageAvailability, principal] = await Promise.all([
     listWhatsAppMessagesForCustomer(customer._id, customer.phones),
     listCustomerAgentRuns(customer._id),
     getAssistantConversationState(customer._id),
     getCustomerCalendarOverview(customer._id),
-    getLatestPaymentRequest(customer._id),
+    findPaymentRequestsForCustomer(customer._id),
     getManualMessageAvailability(customer._id),
+    requirePrincipal(),
   ]);
+  const payments = await listPatientPayments(customer._id, paymentRequests);
+  // Only a deposit still waiting for confirmation needs the review panel; the history lists the rest.
+  const payment = paymentRequests[0] && ["awaiting_human_confirmation", "awaiting_provider_confirmation", "provider_error"].includes(paymentRequests[0].status)
+    ? paymentRequests[0]
+    : null;
 
   const relationshipLabel = profile.relationshipStatus === "new"
     ? "Paciente novo"
@@ -158,6 +167,7 @@ export default async function CustomerPage({
                 reviewedBy: payment.reviewedBy,
               } : null}
             />
+            <PatientPayments payments={payments} canOpenFinance={canAccess(principal, "finance", "read")} />
             <CustomerAgentPanel
               customerId={customer._id.toString()}
               initialServiceStatus={customer.serviceStatus ?? "ai_active"}

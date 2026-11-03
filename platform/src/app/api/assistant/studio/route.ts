@@ -18,6 +18,7 @@ import {
 } from "@/lib/qualification/config";
 import { getFollowUpConfiguration, updateFollowUpConfiguration } from "@/lib/follow-up/config";
 import { getMercadoPagoCredentialStatus, getPaymentProviderConfiguration } from "@/lib/payments";
+import { resolvePlanPayment, withoutPaymentConditions } from "@/lib/payments/plan-payment";
 
 type AgentConfigurationInput = Omit<
   AgentConfigurationDocument,
@@ -170,7 +171,13 @@ function sanitizeConfiguration(configuration: AgentConfigurationDocument, availa
     journeyPolicy: configuration.journeyPolicy,
     knowledge: configuration.knowledge,
     dataCollectionRules: configuration.dataCollectionRules,
-    schedulingPlans: configuration.schedulingPlans,
+    // Every plan is shown with an explicit deposit rule; plans saved before per-plan rules read as their
+    // legacy behavior and are stored with the explicit rule on the next save.
+    schedulingPlans: configuration.schedulingPlans.map((plan) => ({
+      ...plan,
+      payment: resolvePlanPayment(plan, configuration.payment.signalAmountCents),
+      prerequisites: withoutPaymentConditions(plan.prerequisites),
+    })),
     bookableEventTypeKeys: available
       ? configuration.bookableEventTypeKeys.filter((key) => available.has(key))
       : configuration.bookableEventTypeKeys,

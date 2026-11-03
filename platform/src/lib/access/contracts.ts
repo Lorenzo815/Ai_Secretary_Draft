@@ -8,6 +8,7 @@ export const ACCESS_MODULES = [
   { key: "operations", label: "Operações", description: "Histórico e diagnósticos operacionais." },
   { key: "whatsapp", label: "Modelos WhatsApp", description: "Consulta e envio de modelos WhatsApp." },
   { key: "system", label: "Sistema", description: "Integrações, credenciais e parâmetros do sistema." },
+  { key: "finance", label: "Financeiro", description: "Pagamentos recebidos, sinais e registros manuais." },
 ] as const;
 
 export type AccessModule = typeof ACCESS_MODULES[number]["key"];
@@ -51,16 +52,18 @@ export interface CompanySettings {
 }
 
 export function emptyPermissions(): Permissions {
-  return { overview: "none", customers: "none", conversations: "none", calendar: "none", studio: "none", operations: "none", whatsapp: "none", system: "none" };
+  return { overview: "none", customers: "none", conversations: "none", calendar: "none", studio: "none", operations: "none", whatsapp: "none", system: "none", finance: "none" };
 }
 
 export function parsePermissions(value: unknown): Permissions {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new PermissionValidationError("Permissões inválidas.");
   const input = value as Record<string, unknown>;
-  if (Object.keys(input).length !== ACCESS_MODULES.length) throw new PermissionValidationError("Informe todas as permissões, sem campos adicionais.");
+  const known = new Set<string>(ACCESS_MODULES.map(({ key }) => key));
+  if (Object.keys(input).some((key) => !known.has(key))) throw new PermissionValidationError("Informe todas as permissões, sem campos adicionais.");
   const permissions = emptyPermissions();
   for (const { key } of ACCESS_MODULES) {
-    const level = input[key];
+    // Areas added after a user was saved start without access instead of invalidating the user.
+    const level = input[key] ?? "none";
     if (level !== "none" && level !== "read" && level !== "manage") throw new PermissionValidationError("Nível de acesso inválido.");
     permissions[key] = level;
   }

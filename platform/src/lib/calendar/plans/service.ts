@@ -334,7 +334,10 @@ export async function holdSchedulingPlanOption(input: {
   };
 }
 
-export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId, payment?: { paymentRequestId: ObjectId }) {
+export async function confirmHeldSchedulingPlanOptions(
+  customerId: ObjectId,
+  payment?: { paymentRequestId: ObjectId; appointmentIds?: ObjectId[]; paidAt?: Date },
+) {
   const appointments = await confirmAppointmentHolds(customerId, payment);
   if (appointments.length === 0) return [];
   const groupIds = appointments.flatMap((appointment) => appointment.visitGroupId ? [appointment.visitGroupId] : []);
@@ -350,23 +353,38 @@ export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId, pay
 }
 
 /** Extends the held slots and the held option together, until the payment can no longer arrive. */
-export async function extendHeldSchedulingPlanOptions(customerId: ObjectId, until: Date) {
-  const target = await extendAppointmentHolds(customerId, until);
+export async function extendHeldSchedulingPlanOptions(customerId: ObjectId, until: Date, schedulingOptionId?: ObjectId) {
+  const appointmentIds = schedulingOptionId ? await listActiveAppointmentHoldIds(customerId, schedulingOptionId) : undefined;
+  const target = await extendAppointmentHolds(customerId, until, appointmentIds);
   if (!target) return null;
   await (await getOptionsCollection()).updateMany(
-    { customerId, status: "held", expiresAt: { $gt: new Date(), $lt: target } },
+    { customerId, status: "held", expiresAt: { $gt: new Date(), $lt: target }, ...(schedulingOptionId ? { _id: schedulingOptionId } : {}) },
     { $set: { expiresAt: target } },
   );
   return target;
 }
 
-export async function releaseHeldSchedulingPlanOptions(customerId: ObjectId) {
-  const released = await releaseAppointmentHolds(customerId);
+/** Releases the patient's holds; with a scheduling option, only that booking's holds. */
+export async function releaseHeldSchedulingPlanOptions(customerId: ObjectId, schedulingOptionId?: ObjectId) {
+  const appointmentIds = schedulingOptionId ? await listActiveAppointmentHoldIds(customerId, schedulingOptionId) : undefined;
+  if (appointmentIds && appointmentIds.length === 0) return 0;
+  const released = await releaseAppointmentHolds(customerId, undefined, appointmentIds);
   await (await getOptionsCollection()).updateMany(
-    { customerId, status: "held" },
+    { customerId, status: "held", ...(schedulingOptionId ? { _id: schedulingOptionId } : {}) },
     { $set: { status: "superseded", supersededAt: new Date() } },
   );
   return released;
+}
+
+/** The booking awaiting a deposit: the patient's most recent held option and its held appointments. */
+export async function getHeldSchedulingPlanOption(customerId: ObjectId) {
+  const option = await (await getOptionsCollection()).findOne(
+    { customerId, status: "held", expiresAt: { $gt: new Date() } },
+    { sort: { createdAt: -1, _id: -1 } },
+  );
+  if (!option) return null;
+  const appointmentIds = await listActiveAppointmentHoldIds(customerId, option._id);
+  return appointmentIds.length > 0 ? { option, appointmentIds } : null;
 }
 
 export async function bookSchedulingPlanOption(input: {
@@ -420,7 +438,7 @@ export async function bookSchedulingPlanOption(input: {
     { $set: { status: "booked", bookedAt: new Date(), appointmentGroupId }, $unset: { processingAt: "" } },
   );
   await scheduleFirstAppointmentQualification(input.customerId, createdIds);
-  return { settings: await getCalendarSettings(), option, appointmentGroupId };
+  return { settings: await getCalendarSettings(), option, appointmentGroupId, appointmentIds: createdIds };
 }
 
 export async function rescheduleSchedulingPlanOption(input: {

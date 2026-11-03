@@ -14,10 +14,15 @@ function filesIn(directory: string): string[] {
 }
 
 describe("default-deny access catalog", () => {
-  it("rejects missing, unknown or malformed permissions", () => {
-    for (const value of [null, {}, { ...emptyPermissions(), admin: "manage" }, { ...emptyPermissions(), calendar: true }]) {
+  it("rejects unknown or malformed permissions", () => {
+    for (const value of [null, [], { ...emptyPermissions(), admin: "manage" }, { ...emptyPermissions(), calendar: true }]) {
       expect(() => parsePermissions(value)).toThrow();
     }
+  });
+  it("gives no access to areas added after the user was saved", () => {
+    const savedBeforeFinance: Record<string, string> = { ...emptyPermissions(), calendar: "manage" };
+    delete savedBeforeFinance.finance;
+    expect(parsePermissions(savedBeforeFinance)).toEqual({ ...emptyPermissions(), calendar: "manage" });
   });
   it("denies all unknown routes/methods even to the administrator", () => {
     for (const [url, method] of [["/api/unknown", "GET"], ["/api/settings", "GET"], ["/dashboard", "POST"], ["/dashboard/new-page", "GET"]]) {

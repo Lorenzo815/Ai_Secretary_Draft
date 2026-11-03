@@ -64,7 +64,6 @@ export default async function SystemSettingsPage() {
       initialPayment={{
         configured: Boolean(assistantSettings.payment.pixKey && assistantSettings.payment.recipientName),
         recipientName: assistantSettings.payment.recipientName,
-        signalAmountCents: assistantSettings.payment.signalAmountCents,
       }}
       initialPaymentProvider={{
         activeProvider: paymentProvider.activeProvider,

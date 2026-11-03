@@ -6,7 +6,8 @@ import { bookAppointment, findAvailableSlots, findCustomerAppointments, findUpco
 import { bookSchedulingPlanOption, findSchedulingPlanOption, findSchedulingPlanOptions, getActiveSchedulingPlanOption, getSchedulingPlanOption, holdSchedulingPlanOption, rescheduleSchedulingPlanOption, type SchedulingPlanOptionDocument, type SchedulingPreference } from "../../calendar/plans";
 import { matchesConditions } from "../../automation/conditions";
 import { findCustomerById, getCustomerProfileSnapshot } from "../../crm";
-import { getLatestPaymentRequest } from "../../payments";
+import { attachPaymentToAppointments } from "../../calendar";
+import { depositForPlan, findUnallocatedPaidPayment, formatBrl, setPaymentAppointments, withoutPaymentConditions } from "../../payments";
 import type { AgentConfigurationDocument, SchedulingPlan } from "../agent/contracts";
 import { getConfiguredMissingFields } from "../agent/runtime-context";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
@@ -114,6 +115,9 @@ async function executeCalendarAction(input: {
         criteria: appliedCriteria,
       });
       const candidates = result.options.map((option) => serializeCandidate(option, plan));
+      const deposit = input.action.purpose === "book" && !plan.key.startsWith("event:")
+        ? await depositForPlan(input.customerId, plan, input.configuration.payment.signalAmountCents)
+        : null;
       return {
         output: JSON.stringify({
           ok: true,
@@ -122,6 +126,8 @@ async function executeCalendarAction(input: {
           timezone: result.settings.timezone,
           range: { fromDate: input.action.fromDate, toDate: globalToDate },
           appliedCriteria,
+          // How the chosen candidate is confirmed: with a deposit, calendar.hold then payment.request_deposit.
+          deposit: deposit?.required ? { required: true, amountCents: deposit.amountCents } : { required: false },
           configuredWindowsSource: "weekly_availability_intersected_with_permissions_minus_blockers_and_appointments",
           candidates,
           ...(candidates.length === 0 ? {
@@ -153,6 +159,14 @@ async function executeCalendarAction(input: {
       const prerequisiteError = await validatePlanPrerequisites(input.customerId, plan, input.configuration, tool);
       if (prerequisiteError) return prerequisiteError;
     }
+    // A plan that needs a deposit is held and confirmed by the payment, unless the patient already paid a
+    // deposit that confirmed nothing (the hold expired before the payment arrived).
+    const depositCredit = input.action.action === "book"
+      ? await depositCreditForBooking(input.customerId, plan, input.configuration)
+      : { required: false as const };
+    if (depositCredit.required && !depositCredit.payment) {
+      return validationError(tool, [invalid("payment", `Este plano exige sinal de ${formatBrl(depositCredit.amountCents)} antes da confirmação. Use calendar.hold com este candidateId e depois payment.request_deposit.`)]);
+    }
     if (input.isMutationAllowed && !(await input.isMutationAllowed())) {
       return validationError(tool, [invalid("job", "Uma mensagem mais recente chegou antes da alteração. Nenhum agendamento foi modificado.")]);
     }
@@ -166,10 +180,22 @@ async function executeCalendarAction(input: {
           plan,
           configRevision: input.configuration.revision,
         });
+        if (depositCredit.required && depositCredit.payment) {
+          await attachPaymentToAppointments({
+            customerId: input.customerId,
+            appointmentIds: result.appointmentIds,
+            paymentRequestId: depositCredit.payment._id,
+            paidAt: depositCredit.payment.paidAt ?? new Date(),
+          });
+          await setPaymentAppointments(depositCredit.payment._id, result.appointmentIds);
+        }
         return {
           output: JSON.stringify({
             ok: true,
             tool,
+            ...(depositCredit.required && depositCredit.payment ? {
+              depositApplied: { paymentRequestId: depositCredit.payment._id.toString(), amountCents: depositCredit.payment.amountCents },
+            } : {}),
             appointmentGroupId: result.appointmentGroupId.toString(),
             timezone: result.settings.timezone,
             steps: serializeCandidate(result.option, plan).steps,
@@ -213,9 +239,12 @@ async function executeCalendarAction(input: {
     if (!plan || plan.key.startsWith("event:")) {
       return validationError(tool, [invalid("candidateId", "A reserva temporária exige um plano de agendamento ativo.")]);
     }
-    const payment = await getLatestPaymentRequest(input.customerId);
-    if (payment?.status === "paid") {
-      return validationError(tool, [invalid("payment", "O sinal já foi confirmado. Use calendar.book para concluir o agendamento.")]);
+    const deposit = await depositForPlan(input.customerId, plan, input.configuration.payment.signalAmountCents);
+    if (!deposit.required) {
+      return validationError(tool, [invalid("payment", "Este agendamento não exige sinal. Use calendar.book com o mesmo candidateId para concluir.")]);
+    }
+    if (await findUnallocatedPaidPayment(input.customerId)) {
+      return validationError(tool, [invalid("payment", "O cliente já tem um sinal pago que não confirmou nenhum horário. Use calendar.book com o mesmo candidateId para concluir com esse sinal.")]);
     }
     if (input.isMutationAllowed && !(await input.isMutationAllowed())) {
       return validationError(tool, [invalid("job", "Uma mensagem mais recente chegou antes da reserva. Nenhum horário foi bloqueado.")]);
@@ -235,6 +264,7 @@ async function executeCalendarAction(input: {
           tool,
           appointmentGroupId: result.appointmentGroupId.toString(),
           holdExpiresAt: result.holdExpiresAt.toISOString(),
+          deposit: { amountCents: deposit.amountCents },
           timezone: result.settings.timezone,
           steps: serializeCandidate(result.option, plan).steps,
         }),
@@ -676,24 +706,30 @@ function validatePlanCriterion(
   }
 }
 
+async function depositCreditForBooking(customerId: ObjectId, plan: SchedulingPlan, configuration: AgentConfigurationDocument) {
+  const deposit = await depositForPlan(customerId, plan, configuration.payment.signalAmountCents);
+  if (deposit.requirement === "none") return { required: false as const };
+  // A deposit paid for a hold that expired is used here, also for "first time" plans: that payment is
+  // what makes the patient no longer a first-timer.
+  const payment = await findUnallocatedPaidPayment(customerId);
+  if (payment) return { required: true as const, amountCents: deposit.amountCents, payment };
+  if (!deposit.required) return { required: false as const };
+  return { required: true as const, amountCents: deposit.amountCents, payment: null };
+}
+
 async function validatePlanPrerequisites(
   customerId: ObjectId,
   plan: SchedulingPlan,
   configuration: AgentConfigurationDocument,
   tool = "calendar.find_plan_option",
 ) {
-  const [customer, payment] = await Promise.all([
-    findCustomerById(customerId.toString()),
-    getLatestPaymentRequest(customerId),
-  ]);
+  const customer = await findCustomerById(customerId.toString());
   if (!customer) return validationError(tool, [invalid("customer", "Cliente não encontrado.")]);
   const profile = getCustomerProfileSnapshot(customer);
   const missingFields = getConfiguredMissingFields(profile, configuration.dataCollectionRules);
-  const facts = {
-    customer: { ...profile, missingFieldsCount: missingFields.length },
-    operations: { paymentStatus: payment?.status ?? null },
-  };
-  return matchesConditions(facts, plan.prerequisites)
+  const facts = { customer: { ...profile, missingFieldsCount: missingFields.length } };
+  // Deposits follow the plan's payment rule (calendar.hold / payment.request_deposit), not prerequisites.
+  return matchesConditions(facts, withoutPaymentConditions(plan.prerequisites))
     ? null
     : validationError(tool, [invalid("prerequisites", "Os pré-requisitos configurados deste plano ainda não foram atendidos.")]);
 }

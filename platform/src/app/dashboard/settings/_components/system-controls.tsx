@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Bot, CheckCircle2, CircleAlert, CircleDollarSign, DatabaseZap, KeyRound, LoaderCircle, RefreshCw, Save, Trash2 } from "lucide-react";
 
 type PaymentProvider = "manual" | "mercado_pago";
@@ -32,7 +33,6 @@ const LINK_EXPIRY_OPTIONS: Array<[number, string]> = [[1, "1 hora"], [6, "6 hora
 interface PaymentSettings {
   configured: boolean;
   recipientName: string;
-  signalAmountCents: number;
 }
 
 export default function SystemControls({
@@ -47,7 +47,6 @@ export default function SystemControls({
   initialCustomers: Array<{ id: string; label: string }>;
 }) {
   const router = useRouter();
-  const initialSignalAmount = (initialPayment.signalAmountCents / 100).toFixed(2);
   const [processingEnabled, setProcessingEnabled] = useState(initialProcessingEnabled);
   const [deletionScope, setDeletionScope] = useState<"customer_history" | "customer" | "all">("customer_history");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -58,13 +57,9 @@ export default function SystemControls({
   const [pixKey, setPixKey] = useState("");
   const [recipientName, setRecipientName] = useState(initialPayment.recipientName);
   const [manualConfigured, setManualConfigured] = useState(initialPayment.configured);
-  const [signalAmount, setSignalAmount] = useState(initialSignalAmount);
   const [recipientBaseline, setRecipientBaseline] = useState(initialPayment.recipientName);
-  const [amountBaseline, setAmountBaseline] = useState(initialSignalAmount);
   const [savingPayment, setSavingPayment] = useState(false);
-  const [savingAmount, setSavingAmount] = useState(false);
   const receivedManualPayment = useRef(initialPayment);
-  const receivedSignalAmount = useRef(initialSignalAmount);
   const [paymentProvider, setPaymentProvider] = useState(initialPaymentProvider.activeProvider);
   const [providerBaseline, setProviderBaseline] = useState(initialPaymentProvider.activeProvider);
   const [humanFallbackEnabled, setHumanFallbackEnabled] = useState(initialPaymentProvider.humanFallbackEnabled);
@@ -83,11 +78,10 @@ export default function SystemControls({
   const deletionTargetSelected = deletionScope === "all" || Boolean(selectedCustomerId);
   const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !saving && !deleting;
   const paymentDirty = Boolean(pixKey || recipientName !== recipientBaseline);
-  const amountDirty = signalAmount !== amountBaseline;
   const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline
     || JSON.stringify(methods) !== JSON.stringify(methodsBaseline);
   const credentialDirty = Boolean(accessToken || webhookSecret);
-  const refreshBlocked = paymentDirty || amountDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingAmount || savingProvider || savingCredential || deleting;
+  const refreshBlocked = paymentDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingProvider || savingCredential || deleting;
 
   useEffect(() => {
     setProcessingEnabled(initialProcessingEnabled);
@@ -106,14 +100,6 @@ export default function SystemControls({
     setRecipientName(initialPayment.recipientName);
     setRecipientBaseline(initialPayment.recipientName);
   }, [initialPayment, paymentDirty, savingPayment]);
-
-  useEffect(() => {
-    if (receivedSignalAmount.current === initialSignalAmount) return;
-    receivedSignalAmount.current = initialSignalAmount;
-    if (amountDirty || savingAmount) return;
-    setSignalAmount(initialSignalAmount);
-    setAmountBaseline(initialSignalAmount);
-  }, [initialSignalAmount, amountDirty, savingAmount]);
 
   async function toggleProcessing() {
     setSaving(true);
@@ -197,31 +183,6 @@ export default function SystemControls({
     }
   }
 
-  async function saveSignalAmount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSavingAmount(true);
-    setMessage(null);
-    try {
-      const amountCents = Math.round(Number(signalAmount.replace(",", ".")) * 100);
-      const response = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment: { signalAmountCents: amountCents } }),
-      });
-      const result = await response.json() as { payment?: PaymentSettings; error?: string };
-      if (!response.ok || !result.payment) throw new Error(result.error ?? "Não foi possível salvar o valor do sinal.");
-      const normalizedAmount = (result.payment.signalAmountCents / 100).toFixed(2);
-      setSignalAmount(normalizedAmount);
-      setAmountBaseline(normalizedAmount);
-      setMessage("Valor do sinal atualizado para novas cobranças em todos os modos de pagamento.");
-      router.refresh();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Não foi possível salvar o valor do sinal.");
-    } finally {
-      setSavingAmount(false);
-    }
-  }
-
   async function savePaymentProvider() {
     setSavingProvider(true);
     setMessage(null);
@@ -287,17 +248,8 @@ export default function SystemControls({
   return (
     <div className="grid gap-5 lg:grid-cols-2" data-auto-refresh-dirty={refreshBlocked ? "true" : undefined}>
       <section aria-labelledby="payment-settings-title" className="rounded-lg border border-mist bg-white p-5 shadow-sm sm:p-6 lg:col-span-2">
-        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Pagamentos e sinal via Pix</h3><p className="mt-1 text-sm leading-6 text-stone">Defina o valor único do sinal, quem confirma a transação e quando a IA pode continuar o atendimento.</p></div></div>
-        <form onSubmit={saveSignalAmount} className="mt-5 grid gap-3 border-b border-mist pb-5 sm:grid-cols-[minmax(180px,240px)_1fr] sm:items-end">
-          <label className="text-xs font-semibold text-slate-ink">
-            Valor do sinal (R$)
-            <input type="number" min="1" max="10000" step="0.01" value={signalAmount} onChange={(event) => setSignalAmount(event.target.value)} required disabled={savingAmount} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal disabled:bg-pearl" />
-          </label>
-          <button type="submit" disabled={savingAmount || !amountDirty} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-50 sm:justify-self-start">
-            {savingAmount ? "Salvando..." : "Salvar valor do sinal"}
-          </button>
-          <p className="text-xs leading-5 text-stone sm:col-span-2">Aplica-se ao Mercado Pago, ao modo humano e ao fallback. Permitido de R$ 1,00 a R$ 10.000,00. A alteração vale para novas cobranças; cobranças pendentes mantêm o valor original.</p>
-        </form>
+        <div className="flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><CircleDollarSign className="h-5 w-5" /></span><div><h3 id="payment-settings-title" className="font-heading text-base font-semibold text-slate-ink">Recebimento de pagamentos</h3><p className="mt-1 text-sm leading-6 text-stone">Defina como os sinais são cobrados e confirmados: meios aceitos, quem confirma a transação e o fallback.</p></div></div>
+        <p className="mt-5 border-b border-mist pb-5 text-xs leading-5 text-stone">O valor do sinal e quando ele é exigido são definidos por plano de agendamento, em <Link href="/dashboard/fluxos" className="font-semibold text-deep-teal hover:underline">Agent Studio › Agenda</Link>. Os pagamentos recebidos ficam em <Link href="/dashboard/financeiro" className="font-semibold text-deep-teal hover:underline">Financeiro</Link>.</p>
         <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
           <div>
             <fieldset><legend className="text-xs font-semibold text-slate-ink">Confirmação ativa</legend><div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">{([ ["mercado_pago", "Mercado Pago"], ["manual", "Humana"] ] as const).map(([value, label]) => <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold ${paymentProvider === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}><input type="radio" name="paymentProvider" value={value} checked={paymentProvider === value} onChange={() => setPaymentProvider(value)} className="sr-only" />{label}</label>)}</div></fieldset>
