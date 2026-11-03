@@ -108,6 +108,47 @@ describe("WhatsApp webhook isolation", () => {
     }))).rejects.toThrow("WHATSAPP_ECHO_INVALID_PAYLOAD");
   });
 
+  it("stores a late redelivery of an old message without triggering the AI or a reminder button", async () => {
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: { toString: () => "customer-1" } });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    const sentAt = Math.floor((Date.now() - 25 * 60 * 60_000) / 1000);
+    const result = await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [
+          { id: "wamid.old-text", from: "5511999999999", timestamp: String(sentAt), type: "text", text: { body: "Lorenzo suei" } },
+          { id: "wamid.old-button", from: "5511999999999", timestamp: String(sentAt), type: "button", button: { text: "Confirmar", payload: "confirm:1" } },
+        ],
+      } }] }],
+    }));
+    expect(saveWhatsAppMessage).toHaveBeenCalledTimes(2);
+    expect(saveWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metaMessageId: "wamid.old-text", timestamp: new Date(sentAt * 1000),
+    }));
+    expect(handleConfirmationButton).not.toHaveBeenCalled();
+    expect(emitAutomationEvent).not.toHaveBeenCalled();
+    expect(cancelAutomationJob).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ receivedMessages: 2, processingRequests: 0 });
+  });
+
+  it("still triggers the AI for a message sent within the freshness window", async () => {
+    findOrCreateCustomerFromWhatsApp.mockResolvedValue({ _id: { toString: () => "customer-1" } });
+    saveWhatsAppMessage.mockResolvedValue({ inserted: true });
+    const result = await processWhatsAppWebhook(JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
+        metadata: { phone_number_id: "1111111111" },
+        messages: [{
+          id: "wamid.recent", from: "5511999999999", type: "text", text: { body: "Oi" },
+          timestamp: String(Math.floor((Date.now() - 10 * 60_000) / 1000)),
+        }],
+      } }] }],
+    }));
+    expect(emitAutomationEvent).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ processingRequests: 1 });
+  });
+
   it("hydrates an explicitly supplied template reference and actual values before storing it", async () => {
     const reference = { name: "confirmation", language: { code: "pt_BR" }, components: [{ type: "body", parameters: [{ type: "text", text: "26/10" }] }] };
     hydrateWhatsAppTemplateContext.mockResolvedValueOnce({
@@ -278,7 +319,7 @@ describe("WhatsApp webhook isolation", () => {
           value: {
             metadata: { phone_number_id: "1111111111" },
             contacts: [{ profile: { name: "Cliente" } }],
-            messages: [{ id: "wamid.reply", from: "5511999999999", timestamp: "1788700000", type: "text", text: { body: "Tenho interesse" } }],
+            messages: [{ id: "wamid.reply", from: "5511999999999", timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: "Tenho interesse" } }],
           },
         }],
       }],
@@ -296,7 +337,7 @@ describe("WhatsApp webhook isolation", () => {
         entry: [{ id: "2222222222", changes: [{ field: "messages", value: {
           metadata: { phone_number_id: "1111111111" },
           contacts: [{ profile: { name: "Cliente" } }],
-          messages: [{ id: "wamid.tap", from: "5511999999999", timestamp: "1788700000", type: "button", button: { text: "Confirmar presença", payload } }],
+          messages: [{ id: "wamid.tap", from: "5511999999999", timestamp: String(Math.floor(Date.now() / 1000)), type: "button", button: { text: "Confirmar presença", payload } }],
         } }] }],
       }));
     }

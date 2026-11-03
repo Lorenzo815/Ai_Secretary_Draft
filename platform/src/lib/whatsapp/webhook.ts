@@ -35,6 +35,9 @@ interface WebhookPayload {
 }
 
 const validStatuses = new Set<MessageStatus>(["sent", "delivered", "read", "failed"]);
+// Meta retries undelivered webhooks for up to 7 days. A late delivery is still stored, but must not
+// make the AI answer (or a reminder button act on) an old message, e.g. after the clinic data was cleared.
+export const STALE_INBOUND_MS = 2 * 60 * 60_000;
 
 export class WhatsAppWebhookError extends Error {
   constructor(message: string, readonly status: number) {
@@ -147,12 +150,13 @@ async function processMessagesChange(
     });
     // Taps on the appointment confirmation reminder buttons are answered without the AI, except
     // "Escolher novo horário", which hands the conversation to the AI.
-    const confirmation = saved.inserted && selection?.type === "button" && selection.payload
+    const actionable = saved.inserted && Date.now() - timestamp.getTime() <= STALE_INBOUND_MS;
+    const confirmation = actionable && selection?.type === "button" && selection.payload
       ? await handleConfirmationButton({ customer, payload: selection.payload })
       : { handled: false as const };
     if (confirmation.handled && !confirmation.runAgent) {
       await cancelAutomationJob("customer_follow_up", customer._id);
-    } else if (saved.inserted && (confirmation.handled || !customer.serviceStatus || customer.serviceStatus === "ai_active")) {
+    } else if (actionable && (confirmation.handled || !customer.serviceStatus || customer.serviceStatus === "ai_active")) {
       await cancelAutomationJob("customer_follow_up", customer._id);
       const processes = await emitAutomationEvent({
         type: "message.received",
