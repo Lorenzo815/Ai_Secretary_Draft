@@ -19,6 +19,15 @@ describe("default-deny access catalog", () => {
       expect(() => parsePermissions(value)).toThrow();
     }
   });
+  it("lets only finance managers remove or link payments", () => {
+    const path = "/api/finance/123456789012345678901234";
+    const reader = { ...user, permissions: { ...emptyPermissions(), finance: "read" as const } };
+    const manager = { ...user, permissions: { ...emptyPermissions(), finance: "manage" as const } };
+    for (const method of ["PATCH", "DELETE"]) {
+      expect(allows(reader, routePolicy(path, method))).toBe(false);
+      expect(allows(manager, routePolicy(path, method))).toBe(true);
+    }
+  });
   it("gives no access to areas added after the user was saved", () => {
     const savedBeforeFinance: Record<string, string> = { ...emptyPermissions(), calendar: "manage" };
     delete savedBeforeFinance.finance;

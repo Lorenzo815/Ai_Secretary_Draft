@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { CircleDollarSign, Link2, LoaderCircle, Plus, Receipt, TriangleAlert, Wallet } from "lucide-react";
+import { CircleDollarSign, Link2, LoaderCircle, Plus, Receipt, Trash2, TriangleAlert, Wallet } from "lucide-react";
 import type { FinanceAppointment, FinancePayment } from "@/lib/payments/finance";
 import { MANUAL_METHOD_LABELS, MANUAL_PAYMENT_METHODS, type ManualPaymentMethod } from "@/lib/payments/manual-methods";
 
@@ -42,6 +42,7 @@ export default function FinanceScreen({ canManage, customers }: { canManage: boo
   const [message, setMessage] = useState<string | null>(null);
   const [registering, setRegistering] = useState(false);
   const [allocatingId, setAllocatingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,7 +130,15 @@ export default function FinanceScreen({ canManage, customers }: { canManage: boo
             void load();
           }} />}
         </div>
-        <div className="lg:text-right">{canManage && payment.status === "paid" && !payment.refunded && allocatingId !== payment.id && <button type="button" onClick={() => setAllocatingId(payment.id)} className={buttonClass}><Link2 className="h-4 w-4" />Vincular agendamentos</button>}</div>
+        <div className="flex flex-wrap gap-2 lg:flex-col lg:items-end">
+          {canManage && payment.status === "paid" && !payment.refunded && allocatingId !== payment.id && <button type="button" onClick={() => setAllocatingId(payment.id)} className={buttonClass}><Link2 className="h-4 w-4" />Vincular agendamentos</button>}
+          {canManage && payment.manualEntry && removingId !== payment.id && <button type="button" onClick={() => setRemovingId(payment.id)} className={`${buttonClass} text-burnt-coral`}><Trash2 className="h-4 w-4" />Remover</button>}
+        </div>
+        {removingId === payment.id && <RemoveManualPayment payment={payment} onCancel={() => setRemovingId(null)} onRemoved={() => {
+          setRemovingId(null);
+          setMessage("Pagamento removido. Os agendamentos vinculados continuam agendados.");
+          void load();
+        }} />}
       </article>)}
     </section>}
   </div>;
@@ -180,6 +189,39 @@ function ManualPaymentForm({ customers, timezone, onCancel, onSaved }: { custome
     {error && <p role="alert" className="text-sm text-burnt-coral">{error}</p>}
     <div className="flex gap-2"><button type="submit" disabled={saving || !customerId} className={primaryClass}>{saving ? "Salvando..." : "Registrar"}</button><button type="button" onClick={onCancel} className={buttonClass}>Cancelar</button></div>
   </form>;
+}
+
+function RemoveManualPayment({ payment, onCancel, onRemoved }: { payment: FinancePayment; onCancel: () => void; onRemoved: () => void }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/finance/${payment.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Não foi possível remover o pagamento.");
+      onRemoved();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "Não foi possível remover o pagamento.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div role="alertdialog" aria-label="Remover pagamento" className="space-y-3 rounded-md border border-burnt-coral/30 bg-burnt-coral/[0.04] p-3 lg:col-span-4">
+    <p className="text-sm font-semibold text-slate-ink">Remover o pagamento de {money(payment.amountCents)} ({payment.methodLabel}) de {payment.customerName}?</p>
+    <p className="text-xs leading-5 text-stone">{payment.appointments.length > 0 ? "Os agendamentos vinculados continuam agendados, apenas sem este pagamento. " : ""}A remoção fica registrada no histórico financeiro.</p>
+    <label className="block text-xs font-semibold text-slate-ink">Motivo<input maxLength={500} placeholder="Opcional (ex.: registrado em duplicidade)" value={reason} onChange={(event) => setReason(event.target.value)} className={inputClass} /></label>
+    {error && <p role="alert" className="text-xs text-burnt-coral">{error}</p>}
+    <div className="flex gap-2"><button type="button" onClick={remove} disabled={saving} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md bg-burnt-coral px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Removendo..." : "Remover pagamento"}</button><button type="button" onClick={onCancel} disabled={saving} className={buttonClass}>Cancelar</button></div>
+  </div>;
 }
 
 function AllocationEditor({ payment, timezone, onCancel, onSaved }: { payment: FinancePayment; timezone: string; onCancel: () => void; onSaved: () => void }) {

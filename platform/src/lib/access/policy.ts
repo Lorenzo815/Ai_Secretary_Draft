@@ -42,7 +42,7 @@ export function routePolicy(path: string, method: string): RoutePolicy {
   if (path === "/api/assistant/studio") return access("studio", ["GET", "PUT"]);
   if (path === "/api/finance") return access("finance", ["GET", "POST"]);
   if (path === "/api/finance/appointments") return access("finance", ["GET"]);
-  if (/^\/api\/finance\/[a-f0-9]{24}$/i.test(path)) return access("finance", ["PATCH"]);
+  if (/^\/api\/finance\/[a-f0-9]{24}$/i.test(path)) return access("finance", ["PATCH", "DELETE"]);
   if (path === "/api/settings") return method === "DELETE" ? "admin" : access("system", ["PUT", "PATCH", "POST"]);
   if (path === "/api/settings/ai-models") return access("system", ["GET", "PUT", "PATCH", "POST"]);
   if (path === "/api/whatsapp/inbox") return access("conversations", ["GET", "PATCH"]);

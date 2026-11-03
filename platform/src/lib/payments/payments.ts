@@ -447,3 +447,10 @@ export async function unlinkAppointmentsFromOtherPayments(appointmentIds: Object
     { $pull: { appointmentIds: { $in: appointmentIds } }, $set: { updatedAt: new Date() } } as unknown as UpdateFilter<PaymentRequestDocument>,
   );
 }
+
+/** Deletes a payment registered by staff in Financeiro. Deposits charged through the chat can't be deleted. */
+export async function deleteManualPaymentEntry(paymentRequestId: ObjectId) {
+  return (await getPaymentRequestsCollection()).findOneAndDelete({
+    _id: paymentRequestId, provider: "manual", manualMethod: { $exists: true },
+  });
+}

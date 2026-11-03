@@ -7,10 +7,10 @@ import {
   listAllocatableAppointments, type AppointmentDocument,
 } from "../calendar";
 import { tenantDb } from "../companies/tenant-db";
-import { listTransactionsForRequests } from "./ledger";
+import { listTransactionsForRequests, recordManualEntryRemoval } from "./ledger";
 import { MANUAL_METHOD_LABELS, MANUAL_PAYMENT_METHODS, type ManualPaymentMethod } from "./manual-methods";
 import {
-  createManualPaymentEntry, getPaymentRequest, listPaymentRequests, setPaymentAppointments,
+  createManualPaymentEntry, deleteManualPaymentEntry, getPaymentRequest, listPaymentRequests, setPaymentAppointments,
   unlinkAppointmentsFromOtherPayments, type PaymentRequestDocument,
 } from "./payments";
 
@@ -50,6 +50,8 @@ export interface FinancePayment {
   netCents: number | null;
   note: string | null;
   reviewedBy: string | null;
+  /** Registered by staff in Financeiro (ledger channel manual_entry): can be removed. */
+  manualEntry: boolean;
   appointments: FinanceAppointment[];
 }
 
@@ -142,6 +144,29 @@ export async function registerManualPayment(input: {
   return payment;
 }
 
+/**
+ * Removes a payment registered by staff (e.g. typed by mistake). Its appointments stay booked and only lose
+ * the payment reference; the ledger keeps the original row and gets a "voided" row.
+ */
+export async function removeManualPayment(input: { paymentRequestId: ObjectId; removedBy: string; reason?: string }) {
+  const payment = await getPaymentRequest(input.paymentRequestId);
+  if (!payment) throw new FinanceError("Pagamento não encontrado.", 404);
+  if (!payment.manualMethod) {
+    throw new FinanceError("Só pagamentos registrados manualmente no Financeiro podem ser removidos.");
+  }
+  await detachPaymentFromAppointments(payment._id);
+  const deleted = await deleteManualPaymentEntry(payment._id);
+  if (!deleted) throw new FinanceError("Pagamento não encontrado.", 404);
+  await recordManualEntryRemoval({
+    paymentRequestId: payment._id,
+    customerId: payment.customerId,
+    amountCents: payment.amountCents,
+    method: payment.manualMethod,
+    removedBy: input.removedBy,
+    reason: input.reason,
+  });
+}
+
 async function assertAllocatable(customerId: ObjectId, appointmentIds: ObjectId[]) {
   if (appointmentIds.length > 50) throw new FinanceError("Selecione no máximo 50 agendamentos.");
   const appointments = await findAppointmentsByIds(appointmentIds);
@@ -192,6 +217,7 @@ async function serializePayments(
       netCents: feeCents === null ? null : request.amountCents - feeCents,
       note: request.reviewNote ?? null,
       reviewedBy: request.reviewedBy ?? request.createdBy ?? null,
+      manualEntry: Boolean(request.manualMethod),
       appointments: (request.appointmentIds ?? []).flatMap((id) => {
         const appointment = appointmentsById.get(id.toHexString());
         return appointment ? [serializeAppointment(appointment, eventTypes)] : [];

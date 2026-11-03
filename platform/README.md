@@ -91,7 +91,10 @@ todos, com filtros de período, paciente e origem, e totais de recebido, taxas d
 Pago, líquido e pagamentos sem agendamento. Permite registrar pagamentos recebidos fora
 do sistema (dinheiro, maquininha, Pix ou transferência direto na conta, convênio) e
 vincular ou desvincular um pagamento a eventos do paciente. Vincular uma reserva ativa a
-confirma (**A confirmar**); cada evento fica ligado a um único pagamento. A página do
+confirma (**A confirmar**); cada evento fica ligado a um único pagamento. Só os
+pagamentos registrados no Financeiro (canal `manual_entry`) podem ser removidos: os
+eventos vinculados continuam agendados, sem o pagamento, e o livro-caixa mantém a linha
+original e ganha uma linha `voided` com quem removeu e o motivo. A página do
 paciente lista todos os seus pagamentos e os eventos cobertos.
 
 ### Meios de pagamento (Mercado Pago)

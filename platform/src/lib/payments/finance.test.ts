@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   setPaymentAppointments: vi.fn(),
   unlinkAppointmentsFromOtherPayments: vi.fn(),
   createManualPaymentEntry: vi.fn(),
+  deleteManualPaymentEntry: vi.fn(),
+  recordManualEntryRemoval: vi.fn(),
   listPaymentRequests: vi.fn(),
   listTransactionsForRequests: vi.fn(),
   customersFindOne: vi.fn(),
@@ -26,12 +28,16 @@ vi.mock("../calendar", () => ({
 }));
 vi.mock("./payments", () => ({
   createManualPaymentEntry: mocks.createManualPaymentEntry,
+  deleteManualPaymentEntry: mocks.deleteManualPaymentEntry,
   getPaymentRequest: mocks.getPaymentRequest,
   listPaymentRequests: mocks.listPaymentRequests,
   setPaymentAppointments: mocks.setPaymentAppointments,
   unlinkAppointmentsFromOtherPayments: mocks.unlinkAppointmentsFromOtherPayments,
 }));
-vi.mock("./ledger", () => ({ listTransactionsForRequests: mocks.listTransactionsForRequests }));
+vi.mock("./ledger", () => ({
+  listTransactionsForRequests: mocks.listTransactionsForRequests,
+  recordManualEntryRemoval: mocks.recordManualEntryRemoval,
+}));
 vi.mock("../companies/tenant-db", () => ({
   tenantDb: async () => ({
     collection: () => ({
@@ -41,7 +47,7 @@ vi.mock("../companies/tenant-db", () => ({
   }),
 }));
 
-import { allocatePayment, FinanceError, listFinance, registerManualPayment } from "./finance";
+import { allocatePayment, FinanceError, listFinance, registerManualPayment, removeManualPayment } from "./finance";
 
 describe("Financeiro", () => {
   const customerId = new ObjectId();
@@ -111,6 +117,33 @@ describe("Financeiro", () => {
 
     expect(mocks.createManualPaymentEntry).toHaveBeenCalledWith(expect.objectContaining({ customerId, amountCents: 50_000, method: "card_machine", appointmentIds: [target._id] }));
     expect(mocks.attachPaymentToAppointments).toHaveBeenCalledWith({ customerId, appointmentIds: [target._id], paymentRequestId: created._id, paidAt: receivedAt });
+  });
+
+  describe("removing a payment", () => {
+    it("removes a payment registered by staff, unlinks its appointments and records the reversal", async () => {
+      const entry = { _id: new ObjectId(), customerId, provider: "manual", manualMethod: "cash", status: "paid", amountCents: 5_000 };
+      mocks.getPaymentRequest.mockResolvedValue(entry);
+      mocks.deleteManualPaymentEntry.mockResolvedValue(entry);
+
+      await removeManualPayment({ paymentRequestId: entry._id, removedBy: "staff@clinic", reason: "duplicado" });
+
+      expect(mocks.detachPaymentFromAppointments).toHaveBeenCalledWith(entry._id);
+      expect(mocks.deleteManualPaymentEntry).toHaveBeenCalledWith(entry._id);
+      expect(mocks.recordManualEntryRemoval).toHaveBeenCalledWith({
+        paymentRequestId: entry._id, customerId, amountCents: 5_000, method: "cash", removedBy: "staff@clinic", reason: "duplicado",
+      });
+    });
+
+    it.each([
+      ["a Mercado Pago deposit", { provider: "mercado_pago", channel: "pix" }],
+      ["a Pix deposit checked by staff", { provider: "manual" }],
+    ])("refuses to remove %s", async (_label, patch) => {
+      mocks.getPaymentRequest.mockResolvedValue({ _id: new ObjectId(), customerId, status: "paid", amountCents: 10_000, ...patch });
+
+      await expect(removeManualPayment({ paymentRequestId: new ObjectId(), removedBy: "staff@clinic" })).rejects.toThrow(/registrados manualmente/);
+      expect(mocks.detachPaymentFromAppointments).not.toHaveBeenCalled();
+      expect(mocks.deleteManualPaymentEntry).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses an unknown manual method", async () => {

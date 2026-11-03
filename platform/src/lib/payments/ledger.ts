@@ -178,3 +178,30 @@ export async function listTransactionsForRequests(paymentRequestIds: ObjectId[])
   }
   return grouped;
 }
+
+/** Reversal of a payment registered by staff: the original row stays, this one records who removed it and why. */
+export async function recordManualEntryRemoval(input: {
+  paymentRequestId: ObjectId;
+  customerId: ObjectId;
+  amountCents: number;
+  method: string;
+  removedBy: string;
+  reason?: string;
+}) {
+  await insertOnce({
+    key: `manual_entry:${input.paymentRequestId.toHexString()}:voided`,
+    paymentRequestId: input.paymentRequestId,
+    customerId: input.customerId,
+    provider: "manual",
+    channel: "manual_entry",
+    providerPaymentId: input.paymentRequestId.toHexString(),
+    status: "voided",
+    paymentMethod: input.method,
+    currency: "BRL",
+    amountCents: input.amountCents,
+    occurredAt: new Date(),
+    source: "staff_entry",
+    reviewedBy: input.removedBy,
+    note: input.reason?.trim().slice(0, 500) || undefined,
+  });
+}
