@@ -24,7 +24,15 @@ export async function listCollectionsInfo() {
       ).toArray().catch(() => []),
     ]);
     const storage = stats[0]?.storageStats;
-    return { name, count, dataBytes: storage?.size ?? 0, storageBytes: (storage?.storageSize ?? 0) + (storage?.totalIndexSize ?? 0) };
+    const dataBytes = storage?.size ?? 0;
+    const indexBytes = storage?.totalIndexSize ?? 0;
+    return {
+      name, count, dataBytes, indexBytes,
+      // What Atlas counts against the M0/Flex storage limit: uncompressed data + indexes.
+      usedBytes: dataBytes + indexBytes,
+      // Compressed size on disk (Atlas "Storage size") + indexes.
+      diskBytes: (storage?.storageSize ?? 0) + indexBytes,
+    };
   }));
 }
 

@@ -13,8 +13,9 @@ export default async function OverviewPage() {
     listCollectionsInfo(),
     getDb().then((db) => db.collection(AUDIT_COLLECTION).find({}, { projection: { before: 0, after: 0 } }).sort({ at: -1 }).limit(8).toArray()),
   ]);
-  const totalStorage = collections.reduce((sum, collection) => sum + collection.storageBytes, 0);
-  const largest = [...collections].sort((a, b) => b.storageBytes - a.storageBytes).slice(0, 8);
+  const totalUsed = collections.reduce((sum, collection) => sum + collection.usedBytes, 0);
+  const totalDisk = collections.reduce((sum, collection) => sum + collection.diskBytes, 0);
+  const largest = [...collections].sort((a, b) => b.usedBytes - a.usedBytes).slice(0, 8);
   const sum = (key: "customers" | "messages30d" | "runs30d") => companies.reduce((total, company) => total + company[key], 0);
 
   return (
@@ -25,7 +26,7 @@ export default async function OverviewPage() {
         <Stat label="Pacientes" value={formatNumber(sum("customers"))} />
         <Stat label="Mensagens (30 dias)" value={formatNumber(sum("messages30d"))} />
         <Stat label="Execuções de IA (30 dias)" value={formatNumber(sum("runs30d"))} />
-        <Stat label="Banco de dados" value={formatBytes(totalStorage)} hint={`${collections.length} coleções · limite M0 512 MB`} />
+        <Stat label="Banco de dados" value={`${formatBytes(totalUsed)} de 512 MB`} hint={`${Math.round((totalUsed / 512e6) * 100)}% do limite M0 (dados + índices, sem compressão) · ${formatBytes(totalDisk)} em disco · ${collections.length} coleções`} />
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1.6fr_1fr]">
@@ -50,16 +51,16 @@ export default async function OverviewPage() {
           </div>
         </Card>
 
-        <Card title="Maiores coleções" description="Espaço ocupado (dados + índices)">
+        <Card title="Maiores coleções" description="Dados + índices, sem compressão — o que conta para o limite do Atlas">
           <ul className="space-y-2.5">
             {largest.map((collection) => (
               <li key={collection.name}>
                 <div className="flex justify-between text-xs">
                   <Link href={`/data/${collection.name}`} className="font-mono font-medium text-slate-ink hover:text-deep-teal">{collection.name}</Link>
-                  <span className="tabular-nums text-slate-ink/60">{formatBytes(collection.storageBytes)}</span>
+                  <span className="tabular-nums text-slate-ink/60">{formatBytes(collection.usedBytes)}</span>
                 </div>
                 <div className="mt-1 h-1.5 rounded-full bg-stone-100">
-                  <div className="h-1.5 rounded-full bg-deep-teal" style={{ width: `${Math.max(2, (collection.storageBytes / (largest[0]?.storageBytes || 1)) * 100)}%` }} />
+                  <div className="h-1.5 rounded-full bg-deep-teal" style={{ width: `${Math.max(2, (collection.usedBytes / (largest[0]?.usedBytes || 1)) * 100)}%` }} />
                 </div>
               </li>
             ))}

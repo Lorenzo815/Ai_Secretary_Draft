@@ -27,7 +27,7 @@ export default async function DataPage({ searchParams }: { searchParams: Promise
             </div>
             <div className="mt-3 flex justify-between text-xs text-slate-ink/60">
               <span><strong className="font-semibold text-slate-ink">{formatNumber(collection.count)}</strong> documentos</span>
-              <span>{formatBytes(collection.storageBytes)}</span>
+              <span title={`${formatBytes(collection.diskBytes)} em disco (comprimido)`}>{formatBytes(collection.usedBytes)}</span>
             </div>
           </Link>
         ))}
