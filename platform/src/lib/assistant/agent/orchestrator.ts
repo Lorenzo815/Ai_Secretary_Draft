@@ -49,6 +49,8 @@ export async function processNextAssistantJob() {
   return processCustomerAgentJob(job);
 }
 
+const DETERMINISTIC_REPLY_TOOLS = new Set(["calendar.book", "calendar.reschedule", "payment.request_deposit"]);
+
 export async function processCustomerAgentJob(job: AutomationJobDocument) {
   const runtimeConfig = getAssistantConfig();
 
@@ -225,10 +227,13 @@ export async function processCustomerAgentJob(job: AutomationJobDocument) {
           },
         });
 
+        // Confirmations and payment instructions built from server data go out as is: the model must not
+        // replace them (for example, a deposit result "awaiting_human_confirmation" once led it to hand off
+        // instead of sending the Pix details).
         const groundedReply = getGroundedToolReply(execution.output);
         if (
           groundedReply &&
-          (action.toolCall.tool === "calendar.book" || action.toolCall.tool === "calendar.reschedule") &&
+          DETERMINISTIC_REPLY_TOOLS.has(action.toolCall.tool) &&
           wasToolSuccessfullyExecuted(execution.output, action.toolCall.tool)
         ) {
           return finalize({

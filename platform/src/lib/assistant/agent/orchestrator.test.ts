@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   customer: vi.fn(), status: vi.fn(), send: vi.fn(), latestInbound: vi.fn(), saveMessage: vi.fn(), external: vi.fn(), sync: vi.fn(),
   complete: vi.fn(), defer: vi.fn(), fail: vi.fn(), current: vi.fn(), eligibility: vi.fn(), schedule: vi.fn(), qualification: vi.fn(),
   context: vi.fn(), saveContext: vi.fn(), generate: vi.fn(), configuration: vi.fn(), runtime: vi.fn(), checkpoint: vi.fn(),
-  start: vi.fn(), finish: vi.fn(), step: vi.fn(), execute: vi.fn(),
+  start: vi.fn(), finish: vi.fn(), step: vi.fn(), execute: vi.fn(), grounded: vi.fn(), succeeded: vi.fn(),
 }));
 vi.mock("../../crm", () => ({ findCustomerById: mocks.customer, updateCustomerServiceStatus: mocks.status }));
 vi.mock("../../whatsapp/client", () => ({ sendTextMessage: mocks.send }));
@@ -27,7 +27,7 @@ vi.mock("../../follow-up/service", () => ({
 }));
 vi.mock("../context", () => ({ loadAssistantContext: mocks.context, saveAssistantContext: mocks.saveContext }));
 vi.mock("../config", () => ({ getAssistantConfig: () => ({ recentMessageLimit: 40 }) }));
-vi.mock("../tools/execution", () => ({ getGroundedToolReply: () => null, wasToolSuccessfullyExecuted: () => false }));
+vi.mock("../tools/execution", () => ({ getGroundedToolReply: mocks.grounded, wasToolSuccessfullyExecuted: mocks.succeeded }));
 vi.mock("./model", () => ({ generateAgentAction: mocks.generate }));
 vi.mock("./repository", () => ({ getAgentConfiguration: mocks.configuration }));
 vi.mock("./runtime-context", () => ({ buildAgentRuntimeContext: mocks.runtime }));
@@ -78,6 +78,27 @@ beforeEach(() => {
   mocks.generate.mockResolvedValue({ value: structuredClone(final) });
   mocks.send.mockResolvedValue({ messageId: "wamid.oria" });
   mocks.eligibility.mockResolvedValue({ eligible: true, instructions: "Follow up", attempt: 1 });
+  mocks.grounded.mockReturnValue(null);
+  mocks.succeeded.mockReturnValue(false);
+});
+
+describe("deposit requests", () => {
+  it("sends the Pix details as soon as the deposit request succeeds, without letting the model hand off instead", async () => {
+    const pix = "Para garantir o horário, realize o sinal de R$ 100,00 via Pix. Chave: chave. Favorecido: Clínica.";
+    mocks.generate
+      .mockResolvedValueOnce({
+        value: { type: "tool_request", reasonCode: "persist_customer_data", toolCall: { tool: "payment.request_deposit", arguments: { confirmedByCustomer: true, payerEmail: null } } },
+      })
+      .mockResolvedValueOnce({ value: { ...final, decision: "human_handoff", message: "handoff" } });
+    mocks.execute.mockResolvedValue({ output: JSON.stringify({ ok: true, status: "awaiting_human_confirmation" }), mutation: true, retryable: false });
+    mocks.grounded.mockReturnValue(pix);
+    mocks.succeeded.mockReturnValue(true);
+
+    expect(await processCustomerAgentJob(job())).toMatchObject({ decision: "reply" });
+    expect(mocks.generate).toHaveBeenCalledOnce();
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ body: pix }));
+    expect(mocks.status).not.toHaveBeenCalledWith(expect.anything(), "waiting_human");
+  });
 });
 
 describe("AI appointment client names", () => {
