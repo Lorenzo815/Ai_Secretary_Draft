@@ -109,6 +109,7 @@ export async function createMercadoPagoPaymentRequest(input: {
   customerId: ObjectId;
   amountCents: number;
   payerEmail: string;
+  payerName?: string;
 }) {
   const payerEmail = input.payerEmail.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
@@ -148,6 +149,7 @@ export async function createMercadoPagoPaymentRequest(input: {
       paymentRequestId: request._id,
       amountCents: request.amountCents,
       payerEmail,
+      payerFirstName: input.payerName,
       description: "Sinal de atendimento Oria",
     });
     const updated = await requests.findOneAndUpdate(

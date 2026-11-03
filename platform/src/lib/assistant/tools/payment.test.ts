@@ -44,7 +44,7 @@ describe("shared deposit amount across payment modes", () => {
     const result = await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: "customer@example.com" });
 
     expect(mocks.createMercadoPagoPaymentRequest).toHaveBeenCalledWith({
-      customerId: context.customerId, amountCents: 12_345, payerEmail: "customer@example.com",
+      customerId: context.customerId, amountCents: 12_345, payerEmail: "customer@example.com", payerName: context.customerName,
     });
     expect(JSON.parse(result.output).amountCents).toBe(12_345);
     expect(mocks.createPaymentRequest).not.toHaveBeenCalled();

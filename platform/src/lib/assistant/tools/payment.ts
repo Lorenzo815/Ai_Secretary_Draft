@@ -27,6 +27,7 @@ export async function executePaymentRequestTool(
             customerId: context.customerId,
             amountCents: settings.payment.signalAmountCents,
             payerEmail: typeof args.payerEmail === "string" ? args.payerEmail : "",
+            payerName: context.customerName,
           })
         : await createPaymentRequest({
             customerId: context.customerId,

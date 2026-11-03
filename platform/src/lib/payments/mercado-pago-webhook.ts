@@ -43,9 +43,10 @@ export async function processMercadoPagoWebhook(input: {
   return { processed: true, status: providerPayment.status, ...completion };
 }
 
+// Order statuses (Checkout API via Orders): https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-management/status/order-status
 function mapTerminalStatus(status: string): "paid" | "rejected" | null {
-  if (status === "approved") return "paid";
-  if (["rejected", "cancelled", "refunded", "charged_back"].includes(status)) return "rejected";
+  if (status === "processed") return "paid";
+  if (["canceled", "failed", "refunded", "charged_back", "expired"].includes(status)) return "rejected";
   return null;
 }
 

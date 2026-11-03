@@ -4,6 +4,8 @@ export interface CreateProviderPaymentInput {
   paymentRequestId: ObjectId;
   amountCents: number;
   payerEmail: string;
+  /** Sent to the provider to help its anti-fraud checks. */
+  payerFirstName?: string;
   description: string;
 }
 

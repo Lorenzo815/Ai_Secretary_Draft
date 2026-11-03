@@ -45,6 +45,19 @@ describe("Mercado Pago webhook company routing", () => {
     expect(await response.json()).toEqual({ companyId: companyId.toHexString() });
   });
 
+  it("acknowledges notifications of other topics without processing them", async () => {
+    const response = await notify("?type=payment&data.id=123");
+
+    expect(await response.json()).toEqual({ processed: false, ignored: "payment" });
+    expect(mocks.processMercadoPagoWebhook).not.toHaveBeenCalled();
+  });
+
+  it("processes order notifications", async () => {
+    await notify("?type=order&data.id=ORD01ABC");
+
+    expect(mocks.processMercadoPagoWebhook).toHaveBeenCalledWith(expect.objectContaining({ dataId: "ORD01ABC" }));
+  });
+
   it("rejects a malformed company before processing", async () => {
     const response = await notify("?company=not-a-company");
 

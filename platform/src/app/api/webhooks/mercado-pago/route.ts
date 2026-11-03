@@ -5,8 +5,11 @@ import { processMercadoPagoWebhook, WebhookError } from "@/lib/payments/mercado-
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { data?: { id?: string | number } };
+    const body = await request.json() as { type?: string; topic?: string; data?: { id?: string | number } };
     const url = new URL(request.url);
+    // Only order notifications carry our charges (Checkout API via Orders); acknowledge anything else so it isn't retried.
+    const topic = url.searchParams.get("type") ?? url.searchParams.get("topic") ?? body.type ?? body.topic;
+    if (topic && topic !== "order") return NextResponse.json({ processed: false, ignored: topic });
     const dataId = String(url.searchParams.get("data.id") ?? body.data?.id ?? "");
     if (!dataId) return NextResponse.json({ error: "Identificador ausente." }, { status: 400 });
     // The original clinic's Mercado Pago account was registered without `company`. For any other
