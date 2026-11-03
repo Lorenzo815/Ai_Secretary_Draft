@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/login/actions";
-import { Building2, Database, History, LayoutDashboard, LogOut, Settings2 } from "lucide-react";
+import { Building2, Database, Eraser, History, LayoutDashboard, LogOut, Settings2 } from "lucide-react";
 
 const links = [
   { href: "/", label: "Visão geral", icon: LayoutDashboard },
   { href: "/companies", label: "Clínicas", icon: Building2 },
   { href: "/data", label: "Dados", icon: Database },
+  { href: "/cleanup", label: "Limpeza", icon: Eraser },
   { href: "/settings", label: "Oria", icon: Settings2 },
   { href: "/audit", label: "Auditoria", icon: History },
 ];

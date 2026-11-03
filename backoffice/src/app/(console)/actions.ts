@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { runAction } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth";
+import * as cleanup from "@/lib/cleanup";
 import * as companies from "@/lib/companies";
 import * as explorer from "@/lib/explorer";
 import * as oria from "@/lib/oria-settings";
@@ -153,5 +154,22 @@ export async function copyAiConfigAction(sourceId: string, targetIds: string[], 
     const copied = await companies.copyAiConfig(actor, sourceId, targetIds, confirmation);
     revalidatePath("/companies", "layout");
     return copied;
+  });
+}
+
+// ---------- history cleanup ----------
+
+export async function previewCleanupAction(scope: cleanup.CleanupScope) {
+  await requireOwner();
+  return runAction(() => cleanup.previewCleanup(scope));
+}
+
+export async function runCleanupAction(target: cleanup.CleanupTarget, scope: cleanup.CleanupScope, confirmation?: string) {
+  const actor = await requireOwner();
+  return runAction(async () => {
+    const result = await cleanup.runCleanup(actor, target, scope, confirmation);
+    revalidatePath("/");
+    revalidatePath("/data");
+    return result;
   });
 }
