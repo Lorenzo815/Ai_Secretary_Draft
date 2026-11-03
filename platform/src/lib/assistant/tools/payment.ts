@@ -4,7 +4,8 @@ import { extendHeldSchedulingPlanOptions, getHeldSchedulingPlanOption } from "..
 import { currentCompanyId } from "../../companies/context";
 import { legacyCompanyId } from "../../companies/ownership";
 import {
-  createMercadoPagoPaymentRequest, createPaymentRequest, depositForPlan, enabledPaymentMethods, getPaymentProviderConfiguration,
+  createMercadoPagoPaymentRequest, createPaymentRequest, depositForPlan, enabledPaymentMethods, findLastPayerEmail, getPaymentProviderConfiguration,
+  PAYER_EMAIL_PATTERN, PaymentInputError,
   MERCADO_PAGO_WEBHOOK_PATH, type MercadoPagoChannel, type PaymentAllocation, type PaymentRequestDocument,
 } from "../../payments";
 import type { ToolExecution, ToolExecutionContext } from "./contracts";
@@ -51,6 +52,14 @@ export async function executePaymentRequestTool(
     if (usesMercadoPago && channel && !methods.includes(channel)) {
       return validationError("method", "method_not_enabled", `A clínica não aceita ${channel === "pix" ? "Pix no chat" : "link de pagamento"}.`);
     }
+    // Mercado Pago requires the payer's e-mail. A missing one is asked to the patient (or reused from an
+    // earlier charge); it must never send the patient to the manual Pix fallback.
+    let payerEmail = typeof args.payerEmail === "string" ? args.payerEmail.trim().toLowerCase() : "";
+    if (usesMercadoPago && !PAYER_EMAIL_PATTERN.test(payerEmail)) payerEmail = (await findLastPayerEmail(context.customerId)) ?? "";
+    if (usesMercadoPago && !PAYER_EMAIL_PATTERN.test(payerEmail)) {
+      return validationError("payerEmail", "payer_email_required",
+        "O Mercado Pago exige o e-mail do pagador. Peça o e-mail ao paciente e chame payment.request_deposit de novo com payerEmail.");
+    }
 
     let payment: PaymentRequestDocument;
     try {
@@ -58,7 +67,7 @@ export async function executePaymentRequestTool(
         ? await createMercadoPagoPaymentRequest({
             customerId: context.customerId,
             amountCents,
-            payerEmail: typeof args.payerEmail === "string" ? args.payerEmail : "",
+            payerEmail,
             payerName: context.customerName,
             channel,
             settings: providerSettings.mercadoPago,
@@ -73,7 +82,8 @@ export async function executePaymentRequestTool(
             allocation,
           });
     } catch (error) {
-      if (!usesMercadoPago || !providerSettings.humanFallbackEnabled) throw error;
+      if (!usesMercadoPago || !providerSettings.humanFallbackEnabled || error instanceof PaymentInputError) throw error;
+      console.warn("Mercado Pago charge failed; using manual Pix fallback.", { error: error instanceof Error ? error.message.slice(0, 300) : "Unknown" });
       payment = await createPaymentRequest({
         customerId: context.customerId,
         amountCents,

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getPaymentProviderConfiguration: vi.fn(),
   extendHeldSchedulingPlanOptions: vi.fn(),
   getHeldSchedulingPlanOption: vi.fn(),
+  findLastPayerEmail: vi.fn(),
 }));
 
 vi.mock("../../payments", async () => {
@@ -21,6 +22,9 @@ vi.mock("../../payments", async () => {
       return { ...payment, required: depositRequired(payment, { hasPaidDepositBefore: false }) };
     },
     MERCADO_PAGO_WEBHOOK_PATH: "/api/webhooks/mercado-pago",
+    PAYER_EMAIL_PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+    PaymentInputError: class PaymentInputError extends Error {},
+    findLastPayerEmail: mocks.findLastPayerEmail,
     createPaymentRequest: mocks.createPaymentRequest,
     createMercadoPagoPaymentRequest: mocks.createMercadoPagoPaymentRequest,
     getPaymentProviderConfiguration: mocks.getPaymentProviderConfiguration,
@@ -161,6 +165,27 @@ describe("payment.request_deposit", () => {
 
     expect(mocks.createPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 10_000, allocation }));
     expect(result).toMatchObject({ ok: true, amountCents: 10_000, provider: "manual", channel: "manual_pix" });
+  });
+
+  it("asks the patient's e-mail instead of falling back to manual Pix", async () => {
+    mocks.getPaymentProviderConfiguration.mockResolvedValue(provider());
+    mocks.findLastPayerEmail.mockResolvedValue(null);
+
+    const result = await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: null, method: "pix" });
+
+    expect(result.retryable).toBe(true);
+    expect(JSON.parse(result.output)).toMatchObject({ ok: false, errors: [{ field: "payerEmail", code: "payer_email_required" }] });
+    expect(mocks.createMercadoPagoPaymentRequest).not.toHaveBeenCalled();
+    expect(mocks.createPaymentRequest).not.toHaveBeenCalled();
+  });
+
+  it("reuses the e-mail the patient gave for an earlier charge", async () => {
+    mocks.getPaymentProviderConfiguration.mockResolvedValue(provider());
+    mocks.findLastPayerEmail.mockResolvedValue("earlier@example.com");
+
+    await executePaymentRequestTool(context, { confirmedByCustomer: true, payerEmail: null, method: "pix" });
+
+    expect(mocks.createMercadoPagoPaymentRequest).toHaveBeenCalledWith(expect.objectContaining({ payerEmail: "earlier@example.com" }));
   });
 
   it("reports the failure when Mercado Pago fails and fallback is off", async () => {

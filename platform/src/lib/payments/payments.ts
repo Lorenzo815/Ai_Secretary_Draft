@@ -178,7 +178,7 @@ export async function createMercadoPagoPaymentRequest(input: {
 }) {
   const payerEmail = input.payerEmail.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
-    throw new Error("O e-mail do pagador é obrigatório para gerar a cobrança no Mercado Pago.");
+    throw new PaymentInputError("O e-mail do pagador é obrigatório para gerar a cobrança no Mercado Pago.");
   }
   const requests = await getPaymentRequestsCollection();
   await requests.createIndex(
@@ -454,4 +454,18 @@ export async function deleteManualPaymentEntry(paymentRequestId: ObjectId) {
   return (await getPaymentRequestsCollection()).findOneAndDelete({
     _id: paymentRequestId, provider: "manual", manualMethod: { $exists: true },
   });
+}
+
+/** Invalid input from the conversation (e.g. no payer e-mail): the AI must ask the patient, not fall back to manual Pix. */
+export class PaymentInputError extends Error {}
+
+export const PAYER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** E-mail the patient gave for an earlier Mercado Pago charge, reused when the AI doesn't send one. */
+export async function findLastPayerEmail(customerId: ObjectId) {
+  const request = await (await getPaymentRequestsCollection()).findOne(
+    { customerId, payerEmail: { $exists: true, $ne: "" } },
+    { sort: { createdAt: -1 }, projection: { payerEmail: 1 } },
+  );
+  return request?.payerEmail ?? null;
 }
