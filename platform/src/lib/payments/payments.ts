@@ -198,7 +198,8 @@ export async function createMercadoPagoPaymentRequest(input: {
   if (existing) {
     const channel = existing.channel ?? "pix";
     const expired = existing.expiresAt !== undefined && existing.expiresAt <= now;
-    if (channel === input.channel && !expired && sameBooking(existing, input.allocation)) return existing;
+    // A request without a provider charge (creation interrupted) is never reused: it is replaced below.
+    if (channel === input.channel && !expired && existing.externalPaymentId && sameBooking(existing, input.allocation)) return existing;
     if (existing.externalPaymentId) await cancelCharge({ method: channel, externalId: existing.externalPaymentId });
     await requests.updateOne(
       { _id: existing._id, status: "awaiting_provider_confirmation" },
