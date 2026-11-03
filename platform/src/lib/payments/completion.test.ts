@@ -54,9 +54,9 @@ describe("payment completion scheduling holds", () => {
 
     await completePaymentTransition(payment, "paid");
 
-    expect(mocks.confirmHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId);
+    expect(mocks.confirmHeldSchedulingPlanOptions).toHaveBeenCalledWith(customerId, { paymentRequestId: payment._id });
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
-      body: "Sinal confirmado pela equipe. A reserva temporária foi confirmada e o horário escolhido está agendado.",
+      body: "Sinal confirmado pela equipe. Seu horário está agendado; vamos confirmar sua presença mais perto da data.",
     }));
     expect(mocks.releaseHeldSchedulingPlanOptions).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe("payment completion scheduling holds", () => {
     await completePaymentTransition({ ...payment, provider: "mercado_pago" }, "paid");
 
     expect(mocks.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
-      body: "Sinal confirmado pelo Mercado Pago. A reserva temporária foi confirmada e os horários escolhidos estão agendados.",
+      body: "Sinal confirmado pelo Mercado Pago. Seus horários estão agendados; vamos confirmar sua presença mais perto da data.",
     }));
   });
 

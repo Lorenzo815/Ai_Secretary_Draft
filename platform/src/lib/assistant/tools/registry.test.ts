@@ -145,8 +145,9 @@ describe("tool registry", () => {
       required: string[];
       properties: Record<string, unknown>;
     };
-    expect(schema.required).toEqual(["confirmedByCustomer", "payerEmail"]);
+    expect(schema.required).toEqual(["confirmedByCustomer", "payerEmail", "method"]);
     expect(schema.properties).toHaveProperty("payerEmail");
+    expect(schema.properties).toHaveProperty("method");
     expect(toolRegistry["payment.request_deposit"].promptInstructions).toContain("runtime.operations.paymentProvider");
     expect(toolRegistry["payment.request_deposit"].promptInstructions).toContain("não é necessário já ter pago");
   });

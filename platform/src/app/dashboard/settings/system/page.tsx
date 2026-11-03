@@ -70,6 +70,7 @@ export default async function SystemSettingsPage() {
         activeProvider: paymentProvider.activeProvider,
         humanFallbackEnabled: paymentProvider.humanFallbackEnabled,
         mercadoPago: mercadoPagoStatus,
+        methods: paymentProvider.mercadoPago,
       }}
       initialCustomers={customers.map((customer) => ({
         id: customer._id.toHexString(),

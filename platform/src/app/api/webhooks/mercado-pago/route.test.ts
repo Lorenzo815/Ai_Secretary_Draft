@@ -34,7 +34,7 @@ describe("Mercado Pago webhook company routing", () => {
     const response = await notify();
 
     expect(await response.json()).toEqual({ companyId: legacyCompanyId().toHexString() });
-    expect(mocks.processMercadoPagoWebhook).toHaveBeenCalledWith({ dataId: "123", signature: "ts=1,v1=abc", requestId: "req" });
+    expect(mocks.processMercadoPagoWebhook).toHaveBeenCalledWith({ topic: "order", dataId: "123", signature: "ts=1,v1=abc", requestId: "req" });
   });
 
   it("processes another company's notification inside that company", async () => {
@@ -46,10 +46,16 @@ describe("Mercado Pago webhook company routing", () => {
   });
 
   it("acknowledges notifications of other topics without processing them", async () => {
-    const response = await notify("?type=payment&data.id=123");
+    const response = await notify("?type=merchant_order&data.id=123");
 
-    expect(await response.json()).toEqual({ processed: false, ignored: "payment" });
+    expect(await response.json()).toEqual({ processed: false, ignored: "merchant_order" });
     expect(mocks.processMercadoPagoWebhook).not.toHaveBeenCalled();
+  });
+
+  it("processes payment notifications from payment links", async () => {
+    await notify("?type=payment&data.id=123");
+
+    expect(mocks.processMercadoPagoWebhook).toHaveBeenCalledWith(expect.objectContaining({ topic: "payment", dataId: "123" }));
   });
 
   it("processes order notifications", async () => {

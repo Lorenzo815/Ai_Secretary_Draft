@@ -79,7 +79,19 @@ export default function PaymentReviewPanel({
           <button type="button" disabled={saving} onClick={() => review("confirm")} className="min-h-10 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white disabled:opacity-50">Confirmar pagamento</button>
         </div>
       ) : payment.status === "awaiting_provider_confirmation" ? (
-        <p className="mt-3 text-xs text-stone">A confirmação será registrada automaticamente quando o Mercado Pago aprovar o Pix.</p>
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-stone">A confirmação será registrada automaticamente quando o Mercado Pago aprovar o pagamento.</p>
+          <details className="text-xs text-stone">
+            <summary className="cursor-pointer font-semibold text-slate-ink">O pagamento aparece no Mercado Pago, mas não foi confirmado aqui?</summary>
+            <div className="mt-2 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+              <label className="font-semibold text-slate-ink">
+                Observação (ex.: ID do pagamento no Mercado Pago)
+                <input value={note} onChange={(event) => setNote(event.target.value)} className="mt-1.5 min-h-10 w-full rounded-md border border-mist px-3 text-sm font-normal outline-none focus:border-deep-teal" />
+              </label>
+              <button type="button" disabled={saving || !note.trim()} onClick={() => review("confirm")} className="min-h-10 rounded-md border border-deep-teal px-4 text-sm font-semibold text-deep-teal disabled:opacity-50">Confirmar manualmente</button>
+            </div>
+          </details>
+        </div>
       ) : payment.status === "provider_error" ? (
         <p className="mt-3 text-xs font-medium text-red-700">Não foi possível criar ou consultar a cobrança automática. Verifique o provedor nas configurações.</p>
       ) : (

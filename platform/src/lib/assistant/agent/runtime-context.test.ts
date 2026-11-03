@@ -15,10 +15,14 @@ vi.mock("../../calendar", () => ({
   getActiveSchedulingPlanOption: mocks.getActiveSchedulingPlanOption,
   getCalendarSettings: mocks.getCalendarSettings,
 }));
-vi.mock("../../payments", () => ({
-  getLatestPaymentRequest: mocks.getLatestPaymentRequest,
-  getPaymentProviderConfiguration: mocks.getPaymentProviderConfiguration,
-}));
+vi.mock("../../payments", async () => {
+  const { enabledPaymentMethods } = await import("../../payments/payment-methods");
+  return {
+    enabledPaymentMethods,
+    getLatestPaymentRequest: mocks.getLatestPaymentRequest,
+    getPaymentProviderConfiguration: mocks.getPaymentProviderConfiguration,
+  };
+});
 vi.mock("../../crm", () => ({ getCustomerProfileSnapshot: mocks.getCustomerProfileSnapshot }));
 
 import { buildAgentRuntimeContext } from "./runtime-context";
@@ -48,6 +52,7 @@ describe("agent runtime event authorization", () => {
     mocks.getPaymentProviderConfiguration.mockResolvedValue({
       activeProvider: provider,
       humanFallbackEnabled: true,
+      mercadoPago: { pixInChat: true, paymentLink: true, linkMethods: ["credit_card", "ticket"], maxInstallments: 3, pixExpiryMinutes: 60, linkExpiryHours: 24 },
       updatedBy: "server-only-metadata",
     });
     mocks.getActiveSchedulingPlanOption.mockResolvedValue({
@@ -81,6 +86,9 @@ describe("agent runtime event authorization", () => {
       serviceStatus: "ai_active",
       paymentStatus: null,
       paymentProvider: provider,
+      paymentMethods: provider === "mercado_pago" ? ["pix", "payment_link"] : ["pix"],
+      paymentLinkMethods: ["credit_card", "ticket"],
+      maxInstallments: 3,
       activeSchedulingOption: null,
     });
     expect(JSON.stringify(runtime)).not.toContain("server-only-metadata");

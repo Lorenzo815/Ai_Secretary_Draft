@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   insertOne: vi.fn(),
   replaceOne: vi.fn(),
   updateOne: vi.fn(),
+  updateMany: vi.fn(),
+  deleteMany: vi.fn(),
   find: vi.fn(),
   sort: vi.fn(),
   limit: vi.fn(),
@@ -25,6 +27,7 @@ vi.mock("../qualification/triggers", () => ({
 }));
 
 import {
+  confirmAppointmentHolds, extendAppointmentHolds,
   findCustomerAppointments, findUpcomingCustomerAppointments, getCalendarSettings, updateCalendarSettings,
   type AppointmentDocument, type CalendarSettingsDocument,
 } from "./calendar";
@@ -160,6 +163,42 @@ describe("scheduled customer appointment queries", () => {
         $or: [{ status: "scheduled" }, { status: "held", holdExpiresAt: { $gt: now } }],
       }));
     });
+});
+
+describe("deposit confirmation and holds", () => {
+  const customerId = new ObjectId();
+  const start = new Date(Date.now() + 5 * 24 * 3_600_000);
+  const held = (holdExpiresAt: Date) => ({ _id: new ObjectId(), customerId, status: "held", startAt: start, holdExpiresAt });
+
+  it("turns paid holds into bookings awaiting attendance confirmation, linked to the payment", async () => {
+    const paymentRequestId = new ObjectId();
+    mocks.toArray.mockResolvedValue([held(new Date(Date.now() + 3_600_000))]);
+    mocks.updateMany.mockResolvedValue({ modifiedCount: 1 });
+
+    const [confirmed] = await confirmAppointmentHolds(customerId, { paymentRequestId });
+
+    const [, update] = mocks.updateMany.mock.calls[0];
+    expect(update.$set).toMatchObject({ status: "scheduled", confirmationStatus: "pending", paymentRequestId, paidAt: expect.any(Date) });
+    expect(update.$unset).toEqual({ holdExpiresAt: "", schedulingOptionId: "" });
+    expect(confirmed).toMatchObject({ status: "scheduled", confirmationStatus: "pending", paymentRequestId });
+  });
+
+  it("extends holds until the payment expires, never past the appointment's start and never shortening them", async () => {
+    mocks.toArray.mockResolvedValue([held(new Date(Date.now() + 3_600_000))]);
+
+    const target = await extendAppointmentHolds(customerId, new Date(start.getTime() + 24 * 3_600_000));
+
+    expect(target).toEqual(start);
+    const [filter, update] = mocks.updateMany.mock.calls[0];
+    expect(filter.holdExpiresAt).toEqual({ $gt: expect.any(Date), $lt: start });
+    expect(update.$set.holdExpiresAt).toEqual(start);
+  });
+
+  it("does nothing when there is no active hold", async () => {
+    mocks.toArray.mockResolvedValue([]);
+    await expect(extendAppointmentHolds(customerId, new Date(Date.now() + 3_600_000))).resolves.toBeNull();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("new clinic calendar", () => {

@@ -25,6 +25,7 @@ export const COMPANY_OWNED_COLLECTIONS = [
   "payment_provider_config",
   "payment_provider_credentials",
   "payment_requests",
+  "payment_transactions",
   "qualification_milestones",
   "users",
   "whatsapp_coexistence_webhook_events",

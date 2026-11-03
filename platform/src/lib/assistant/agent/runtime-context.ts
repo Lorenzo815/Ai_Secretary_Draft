@@ -3,7 +3,7 @@ import "server-only";
 import { DateTime } from "luxon";
 import type { CustomerProfileSnapshot } from "../../crm";
 import { getActiveSchedulingPlanOption, getCalendarSettings } from "../../calendar";
-import { getLatestPaymentRequest, getPaymentProviderConfiguration } from "../../payments";
+import { enabledPaymentMethods, getLatestPaymentRequest, getPaymentProviderConfiguration } from "../../payments";
 import type { CustomerDocument } from "../../crm";
 import { getCustomerProfileSnapshot } from "../../crm";
 import type { AgentConfigurationDocument, AgentRuntimeContext, DataCollectionRule } from "./contracts";
@@ -53,6 +53,9 @@ export async function buildAgentRuntimeContext(input: {
       serviceStatus: input.customer.serviceStatus ?? "ai_active",
       paymentStatus: payment?.status ?? null,
       paymentProvider: paymentProvider.activeProvider,
+      paymentMethods: enabledPaymentMethods(paymentProvider),
+      paymentLinkMethods: paymentProvider.mercadoPago.paymentLink ? paymentProvider.mercadoPago.linkMethods : [],
+      maxInstallments: paymentProvider.mercadoPago.maxInstallments,
       activeSchedulingOption: visibleSchedulingOption,
     },
     clinic: {

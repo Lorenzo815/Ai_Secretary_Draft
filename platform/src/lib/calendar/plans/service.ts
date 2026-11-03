@@ -9,6 +9,7 @@ import { scheduleFirstAppointmentQualification } from "../../qualification/trigg
 import {
   bookAppointment,
   confirmAppointmentHolds,
+  extendAppointmentHolds,
   findAvailableSlots,
   getCalendarSettings,
   holdAppointment,
@@ -333,8 +334,8 @@ export async function holdSchedulingPlanOption(input: {
   };
 }
 
-export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId) {
-  const appointments = await confirmAppointmentHolds(customerId);
+export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId, payment?: { paymentRequestId: ObjectId }) {
+  const appointments = await confirmAppointmentHolds(customerId, payment);
   if (appointments.length === 0) return [];
   const groupIds = appointments.flatMap((appointment) => appointment.visitGroupId ? [appointment.visitGroupId] : []);
   await (await getOptionsCollection()).updateMany(
@@ -346,6 +347,17 @@ export async function confirmHeldSchedulingPlanOptions(customerId: ObjectId) {
     { $set: { status: "booked", bookedAt: new Date() } },
   );
   return appointments;
+}
+
+/** Extends the held slots and the held option together, until the payment can no longer arrive. */
+export async function extendHeldSchedulingPlanOptions(customerId: ObjectId, until: Date) {
+  const target = await extendAppointmentHolds(customerId, until);
+  if (!target) return null;
+  await (await getOptionsCollection()).updateMany(
+    { customerId, status: "held", expiresAt: { $gt: new Date(), $lt: target } },
+    { $set: { expiresAt: target } },
+  );
+  return target;
 }
 
 export async function releaseHeldSchedulingPlanOptions(customerId: ObjectId) {

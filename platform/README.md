@@ -61,6 +61,38 @@ salvamento independente do valor do sinal. Mercado Pago usa as credenciais da
 conta configurada. Alterações não modificam cobranças pendentes nem a
 configuração já carregada por uma execução do agente em andamento.
 
+### Meios de pagamento (Mercado Pago)
+
+- **Pix no chat**: pedido via Orders API (`/v1/orders`); a IA envia o código copia
+  e cola com a validade configurada (15 min a 24 h).
+- **Link de pagamento**: Checkout Pro (`/checkout/preferences`). A clínica escolhe
+  cartão de crédito (com o máximo de parcelas), débito, boleto e/ou Pix, e a validade
+  do link. Dados de cartão nunca passam pelo WhatsApp.
+- Com os dois ativos, a IA pergunta ao cliente qual prefere (`method` da ferramenta).
+  Um pagamento pendente do mesmo meio é reaproveitado; um vencido ou de outro meio é
+  encerrado (e cancelado no Mercado Pago quando possível) antes de criar outro.
+- **Reserva do horário**: dura até o vencimento do pagamento; com boleto, mais 3 dias
+  para compensação. Nunca ultrapassa o início do atendimento.
+- **Credenciais de teste e de produção** começam com `APP_USR-`; "Testar conta" mostra
+  qual é. Ambas funcionam com essas APIs.
+- **Webhook**: eventos **Order** (Pix no chat) e **Pagamentos** (link e todas as
+  tentativas). Uma tentativa de cartão recusada não encerra a cobrança; o cliente
+  pode tentar de novo no mesmo link.
+
+### Confirmação e registro financeiro
+
+- Um sinal confirmado (pelo Mercado Pago ou pela equipe) transforma a reserva em
+  agendamento **A confirmar** (`status: scheduled`, `confirmationStatus: pending`),
+  ligado ao pagamento (`paymentRequestId`, `paidAt`). A confirmação de presença é uma
+  etapa separada.
+- `payment_transactions` é o livro-caixa: uma linha por evento processado
+  (aprovado, recusado, estornado, contestado), com valor pago, taxas e líquido do
+  Mercado Pago, meio, parcelas e data, além das conferências da equipe (Pix manual,
+  fallback e confirmação manual de uma cobrança do Mercado Pago). Linhas não são
+  editadas; uma mudança de status gera uma nova linha.
+- Teste opcional contra o sandbox, com as credenciais de uma clínica (nunca no CI):
+  `MP_LIVE_TEST=1 MP_TEST_COMPANY_ID=<id> npx vitest run src/lib/payments/mercado-pago.live.test.ts`.
+
 ## Assistente
 
 O webhook persiste cada mensagem e publica eventos em uma fila genérica no
@@ -94,9 +126,9 @@ invariantes e pontos de extensão.
 Webhooks do WhatsApp devem apontar para `/api/webhooks/whatsapp`. Para
 confirmação automática do Pix, cadastre a URL pública exibida em Configurações
 (`/api/webhooks/mercado-pago` para a empresa inicial e
-`/api/webhooks/mercado-pago?company=<companyId>` para as demais) nas notificações
-de pagamentos do Mercado Pago da própria clínica. A assinatura é validada com o
-segredo da empresa indicada.
+`/api/webhooks/mercado-pago?company=<companyId>` para as demais) na aplicação do
+Mercado Pago da própria clínica, com os eventos **Order** e **Pagamentos**. A
+assinatura é validada com o segredo da empresa indicada.
 Configure `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_WEBHOOK_SECRET` no
 ambiente (somente empresa inicial) ou armazene-os pela tela de configurações. O armazenamento no banco
 exige `PAYMENT_CREDENTIALS_ENCRYPTION_KEY` com 32 bytes em Base64. Variáveis de

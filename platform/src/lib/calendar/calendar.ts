@@ -82,6 +82,9 @@ export interface AppointmentDocument {
   visitGroupId?: ObjectId;
   recurrence?: AppointmentRecurrenceMetadata;
   notes?: string;
+  /** Set when a deposit confirmed this booking (by Mercado Pago or by staff). */
+  paymentRequestId?: ObjectId;
+  paidAt?: Date;
   source: "assistant" | "manual";
   createdAt: Date;
   updatedAt: Date;
@@ -771,7 +774,11 @@ export async function replaceAppointmentHolds(input: {
   return replacements;
 }
 
-export async function confirmAppointmentHolds(customerId: ObjectId) {
+/**
+ * A confirmed deposit turns the customer's held slots into bookings awaiting attendance confirmation
+ * ("A confirmar"): the patient confirms the time later, in a separate step.
+ */
+export async function confirmAppointmentHolds(customerId: ObjectId, payment?: { paymentRequestId: ObjectId }) {
   const appointments = await getAppointmentsCollection();
   await releaseExpiredAppointmentHolds();
   const now = new Date();
@@ -789,7 +796,10 @@ export async function confirmAppointmentHolds(customerId: ObjectId) {
       holdExpiresAt: { $gt: now },
     },
     {
-      $set: { status: "scheduled", updatedAt: now },
+      $set: {
+        status: "scheduled", confirmationStatus: "pending", updatedAt: now,
+        ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt: now } : {}),
+      },
       $unset: { holdExpiresAt: "", schedulingOptionId: "" },
     },
   );
@@ -803,10 +813,30 @@ export async function confirmAppointmentHolds(customerId: ObjectId) {
   return held.map((appointment) => ({
     ...appointment,
     status: "scheduled" as const,
+    confirmationStatus: "pending" as const,
+    ...(payment ? { paymentRequestId: payment.paymentRequestId, paidAt: now } : {}),
     updatedAt: now,
     holdExpiresAt: undefined,
     schedulingOptionId: undefined,
   }));
+}
+
+/**
+ * Keeps the customer's active holds until `until` (never shortening them, never past the appointment's start),
+ * so a slot isn't released while the patient can still pay.
+ */
+export async function extendAppointmentHolds(customerId: ObjectId, until: Date) {
+  const appointments = await getAppointmentsCollection();
+  const now = new Date();
+  const held = await appointments.find({ customerId, status: "held", holdExpiresAt: { $gt: now } }).toArray();
+  if (held.length === 0) return null;
+  const firstStart = Math.min(...held.map((appointment) => appointment.startAt.getTime()));
+  const target = new Date(Math.min(until.getTime(), firstStart));
+  await appointments.updateMany(
+    { _id: { $in: held.map((appointment) => appointment._id) }, status: "held", holdExpiresAt: { $gt: now, $lt: target } },
+    { $set: { holdExpiresAt: target, updatedAt: now } },
+  );
+  return target;
 }
 
 export async function releaseAppointmentHolds(customerId: ObjectId, preserveVisitGroupId?: ObjectId) {

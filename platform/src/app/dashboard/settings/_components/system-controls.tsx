@@ -14,6 +14,21 @@ interface MercadoPagoStatus {
   webhookPath: string;
 }
 
+type LinkMethod = "credit_card" | "debit_card" | "ticket" | "bank_transfer";
+interface MercadoPagoMethods {
+  pixInChat: boolean;
+  paymentLink: boolean;
+  linkMethods: LinkMethod[];
+  maxInstallments: number;
+  pixExpiryMinutes: number;
+  linkExpiryHours: number;
+}
+const LINK_METHOD_LABELS: Array<[LinkMethod, string]> = [
+  ["credit_card", "Cartão de crédito"], ["debit_card", "Cartão de débito"], ["ticket", "Boleto"], ["bank_transfer", "Pix"],
+];
+const PIX_EXPIRY_OPTIONS: Array<[number, string]> = [[15, "15 min"], [30, "30 min"], [60, "1 hora"], [240, "4 horas"], [720, "12 horas"], [1440, "24 horas"]];
+const LINK_EXPIRY_OPTIONS: Array<[number, string]> = [[1, "1 hora"], [6, "6 horas"], [24, "24 horas"], [48, "2 dias"], [72, "3 dias"], [168, "7 dias"]];
+
 interface PaymentSettings {
   configured: boolean;
   recipientName: string;
@@ -28,7 +43,7 @@ export default function SystemControls({
 }: {
   initialProcessingEnabled: boolean;
   initialPayment: PaymentSettings;
-  initialPaymentProvider: { activeProvider: PaymentProvider; humanFallbackEnabled: boolean; mercadoPago: MercadoPagoStatus };
+  initialPaymentProvider: { activeProvider: PaymentProvider; humanFallbackEnabled: boolean; mercadoPago: MercadoPagoStatus; methods: MercadoPagoMethods };
   initialCustomers: Array<{ id: string; label: string }>;
 }) {
   const router = useRouter();
@@ -54,6 +69,9 @@ export default function SystemControls({
   const [providerBaseline, setProviderBaseline] = useState(initialPaymentProvider.activeProvider);
   const [humanFallbackEnabled, setHumanFallbackEnabled] = useState(initialPaymentProvider.humanFallbackEnabled);
   const [fallbackBaseline, setFallbackBaseline] = useState(initialPaymentProvider.humanFallbackEnabled);
+  const [methods, setMethods] = useState(initialPaymentProvider.methods);
+  const [methodsBaseline, setMethodsBaseline] = useState(initialPaymentProvider.methods);
+  const [accountMode, setAccountMode] = useState<"test" | "production" | null>(null);
   const [mercadoPagoStatus, setMercadoPagoStatus] = useState(initialPaymentProvider.mercadoPago);
   const [accessToken, setAccessToken] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -66,7 +84,8 @@ export default function SystemControls({
   const deletionEnabled = confirmationAccepted && deletionTargetSelected && !processingEnabled && !saving && !deleting;
   const paymentDirty = Boolean(pixKey || recipientName !== recipientBaseline);
   const amountDirty = signalAmount !== amountBaseline;
-  const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline;
+  const providerDirty = paymentProvider !== providerBaseline || humanFallbackEnabled !== fallbackBaseline
+    || JSON.stringify(methods) !== JSON.stringify(methodsBaseline);
   const credentialDirty = Boolean(accessToken || webhookSecret);
   const refreshBlocked = paymentDirty || amountDirty || providerDirty || credentialDirty || Boolean(confirmation) || saving || savingPayment || savingAmount || savingProvider || savingCredential || deleting;
 
@@ -210,12 +229,13 @@ export default function SystemControls({
       const response = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentProvider: { activeProvider: paymentProvider, humanFallbackEnabled } }),
+        body: JSON.stringify({ paymentProvider: { activeProvider: paymentProvider, humanFallbackEnabled, mercadoPago: methods } }),
       });
       const result = await response.json() as { credentialStatus?: MercadoPagoStatus; error?: string };
       if (!response.ok) throw new Error(result.error ?? "Não foi possível salvar o pipeline de pagamento.");
       setProviderBaseline(paymentProvider);
       setFallbackBaseline(humanFallbackEnabled);
+      setMethodsBaseline(methods);
       if (result.credentialStatus) setMercadoPagoStatus(result.credentialStatus);
       setMessage("Pipeline de confirmação de pagamento atualizado.");
     } catch (error) {
@@ -252,9 +272,13 @@ export default function SystemControls({
     setAccountHealth({ state: "checking", text: "Consultando a conta sem criar transação..." });
     try {
       const response = await fetch("/api/settings", { method: "POST" });
-      const result = await response.json() as { account?: { accountId: string; nickname: string; durationMs: number }; error?: string };
+      const result = await response.json() as { account?: { accountId: string; nickname: string; durationMs: number; testAccount?: boolean }; error?: string };
       if (!response.ok || !result.account) throw new Error(result.error ?? "O teste da conta falhou.");
-      setAccountHealth({ state: "working", text: `${result.account.nickname} · conta ${result.account.accountId} · ${result.account.durationMs} ms` });
+      setAccountMode(result.account.testAccount ? "test" : "production");
+      setAccountHealth({
+        state: "working",
+        text: `${result.account.nickname} · conta ${result.account.accountId} · ${result.account.testAccount ? "credenciais de TESTE (pagamentos fictícios)" : "credenciais de PRODUÇÃO (pagamentos reais)"} · ${result.account.durationMs} ms`,
+      });
     } catch (error) {
       setAccountHealth({ state: "failed", text: error instanceof Error ? error.message : "O teste da conta falhou." });
     }
@@ -278,6 +302,34 @@ export default function SystemControls({
           <div>
             <fieldset><legend className="text-xs font-semibold text-slate-ink">Confirmação ativa</legend><div className="mt-1.5 grid grid-cols-2 overflow-hidden rounded-md border border-mist bg-white p-1">{([ ["mercado_pago", "Mercado Pago"], ["manual", "Humana"] ] as const).map(([value, label]) => <label key={value} className={`flex min-h-9 cursor-pointer items-center justify-center rounded px-3 text-sm font-semibold ${paymentProvider === value ? "bg-slate-ink text-white" : "text-stone hover:bg-pearl"}`}><input type="radio" name="paymentProvider" value={value} checked={paymentProvider === value} onChange={() => setPaymentProvider(value)} className="sr-only" />{label}</label>)}</div></fieldset>
             <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs leading-5 text-stone"><input type="checkbox" checked={humanFallbackEnabled} onChange={(event) => setHumanFallbackEnabled(event.target.checked)} className="mt-1 accent-deep-teal" /><span><strong className="text-slate-ink">Fallback humano</strong><br />Se a cobrança automática não puder ser criada, usa a chave Pix e aguarda revisão da equipe.</span></label>
+            {paymentProvider === "mercado_pago" && (
+              <fieldset className="mt-4 space-y-3 rounded-md border border-mist p-3">
+                <legend className="px-1 text-xs font-semibold text-slate-ink">Meios aceitos pelo Mercado Pago</legend>
+                <label className="flex cursor-pointer items-start gap-2 text-xs leading-5 text-stone"><input type="checkbox" checked={methods.pixInChat} onChange={(event) => setMethods({ ...methods, pixInChat: event.target.checked })} className="mt-1 accent-deep-teal" /><span><strong className="text-slate-ink">Pix no chat</strong><br />A IA envia o código Pix copia e cola; a confirmação é automática.</span></label>
+                {methods.pixInChat && (
+                  <label className="block pl-6 text-xs font-semibold text-slate-ink">Validade do código Pix
+                    <select value={methods.pixExpiryMinutes} onChange={(event) => setMethods({ ...methods, pixExpiryMinutes: Number(event.target.value) })} className="mt-1 min-h-9 w-full rounded-md border border-mist px-2 text-sm font-normal">{PIX_EXPIRY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                  </label>
+                )}
+                <label className="flex cursor-pointer items-start gap-2 text-xs leading-5 text-stone"><input type="checkbox" checked={methods.paymentLink} onChange={(event) => setMethods({ ...methods, paymentLink: event.target.checked })} className="mt-1 accent-deep-teal" /><span><strong className="text-slate-ink">Link de pagamento</strong><br />A IA envia um link do Mercado Pago para pagar com cartão ou boleto. Dados de cartão nunca passam pelo WhatsApp.</span></label>
+                {methods.paymentLink && (
+                  <div className="space-y-2 pl-6">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">{LINK_METHOD_LABELS.map(([value, label]) => <label key={value} className="flex items-center gap-1.5 text-xs text-slate-ink"><input type="checkbox" checked={methods.linkMethods.includes(value)} onChange={(event) => setMethods({ ...methods, linkMethods: event.target.checked ? [...methods.linkMethods, value] : methods.linkMethods.filter((item) => item !== value) })} className="accent-deep-teal" />{label}</label>)}</div>
+                    {methods.linkMethods.includes("credit_card") && (
+                      <label className="block text-xs font-semibold text-slate-ink">Parcelas no cartão de crédito
+                        <select value={methods.maxInstallments} onChange={(event) => setMethods({ ...methods, maxInstallments: Number(event.target.value) })} className="mt-1 min-h-9 w-full rounded-md border border-mist px-2 text-sm font-normal">{Array.from({ length: 12 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value === 1 ? "À vista" : `Até ${value}x`}</option>)}</select>
+                      </label>
+                    )}
+                    <label className="block text-xs font-semibold text-slate-ink">Validade do link
+                      <select value={methods.linkExpiryHours} onChange={(event) => setMethods({ ...methods, linkExpiryHours: Number(event.target.value) })} className="mt-1 min-h-9 w-full rounded-md border border-mist px-2 text-sm font-normal">{LINK_EXPIRY_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                    </label>
+                    {methods.linkMethods.includes("ticket") && <p className="text-[11px] leading-4 text-stone">Boleto leva até 3 dias úteis para compensar; a reserva do horário é mantida durante esse prazo.</p>}
+                  </div>
+                )}
+                {!methods.pixInChat && !methods.paymentLink && <p className="text-xs font-semibold text-red-700">Ative ao menos um meio.</p>}
+                <p className="text-[11px] leading-4 text-stone">A reserva do horário dura até o vencimento do pagamento. Se houver mais de um meio, a IA pergunta ao cliente qual prefere.</p>
+              </fieldset>
+            )}
             <button type="button" onClick={savePaymentProvider} disabled={!providerDirty || savingProvider || (paymentProvider === "mercado_pago" && !mercadoPagoStatus.configured)} className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md bg-deep-teal px-4 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{savingProvider ? "Salvando..." : "Salvar pipeline"}</button>
           </div>
           <div className="min-w-0 border-t border-mist pt-5 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
@@ -287,7 +339,7 @@ export default function SystemControls({
             <div className="mt-3 flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => updateMercadoPagoCredential()} disabled={!mercadoPagoStatus.storageEncryptionConfigured || accessToken.length < 20 || webhookSecret.length < 16 || savingCredential} className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-md bg-slate-ink px-4 text-sm font-semibold text-white disabled:opacity-50"><KeyRound className="h-4 w-4" />{savingCredential ? "Salvando..." : "Armazenar credenciais"}</button>{mercadoPagoStatus.databaseConfigured && <button type="button" onClick={() => updateMercadoPagoCredential(true)} disabled={savingCredential} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700"><Trash2 className="h-4 w-4" />Remover</button>}</div>
             {!mercadoPagoStatus.storageEncryptionConfigured && <p className="mt-2 text-xs font-semibold text-red-700">Configure PAYMENT_CREDENTIALS_ENCRYPTION_KEY com 32 bytes em Base64.</p>}
             <label className="mt-4 block text-xs font-semibold text-slate-ink">URL para notificações no Mercado Pago<input readOnly value={webhookUrl} className="mt-1.5 min-h-10 w-full rounded-md border border-mist bg-pearl px-3 text-xs font-normal text-stone" /></label>
-            <p className="mt-2 text-[11px] leading-4 text-stone">Cadastre essa URL como webhook de pagamentos. Variáveis de ambiente têm prioridade e não podem ser alteradas nesta tela.</p>
+            <p className="mt-2 text-[11px] leading-4 text-stone">No painel do Mercado Pago (Sua aplicação → Webhooks), cadastre essa URL no modo que corresponde às credenciais ({accountMode === "test" ? "Teste" : accountMode === "production" ? "Produção" : "Teste ou Produção"}) e marque os eventos <strong>Order (Mercado Pago)</strong> e <strong>Pagamentos</strong>. Variáveis de ambiente têm prioridade e não podem ser alteradas nesta tela.</p>
           </div>
         </div>
         <form onSubmit={savePayment} className="mt-5 grid gap-3 border-t border-mist pt-5 md:grid-cols-3 md:items-end">

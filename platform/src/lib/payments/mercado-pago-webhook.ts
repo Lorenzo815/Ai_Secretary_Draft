@@ -1,12 +1,23 @@
 import "server-only";
 
 import { completePaymentTransition } from "./completion";
-import { findPaymentRequestById, applyProviderPaymentStatus } from "./payments";
+import { recordMercadoPagoPayment } from "./ledger";
+import { applyProviderPaymentStatus, findPaymentRequestById, type PaymentRequestDocument } from "./payments";
 import { getMercadoPagoCredential } from "./provider-credentials";
-import { mercadoPagoProvider } from "./providers/mercado-pago";
+import { findPaymentsByReference, getOrder, getPayment } from "./providers/mercado-pago";
 import { verifyMercadoPagoWebhookSignature } from "./providers/mercado-pago-signature";
+import type { MercadoPagoPayment } from "./providers/types";
 
+export type MercadoPagoTopic = "order" | "payment";
+
+/**
+ * Handles a Mercado Pago notification. Both topics lead to the same reconciliation: every payment attempt
+ * Mercado Pago recorded for the request is saved in the ledger, and the request becomes paid when one attempt is
+ * approved for the full amount. A rejected card attempt doesn't end the request (the patient may try again on
+ * the same link); only a cancelled or expired Pix order does.
+ */
 export async function processMercadoPagoWebhook(input: {
+  topic: MercadoPagoTopic;
   dataId: string;
   signature: string | null;
   requestId: string | null;
@@ -17,37 +28,48 @@ export async function processMercadoPagoWebhook(input: {
     throw new WebhookError("Assinatura inválida.", 401);
   }
 
-  const providerPayment = await mercadoPagoProvider.getPayment(input.dataId);
-  const payment = await findPaymentRequestById(providerPayment.externalReference);
-  if (!payment || payment.provider !== "mercado_pago") {
+  const order = input.topic === "order" ? await getOrder(input.dataId) : null;
+  const notifiedPayment = input.topic === "payment" ? await getPayment(input.dataId) : null;
+  const reference = order?.externalReference ?? notifiedPayment?.externalReference ?? "";
+  const request = await findPaymentRequestById(reference);
+  if (!request || request.provider !== "mercado_pago") {
     throw new WebhookError("Cobrança local não encontrada.", 404);
   }
-  if (
-    payment.externalPaymentId !== providerPayment.externalPaymentId
-    || payment.amountCents !== providerPayment.amountCents
-    || providerPayment.currency !== "BRL"
-  ) {
+  if (order && (order.orderId !== request.externalPaymentId || order.amountCents !== request.amountCents || order.currency !== "BRL")) {
     throw new WebhookError("Os dados da cobrança não conferem.", 409);
   }
 
-  const terminalStatus = mapTerminalStatus(providerPayment.status);
-  if (!terminalStatus) return { processed: false, status: providerPayment.status };
-  const transitioned = await applyProviderPaymentStatus({
-    paymentRequestId: payment._id,
-    externalPaymentId: providerPayment.externalPaymentId,
-    status: terminalStatus,
-    providerStatus: providerPayment.status,
-  });
-  if (!transitioned) return { processed: false, status: providerPayment.status };
-  const completion = await completePaymentTransition(transitioned, terminalStatus);
-  return { processed: true, status: providerPayment.status, ...completion };
+  const channel = request.channel ?? "pix";
+  const payments = mergePayments(await findPaymentsByReference(reference), notifiedPayment);
+  for (const payment of payments) {
+    await recordMercadoPagoPayment({ paymentRequestId: request._id, customerId: request.customerId, channel, payment });
+  }
+
+  const approved = payments.find((payment) =>
+    payment.status === "approved" && payment.amountCents === request.amountCents && (payment.currency || "BRL") === "BRL");
+  if (notifiedPayment?.status === "approved" && !approved) {
+    throw new WebhookError("Os dados da cobrança não conferem.", 409);
+  }
+  const outcome = approved
+    ? { status: "paid" as const, providerStatus: "approved", providerPaymentId: approved.paymentId }
+    : order && ORDER_FAILURES.has(order.status)
+      ? { status: "rejected" as const, providerStatus: order.status }
+      : null;
+  const providerStatus = order?.status ?? notifiedPayment?.status ?? "";
+  if (!outcome) return { processed: false, status: providerStatus, recorded: payments.length };
+
+  const transitioned = await applyProviderPaymentStatus({ paymentRequestId: request._id, ...outcome });
+  if (!transitioned) return { processed: false, status: providerStatus, recorded: payments.length };
+  const completion = await completePaymentTransition(transitioned as PaymentRequestDocument, outcome.status);
+  return { processed: true, status: providerStatus, recorded: payments.length, ...completion };
 }
 
-// Order statuses (Checkout API via Orders): https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-management/status/order-status
-function mapTerminalStatus(status: string): "paid" | "rejected" | null {
-  if (status === "processed") return "paid";
-  if (["canceled", "failed", "refunded", "charged_back", "expired"].includes(status)) return "rejected";
-  return null;
+// Order statuses: https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/payment-management/status/order-status
+const ORDER_FAILURES = new Set(["canceled", "failed", "expired"]);
+
+function mergePayments(found: MercadoPagoPayment[], notified: MercadoPagoPayment | null) {
+  if (!notified || found.some((payment) => payment.paymentId === notified.paymentId)) return found;
+  return [...found, notified];
 }
 
 export class WebhookError extends Error {

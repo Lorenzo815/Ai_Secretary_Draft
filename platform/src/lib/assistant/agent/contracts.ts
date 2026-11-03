@@ -95,6 +95,9 @@ export interface AgentRuntimeContext {
     serviceStatus: string;
     paymentStatus: string | null;
     paymentProvider: "manual" | "mercado_pago";
+    paymentMethods: Array<"pix" | "payment_link">;
+    paymentLinkMethods: string[];
+    maxInstallments: number;
     activeSchedulingOption: unknown | null;
   };
   clinic: {

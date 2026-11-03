@@ -29,6 +29,7 @@ export async function PUT(request: Request) {
       const configuration = await updatePaymentProviderConfiguration({
         activeProvider: provider.activeProvider as PaymentProvider,
         humanFallbackEnabled: provider.humanFallbackEnabled === true,
+        mercadoPago: provider.mercadoPago,
         updatedBy: "settings",
       });
       return NextResponse.json({ configuration, credentialStatus });
