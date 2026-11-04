@@ -134,6 +134,15 @@ describe("appointment confirmation reminders", () => {
     expect(store[0]).toMatchObject({ nextAttemptAt: null, deadlineAt: new Date("2026-11-05T19:00:00Z") });
   });
 
+  it("ignores staff bookings without a patient instead of failing the whole clinic", async () => {
+    mocks.appointments = [event({ customerId: null, startAt: new Date("2026-11-06T12:00:00Z") }), ...mocks.appointments];
+
+    await expect(tick("2026-11-05T13:01:00Z")).resolves.toMatchObject({ companies: 1, planned: 1, sent: 1 });
+    expect(mocks.sendWhatsAppTemplate).toHaveBeenCalledOnce();
+    expect(store).toHaveLength(1);
+    expect(store[0]).toMatchObject({ customerId, appointmentIds: [mocks.appointments[1]._id, mocks.appointments[2]._id] });
+  });
+
   it("marks the events \"Sem confirmação\" one interval after the last reminder", async () => {
     await tick("2026-11-05T13:00:00Z");
     await tick("2026-11-05T15:00:00Z");

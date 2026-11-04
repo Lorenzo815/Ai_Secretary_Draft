@@ -1799,7 +1799,8 @@ export const AWAITING_CONFIRMATION_FILTER = {
 export async function listAppointmentsAwaitingConfirmation(input: { from: Date; to: Date }) {
   return (await getAppointmentsCollection()).find({
     ...AWAITING_CONFIRMATION_FILTER,
-    customerId: { $exists: true },
+    // Staff can book without a patient (customerId: null), which `$exists` would still match.
+    customerId: { $type: "objectId" },
     startAt: { $gt: input.from, $lte: input.to },
   }).sort({ startAt: 1 }).limit(2_000).toArray();
 }

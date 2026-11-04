@@ -106,9 +106,9 @@ async function processCompany(now: Date) {
 async function planCycles(now: Date, config: AppointmentConfirmationConfiguration, policy: ConfirmationTimingPolicy) {
   // A cycle is due once its first reminder time has passed, which never happens more than
   // firstSendHoursBefore ahead of the event.
-  const appointments = await listAppointmentsAwaitingConfirmation({
+  const appointments = (await listAppointmentsAwaitingConfirmation({
     from: now, to: new Date(now.getTime() + (config.firstSendHoursBefore + 1) * 3_600_000),
-  });
+  })).filter((appointment) => appointment.customerId instanceof ObjectId);
   const groups = new Map<string, AppointmentDocument[]>();
   for (const appointment of appointments) {
     const key = `${appointment.customerId!.toHexString()}:${clinicLocalDate(appointment.startAt, policy.timezone)}`;

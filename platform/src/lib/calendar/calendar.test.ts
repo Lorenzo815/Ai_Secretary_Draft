@@ -28,7 +28,7 @@ vi.mock("../qualification/triggers", () => ({
 
 import {
   attachPaymentToAppointments, confirmAppointmentHolds, extendAppointmentHolds,
-  findCustomerAppointments, findUpcomingCustomerAppointments, getCalendarSettings, updateCalendarSettings,
+  findCustomerAppointments, findUpcomingCustomerAppointments, getCalendarSettings, listAppointmentsAwaitingConfirmation, updateCalendarSettings,
   type AppointmentDocument, type CalendarSettingsDocument,
 } from "./calendar";
 
@@ -46,6 +46,18 @@ beforeEach(async () => {
   mocks.replaceOne.mockImplementation(async (_filter, next: CalendarSettingsDocument) => {
     mocks.findOne.mockResolvedValue(next);
     return { acknowledged: true };
+  });
+});
+
+describe("appointments awaiting attendance confirmation", () => {
+  it("only lists bookings linked to a patient (staff bookings may have customerId null)", async () => {
+    const from = new Date("2026-11-04T05:45:00Z");
+    const to = new Date("2026-11-05T18:45:00Z");
+    await listAppointmentsAwaitingConfirmation({ from, to });
+
+    expect(mocks.find).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: { $type: "objectId" }, status: "scheduled", startAt: { $gt: from, $lte: to },
+    }));
   });
 });
 
