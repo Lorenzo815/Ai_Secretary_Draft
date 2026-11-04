@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, LoaderCircle, RefreshCw, Send } from "lucide-react";
+import { confirmationScheduleIssues, describeConfirmationScheduleIssues, UNCONFIRMED_MIN_LEAD_HOURS } from "@/lib/confirmations/timing";
 
 interface ConfirmationSettings {
   enabled: boolean;
@@ -82,6 +83,8 @@ export default function ConfirmationEditor() {
 
   const hours = Array.from({ length: 25 }, (_, hour) => hour);
   const example = timelineExample(value);
+  const scheduleProblems = scheduleProblemsFor(value);
+  const blocked = value.enabled && scheduleProblems.length > 0;
 
   return <div className="space-y-7">
     {feedback && <p role="status" className="border-l-2 border-deep-teal bg-deep-teal/5 px-4 py-3 text-sm text-slate-ink">{feedback}</p>}
@@ -128,6 +131,16 @@ export default function ConfirmationEditor() {
       </label>
     </section>
 
+    {scheduleProblems.length > 0 && <section role="alert" className="flex gap-3 rounded-lg border border-burnt-coral/40 bg-burnt-coral/5 px-4 py-3">
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-burnt-coral" />
+      <div className="text-sm leading-6 text-slate-ink">
+        <p className="font-semibold">Configuração impossível para alguns horários</p>
+        <p className="mt-1 text-stone">Todos os envios precisam caber antes do evento, e o evento precisa ficar “Sem confirmação” pelo menos {UNCONFIRMED_MIN_LEAD_HOURS} h antes do horário para dar tempo de um encaixe.</p>
+        <ul className="mt-1 list-disc pl-5">{scheduleProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+        <p className="mt-1 font-medium">{value.enabled ? "Ajuste o primeiro envio, a janela, o número de envios ou o intervalo para salvar." : "Corrija antes de ativar a confirmação."}</p>
+      </div>
+    </section>}
+
     <section className="rounded-lg border border-mist bg-cloud/40 p-4 text-sm leading-6 text-stone">
       <p className="flex items-center gap-2 font-semibold text-slate-ink"><Clock3 className="h-4 w-4 text-deep-teal" />Como fica na prática</p>
       <p className="mt-1">{example}</p>
@@ -153,10 +166,18 @@ export default function ConfirmationEditor() {
     </section>
 
     <footer className="flex items-center justify-between border-t border-mist pt-5">
-      <p className="text-xs text-stone">{dirty ? "Alterações ainda não salvas" : `Atualizado por ${payload.configuration.updatedBy}`}</p>
-      <button type="button" onClick={() => void run("save")} disabled={!dirty || Boolean(busy)} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-45">{busy === "save" ? "Salvando..." : "Salvar confirmação"}</button>
+      <p className="text-xs text-stone">{blocked ? "Configuração impossível: ajuste antes de salvar" : dirty ? "Alterações ainda não salvas" : `Atualizado por ${payload.configuration.updatedBy}`}</p>
+      <button type="button" onClick={() => void run("save")} disabled={!dirty || blocked || Boolean(busy)} className="rounded-lg bg-deep-teal px-4 py-2.5 text-sm font-semibold text-white hover:bg-forest-teal disabled:opacity-45">{busy === "save" ? "Salvando..." : "Salvar confirmação"}</button>
     </footer>
   </div>;
+}
+
+/** Event times the settings can't fully cover (same simulation as the server); empty while a field is out of range. */
+function scheduleProblemsFor(value: ConfirmationSettings) {
+  const inRange = (input: number, min: number, max: number) => Number.isInteger(input) && input >= min && input <= max;
+  if (!inRange(value.firstSendHoursBefore, 2, 72) || !inRange(value.activeStartHour, 0, 23) || !inRange(value.activeEndHour, 1, 24)
+    || value.activeStartHour >= value.activeEndHour || !inRange(value.maxAttempts, 1, 3) || !inRange(value.intervalMinutes, 30, 720)) return [];
+  return describeConfirmationScheduleIssues(confirmationScheduleIssues(value), value.maxAttempts);
 }
 
 /** Worked example with the current settings: an event at 10:00 (same rules as the server, without timezone). */

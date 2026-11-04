@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  confirmationStatusAfterPayment, eligibleForReminders, nextReminderAt, plannedFirstSend, replyDeadline, windowStartAtOrAfter,
+  confirmationScheduleIssues, confirmationStatusAfterPayment, describeConfirmationScheduleIssues, eligibleForReminders,
+  nextReminderAt, plannedFirstSend, replyDeadline, windowStartAtOrAfter,
 } from "./timing";
 import {
   confirmationPayload, parseConfirmationPayload, renderConfirmationBody, templateParameter, validateConfirmationTemplateBody,
@@ -49,6 +50,35 @@ describe("confirmation timing", () => {
     expect(eligibleForReminders({ createdAt: at("2026-11-05T18:00:00Z"), paymentRequestId: "paid" }, firstSend, 12)).toBe(true);
     expect(eligibleForReminders({ createdAt: at("2026-11-05T09:00:00Z") }, firstSend, 12)).toBe(true);
     expect(eligibleForReminders({ createdAt: at("2026-11-05T20:59:00Z") }, firstSend, 0)).toBe(true);
+  });
+});
+
+describe("confirmation schedule feasibility", () => {
+  const settings = { firstSendHoursBefore: 36, activeStartHour: 8, activeEndHour: 20, maxAttempts: 3, intervalMinutes: 180 };
+
+  it("accepts settings where every event time gets all reminders and a margin before \"Sem confirmação\"", () => {
+    expect(confirmationScheduleIssues(settings)).toEqual([]);
+    expect(confirmationScheduleIssues({ ...settings, firstSendHoursBefore: 24, intervalMinutes: 120 })).toEqual([]);
+  });
+
+  it("flags event times that lose reminders or have no time left for an encaixe", () => {
+    // 6 h apart: an 08:00 event gets Wed 08:00 and 14:00 only (20:00 moves to Thu 08:00, the event time).
+    // From 08:15 to 15:45 the 3rd reminder goes Thu 08:00 and "Sem confirmação" at 14:00 is under 2 h before.
+    const issues = confirmationScheduleIssues({ ...settings, intervalMinutes: 360 });
+    expect(issues).toEqual([
+      { from: "08:00", to: "08:00", sends: 2, reason: "sends" },
+      { from: "08:15", to: "15:45", sends: 3, reason: "lead" },
+    ]);
+    expect(describeConfirmationScheduleIssues(issues, 3)).toEqual([
+      "Eventos às 08:00: só 2 de 3 envios cabem antes do horário.",
+      "Eventos das 08:15 às 15:45: os 3 envios cabem, mas o evento ficaria “Sem confirmação” a menos de 2 h do horário, sem tempo para um encaixe.",
+    ]);
+  });
+
+  it("flags events that get no reminder at all when the first send moves past them", () => {
+    const issues = confirmationScheduleIssues({ ...settings, firstSendHoursBefore: 2, maxAttempts: 1, intervalMinutes: 30 });
+    expect(issues[0]).toEqual({ from: "00:00", to: "08:00", sends: 0, reason: "sends" }); // 2 h before falls before 08:00 → moves to 08:00
+    expect(describeConfirmationScheduleIssues([issues[0]], 1)).toEqual(["Eventos das 00:00 às 08:00: nenhum envio cabe antes do horário."]);
   });
 });
 

@@ -60,3 +60,69 @@ export function eligibleForReminders(
   if (appointment.paymentRequestId || skipRecentHours === 0) return true;
   return appointment.createdAt.getTime() <= firstSendAt.getTime() - skipRecentHours * 3_600_000;
 }
+
+/** "Sem confirmação" must happen at least this long before the event, so the clinic can still offer the slot to someone else. */
+export const UNCONFIRMED_MIN_LEAD_HOURS = 2;
+const SLOT_MINUTES = 15;
+
+export interface ConfirmationScheduleIssue {
+  /** Clinic-local times "HH:mm" of the first and last affected event start in the range. */
+  from: string;
+  to: string;
+  /** Reminders that fit before the event. */
+  sends: number;
+  /** Fewer reminders than configured, or all reminders but "Sem confirmação" too close to the event. */
+  reason: "sends" | "lead";
+}
+
+/**
+ * Simulates, with the worker's own rules, an event at every 15-minute time of the day. The window is the same every
+ * day, so only the time of day matters; it runs on a fixed UTC day so the result doesn't depend on any timezone.
+ * Returns the ranges of event times where the configuration can't send every reminder and still mark the event
+ * "Sem confirmação" UNCONFIRMED_MIN_LEAD_HOURS before it.
+ */
+export function confirmationScheduleIssues(
+  settings: Omit<ConfirmationTimingPolicy, "timezone"> & { maxAttempts: number },
+): ConfirmationScheduleIssue[] {
+  const policy: ConfirmationTimingPolicy = { ...settings, timezone: "UTC" };
+  const issues: ConfirmationScheduleIssue[] = [];
+  for (let minutes = 0; minutes < 24 * 60; minutes += SLOT_MINUTES) {
+    const startAt = new Date(Date.UTC(2026, 0, 15, 0, minutes));
+    const sends: Date[] = [];
+    let next: Date | null = plannedFirstSend(startAt, policy);
+    if (next >= startAt) next = null;
+    while (next && sends.length < settings.maxAttempts) {
+      sends.push(next);
+      next = sends.length < settings.maxAttempts ? nextReminderAt(next, startAt, policy) : null;
+    }
+    const last = sends.at(-1);
+    const reason = sends.length < settings.maxAttempts ? "sends" as const
+      : last!.getTime() + settings.intervalMinutes * 60_000 > startAt.getTime() - UNCONFIRMED_MIN_LEAD_HOURS * 3_600_000 ? "lead" as const
+        : null;
+    if (!reason) continue;
+    const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const previous = issues.at(-1);
+    if (previous && previous.reason === reason && previous.sends === sends.length && previous.to === slotBefore(time)) previous.to = time;
+    else issues.push({ from: time, to: time, sends: sends.length, reason });
+  }
+  return issues;
+}
+
+function slotBefore(time: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  const total = hours * 60 + minutes - SLOT_MINUTES;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** One sentence per affected range, for the settings screen and the save error. */
+export function describeConfirmationScheduleIssues(issues: ConfirmationScheduleIssue[], maxAttempts: number) {
+  return issues.map((issue) => {
+    const range = issue.from === issue.to ? `às ${issue.from}` : `das ${issue.from} às ${issue.to}`;
+    if (issue.reason === "lead") {
+      return `Eventos ${range}: os ${maxAttempts} envios cabem, mas o evento ficaria “Sem confirmação” a menos de ${UNCONFIRMED_MIN_LEAD_HOURS} h do horário, sem tempo para um encaixe.`;
+    }
+    return issue.sends === 0
+      ? `Eventos ${range}: nenhum envio cabe antes do horário.`
+      : `Eventos ${range}: só ${issue.sends} de ${maxAttempts} envios cabem antes do horário.`;
+  });
+}

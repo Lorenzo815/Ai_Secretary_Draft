@@ -6,6 +6,7 @@ import { scopedSettingsId, withCurrentCompany } from "../companies/context";
 import { legacyCompanyId } from "../companies/ownership";
 import { tenantDb } from "../companies/tenant-db";
 import { DEFAULT_CONFIRMATION_TEMPLATE, validateConfirmationTemplateBody } from "./template-content";
+import { confirmationScheduleIssues, describeConfirmationScheduleIssues } from "./timing";
 
 const COLLECTION = "appointment_confirmation_config";
 
@@ -91,7 +92,7 @@ export function validateConfirmationSettings(value: ConfirmationSettingsInput): 
   const activeStartHour = integer(value.activeStartHour, 0, 23, "Início da janela inválido.");
   const activeEndHour = integer(value.activeEndHour, 1, 24, "Fim da janela inválido.");
   if (activeStartHour >= activeEndHour) throw new Error("A janela de envio deve começar antes de terminar.");
-  return {
+  const settings: ConfirmationSettingsInput = {
     enabled: value.enabled === true,
     firstSendHoursBefore: integer(value.firstSendHoursBefore, 2, 72, "O primeiro envio deve ser de 2 a 72 horas antes."),
     activeStartHour,
@@ -105,6 +106,13 @@ export function validateConfirmationSettings(value: ConfirmationSettingsInput): 
       body: validateConfirmationTemplateBody(String(value.template?.body ?? "")),
     },
   };
+  if (settings.enabled) {
+    const [problem, ...others] = describeConfirmationScheduleIssues(confirmationScheduleIssues(settings), settings.maxAttempts);
+    if (problem) {
+      throw new Error(`Configuração impossível. ${problem}${others.length ? ` (e mais ${others.length} faixa(s) de horário)` : ""} Ajuste o primeiro envio, a janela, o número de envios ou o intervalo.`);
+    }
+  }
+  return settings;
 }
 
 /** Clinics with the task enabled (the worker runs each one in its own company context). */
