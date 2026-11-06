@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => {
     client: { db: () => db },
     adminTransaction: vi.fn(),
     operational: vi.fn(),
-    cpf: vi.fn(),
     send: vi.fn(),
   };
 });
@@ -32,7 +31,6 @@ vi.mock("../access/management", async (importOriginal) => ({
   ...await importOriginal<typeof import("../access/management")>(), adminTransaction: mocks.adminTransaction,
 }));
 vi.mock("../companies/status", () => ({ isCompanyOperational: mocks.operational }));
-vi.mock("../crm/customers", () => ({ revealCustomerCpf: mocks.cpf }));
 vi.mock("../whatsapp/forwarding-http", async (importOriginal) => ({
   ...await importOriginal<typeof import("../whatsapp/forwarding-http")>(), sendForwardedWebhook: mocks.send,
 }));
@@ -84,7 +82,6 @@ beforeEach(() => {
   c("forwarding_stats").find.mockReturnValue(cursor([]));
   mocks.operational.mockResolvedValue(true);
   mocks.adminTransaction.mockImplementation(async (_principal, run) => run(mocks.db, {}, { _id: scope }));
-  mocks.cpf.mockResolvedValue("12345678909");
   mocks.send.mockResolvedValue({ ok: true, status: 200, durationMs: 5, error: null });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -206,17 +203,19 @@ describe("sending", () => {
     ...patch,
   });
 
-  it("builds the payload when sending, with the current CRM profile and the decrypted CPF", async () => {
+  it("builds the payload when sending, with the current CRM profile and never the CPF", async () => {
     c("crm_customers").findOne.mockResolvedValue({ _id: customerId, name: "Ana", phones: ["5511999990000"], profile: { fullName: "Ana Souza" } });
     const body = await prepareCalendarDelivery(mocks.db as never, delivery());
     const payload = JSON.parse(Buffer.from(body!).toString("utf8"));
-    expect(c("crm_customers").findOne).toHaveBeenCalledWith({ _id: customerId, companyId: scope }, expect.anything());
-    expect(mocks.cpf).toHaveBeenCalledWith(customerId);
+    const [filter, options] = c("crm_customers").findOne.mock.calls[0];
+    expect(filter).toEqual({ _id: customerId, companyId: scope });
+    expect(Object.keys(options.projection).filter((key) => key === "profile" || key.includes("cpf"))).toEqual([]);
     expect(payload).toMatchObject({
       company: { id: scope.toHexString(), name: "Clínica" },
       appointment: { eventType: { key: "consultation", name: "Consulta" }, resource: { name: "Dr. Matheus" } },
-      customer: { fullName: "Ana Souza", cpf: "12345678909" },
+      customer: { fullName: "Ana Souza" },
     });
+    expect(payload.customer).not.toHaveProperty("cpf");
   });
 
   it.each([
@@ -227,7 +226,7 @@ describe("sending", () => {
   ])("cancels a queued event when the destination was %s", async (_label, endpoints) => {
     configuration.endpoints = endpoints;
     expect(await prepareCalendarDelivery(mocks.db as never, delivery())).toBeNull();
-    expect(mocks.cpf).not.toHaveBeenCalled();
+    expect(c("crm_customers").findOne).not.toHaveBeenCalled();
   });
 
   it("tests a saved destination with a fake patient, once, with the calendar event header", async () => {
@@ -239,7 +238,8 @@ describe("sending", () => {
     const sent = mocks.send.mock.calls[0][0];
     expect(sent).toMatchObject({ url: endpoint.url, isTest: true, event: "calendar.appointment" });
     const payload = JSON.parse(Buffer.from(sent.body).toString("utf8"));
-    expect(payload).toMatchObject({ test: true, customer: { cpf: "00000000000", name: "Paciente de teste" } });
-    expect(mocks.cpf).not.toHaveBeenCalled();
+    expect(payload).toMatchObject({ test: true, customer: { name: "Paciente de teste" } });
+    expect(payload.customer).not.toHaveProperty("cpf");
+    expect(c("crm_customers").findOne).not.toHaveBeenCalled();
   });
 });

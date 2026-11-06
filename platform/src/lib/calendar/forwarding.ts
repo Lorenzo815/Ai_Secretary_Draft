@@ -4,10 +4,8 @@ import { randomUUID } from "node:crypto";
 import { Binary, ObjectId, type AnyBulkWriteOperation, type Db } from "mongodb";
 import { adminTransaction, ManagementError } from "../access/management";
 import type { Principal } from "../access/contracts";
-import { runWithCompany } from "../companies/context";
 import { companyScopedId } from "../companies/ownership";
 import { isCompanyOperational } from "../companies/status";
-import { revealCustomerCpf } from "../crm/customers";
 import { sendForwardedWebhook } from "../whatsapp/forwarding-http";
 import type { ForwardingResult } from "../whatsapp/forwarding-contracts";
 import {
@@ -325,13 +323,11 @@ export async function forwardDeletedAppointments(appointments: Array<ForwardedAp
 
 async function loadCustomer(db: Db, companyId: ObjectId, customerId: ObjectId | null | undefined): Promise<ForwardedCustomer | null> {
   if (!(customerId instanceof ObjectId)) return null;
-  const customer = await db.collection<Omit<ForwardedCustomer, "cpf">>("crm_customers").findOne(
+  // The projection never reads the CPF, so it can't reach a destination.
+  return db.collection<ForwardedCustomer>("crm_customers").findOne(
     { _id: customerId, companyId },
     { projection: { name: 1, phones: 1, "profile.fullName": 1, "profile.birthDate": 1, "profile.address": 1, "profile.profession": 1, relationship: 1, serviceStatus: 1, firstInteractionAt: 1, lastInteractionAt: 1, createdAt: 1 } },
   );
-  if (!customer) return null;
-  const cpf = await runWithCompany(companyId, () => revealCustomerCpf(customerId));
-  return { ...customer, cpf };
 }
 
 /**
@@ -382,7 +378,7 @@ function samplePayload(principal: Principal, endpoint: CalendarForwardingEndpoin
     customer: {
       _id: appointment.customerId!, name: "Paciente de teste", phones: ["5511900000000"],
       profile: { fullName: "Paciente de Teste da Silva", birthDate: "1990-01-01", profession: "Teste" },
-      cpf: "00000000000", relationship: { status: "new" }, serviceStatus: "ai_active",
+      relationship: { status: "new" }, serviceStatus: "ai_active",
       firstInteractionAt: now, lastInteractionAt: now, createdAt: now,
     },
     test: true,

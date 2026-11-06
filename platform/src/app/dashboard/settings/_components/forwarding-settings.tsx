@@ -45,7 +45,7 @@ export default function ForwardingSettings({ companyName }: { companyName: strin
       companyName={companyName}
       intro={<>
         <p>Um JSON (<code>object: &quot;oria.calendar_event&quot;</code>, cabeçalho <code>X-Oria-Event: calendar.appointment</code>) para cada evento gravado na agenda, criado pela IA ou pela equipe, conforme os filtros de cada destino.</p>
-        <p>Inclui o tipo, a data, o horário e o status do evento e os dados do paciente no CRM: nome, telefones, <strong>CPF completo</strong>, data de nascimento, endereço e profissão. Não há assinatura: use apenas URLs HTTPS que você controla.</p>
+        <p>Inclui o tipo, a data, o horário e o status do evento e os dados do paciente no CRM: nome, telefones, data de nascimento, endereço e profissão. O CPF não é enviado. Não há assinatura: use apenas URLs HTTPS que você controla.</p>
         <p>Ao ativar o primeiro destino, os eventos que já existem não são reenviados; só o que acontecer a partir de então.</p>
       </>}
       newEndpoint={(settings) => ({

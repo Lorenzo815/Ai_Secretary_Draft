@@ -48,7 +48,7 @@ export interface CalendarDeliveryEvent {
   previous: ForwardingSnapshot | null;
 }
 
-/** Patient data sent with the event: the CRM profile, with the CPF already decrypted (or null). */
+/** Patient data sent with the event: the CRM profile. The CPF is never sent. */
 export interface ForwardedCustomer {
   _id: ObjectId;
   name: string;
@@ -59,7 +59,6 @@ export interface ForwardedCustomer {
     address?: Record<string, unknown>;
     profession?: string;
   };
-  cpf: string | null;
   relationship?: { status: string };
   serviceStatus?: string;
   firstInteractionAt?: Date;
@@ -247,7 +246,6 @@ export function buildCalendarPayload(event: CalendarDeliveryEvent, context: Cale
       fullName: customer.profile?.fullName ?? null,
       phones: customer.phones,
       birthDate: customer.profile?.birthDate ?? null,
-      cpf: customer.cpf,
       address: customer.profile?.address ?? null,
       profession: customer.profile?.profession ?? null,
       relationshipStatus: customer.relationship?.status ?? null,

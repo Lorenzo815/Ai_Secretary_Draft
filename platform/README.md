@@ -558,9 +558,10 @@ O corpo é um JSON `{"object":"oria.calendar_event", ...}` com cabeçalho
 `occurredAt`, empresa, evento (tipo e nome, profissional, início/fim em UTC e
 data/horário locais, status, origem, observações, recorrência, pagamento),
 estado anterior e o perfil do paciente no CRM — nome, nome completo, telefones,
-**CPF completo**, data de nascimento, endereço, profissão, relacionamento e status
-de atendimento. A qualificação de leads não é enviada. O CPF é decifrado apenas no
-envio: a fila guarda o evento, não o payload. O teste usa um paciente fictício.
+data de nascimento, endereço, profissão, relacionamento e status de atendimento.
+O CPF e a qualificação de leads não são enviados (o CPF nem é lido). O perfil é
+lido no envio: a fila guarda o evento, não o payload. O teste usa um paciente
+fictício.
 
 ### Conversas do WhatsApp Business/Web
 

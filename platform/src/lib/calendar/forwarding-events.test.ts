@@ -81,7 +81,7 @@ describe("calendar payload", () => {
       customer: {
         _id: new ObjectId("6abbbd640d62d8e984cae18c"), name: "Ana", phones: ["5511999990000"],
         profile: { fullName: "Ana Souza", birthDate: "1990-02-03", profession: "Engenheira", address: { city: "Curitiba" } },
-        cpf: "12345678909", relationship: { status: "new" }, serviceStatus: "ai_active",
+        relationship: { status: "new" }, serviceStatus: "ai_active",
       },
     });
     expect(event.appointment).not.toHaveProperty("holdExpiresAt");
@@ -98,12 +98,13 @@ describe("calendar payload", () => {
       },
       previous: null,
       customer: {
-        id: "6abbbd640d62d8e984cae18c", fullName: "Ana Souza", cpf: "12345678909", birthDate: "1990-02-03",
+        id: "6abbbd640d62d8e984cae18c", fullName: "Ana Souza", birthDate: "1990-02-03",
         address: { city: "Curitiba" }, profession: "Engenheira", relationshipStatus: "new",
       },
       contact: { name: "Ana Souza", phone: "5511999990000" },
     });
     expect(payload.customer).not.toHaveProperty("leadQualification");
+    expect(payload.customer).not.toHaveProperty("cpf");
   });
 
   it("sends staff bookings without a patient with only the contact on the event", () => {
