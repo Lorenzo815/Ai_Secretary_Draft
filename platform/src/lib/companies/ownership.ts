@@ -36,6 +36,9 @@ export const COMPANY_OWNED_COLLECTIONS = [
   "whatsapp_forwarding_config",
   "whatsapp_forwarding_deliveries",
   "whatsapp_messages",
+  "calendar_forwarding_config",
+  "calendar_forwarding_states",
+  "forwarding_stats",
 ] as const;
 
 export interface CompanyDocument {

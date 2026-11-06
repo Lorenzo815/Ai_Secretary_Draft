@@ -520,11 +520,47 @@ de enviar eventos reais. O status, duração e erro são exibidos. Existe um int
 entre testes da empresa. HTTP 200 comprova aceitação, não o processamento interno
 da plataforma de destino; a assinatura do teste usa o app secret quando disponível.
 
-As últimas 25 entregas/testes da própria empresa mostram status, tentativas e
-próximo horário. Corpos e assinaturas são removidos após conclusão, falha terminal
-ou cancelamento; metadados terminais expiram após 7 dias. Pendências mantêm o corpo
-para recuperação pelo worker. A configuração fica em
-`whatsapp_forwarding_config`; ambas as coleções têm propriedade da empresa.
+Os contadores de entregas mostram, para as últimas 24 horas, 7 dias e 30 dias, quantas
+entregas reais foram aceitas (HTTP 200) e quantas falharam de vez; testes e
+cancelamentos não contam. Os últimos 7 dias vêm dos próprios registros de entrega
+(inclusive os anteriores aos contadores); os dias 8 a 30 vêm de totais por hora em
+`forwarding_stats` (expiram em 32 dias), gravados quando cada entrega termina. Corpos e assinaturas são
+removidos após conclusão, falha terminal ou cancelamento; metadados terminais
+expiram após 7 dias. Pendências mantêm o corpo para recuperação pelo worker. A
+configuração fica em `whatsapp_forwarding_config`; as coleções têm propriedade da
+empresa.
+
+### Encaminhamento de eventos da agenda
+
+Na mesma seção **Encaminhamentos**, o administrador configura até **5 destinos**
+para eventos da agenda (`GET/PUT/POST /api/company/calendar-forwarding`, mesmas
+regras de acesso, URL, tentativas, teste e contadores do WhatsApp). Cada destino
+escolhe:
+
+- **Quando enviar**: evento criado, status de confirmação alterado, data/horário
+  alterado e/ou evento cancelado ou excluído;
+- **Status de confirmação**: A confirmar, Confirmado e/ou Sem confirmação (o
+  status depois da mudança; no cancelamento, o último status);
+- **Tipos de evento** da agenda da clínica.
+
+Vale para qualquer evento gravado no banco, criado pela IA, pela equipe, por um
+sinal pago ou pelos lembretes: o mesmo cron `POST /api/internal/assistant/process`
+lê os eventos alterados (`updatedAt`, com 2 minutos de sobreposição) e os compara
+com o último estado conhecido em `calendar_forwarding_states`. Reservas
+temporárias (`held`) não são enviadas; a reserva confirmada pelo sinal conta como
+criada. Exclusões definitivas são enviadas como cancelamento no momento da
+exclusão. Ao ativar o primeiro destino, a agenda atual vira o ponto de partida e
+não é reenviada. Cada mudança tem um `eventId` estável, então reprocessar não
+duplica entregas.
+
+O corpo é um JSON `{"object":"oria.calendar_event", ...}` com cabeçalho
+`X-Oria-Event: calendar.appointment`, sem assinatura: `eventId`, `triggers`,
+`occurredAt`, empresa, evento (tipo e nome, profissional, início/fim em UTC e
+data/horário locais, status, origem, observações, recorrência, pagamento),
+estado anterior e o perfil do paciente no CRM — nome, nome completo, telefones,
+**CPF completo**, data de nascimento, endereço, profissão, relacionamento e status
+de atendimento. A qualificação de leads não é enviada. O CPF é decifrado apenas no
+envio: a fila guarda o evento, não o payload. O teste usa um paciente fictício.
 
 ### Conversas do WhatsApp Business/Web
 

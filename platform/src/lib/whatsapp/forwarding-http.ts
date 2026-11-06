@@ -58,6 +58,8 @@ export async function sendForwardedWebhook(input: {
   deliveryId: string;
   signature?: string;
   isTest: boolean;
+  /** Kind of Oria event (e.g. "calendar.appointment"); WhatsApp payloads go unchanged, without it. */
+  event?: string;
 }): Promise<ForwardingResult> {
   const started = Date.now();
   const signal = AbortSignal.timeout(TIMEOUT_MS);
@@ -92,6 +94,7 @@ export async function sendForwardedWebhook(input: {
           "X-Oria-Delivery-Id": input.deliveryId,
           "X-Oria-Webhook-Forwarded": "1",
           ...(input.signature ? { "X-Hub-Signature-256": input.signature } : {}),
+          ...(input.event ? { "X-Oria-Event": input.event } : {}),
           ...(input.isTest ? { "X-Oria-Webhook-Test": "1" } : {}),
         },
       }, response => {
@@ -108,7 +111,7 @@ export async function sendForwardedWebhook(input: {
     const reason = error instanceof ForwardingAddressError
       ? error.message
       : signal.aborted ? "O destino não respondeu em até 8 segundos." : "Falha de DNS, conexão ou certificado TLS do destino.";
-    console.error("WhatsApp forwarding delivery failed.", { deliveryId: input.deliveryId, errorType: error instanceof Error ? error.name : "Unknown" });
+    console.error("Forwarding delivery failed.", { deliveryId: input.deliveryId, event: input.event ?? "whatsapp", errorType: error instanceof Error ? error.name : "Unknown" });
     return { ok: false, status: null, durationMs: Date.now() - started, error: reason };
   }
 }

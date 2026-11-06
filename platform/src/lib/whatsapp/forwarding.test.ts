@@ -6,17 +6,18 @@ import type { ForwardingEndpoint } from "./forwarding-contracts";
 
 const mocks = vi.hoisted(() => {
   const configuration = { findOne: vi.fn(), replaceOne: vi.fn() };
-  const deliveries = { find: vi.fn(), findOne: vi.fn(), insertOne: vi.fn(), bulkWrite: vi.fn(), createIndex: vi.fn(), updateOne: vi.fn(), updateMany: vi.fn(), findOneAndUpdate: vi.fn() };
+  const deliveries = { find: vi.fn(), findOne: vi.fn(), insertOne: vi.fn(), bulkWrite: vi.fn(), createIndex: vi.fn(), updateOne: vi.fn(), updateMany: vi.fn(), findOneAndUpdate: vi.fn(), aggregate: vi.fn() };
+  const stats = { find: vi.fn(), updateOne: vi.fn(), createIndex: vi.fn() };
   const bindings = { find: vi.fn(), findOne: vi.fn() };
   const companies = { findOne: vi.fn(), findOneAndUpdate: vi.fn() };
   const users = { findOne: vi.fn() };
   const session = { withTransaction: vi.fn(), endSession: vi.fn() };
   const db = { collection: (name: string) => ({
-    whatsapp_forwarding_config: configuration, whatsapp_forwarding_deliveries: deliveries,
+    whatsapp_forwarding_config: configuration, whatsapp_forwarding_deliveries: deliveries, forwarding_stats: stats,
     whatsapp_embedded_signup_connections: bindings, companies, users,
   })[name] };
   const client = { db: () => db, startSession: () => session };
-  return { configuration, deliveries, bindings, companies, users, session, client, send: vi.fn(), rows: vi.fn() };
+  return { configuration, deliveries, stats, bindings, companies, users, session, client, send: vi.fn(), rows: vi.fn(), buckets: vi.fn() };
 });
 vi.mock("../mongodb", () => ({ default: Promise.resolve(mocks.client), getMongoClient: async () => mocks.client }));
 vi.mock("./forwarding-http", async importOriginal => ({
@@ -77,6 +78,9 @@ beforeEach(() => {
   mocks.rows.mockResolvedValue([]);
   const cursor = { sort: () => cursor, limit: () => cursor, toArray: mocks.rows };
   mocks.deliveries.find.mockReturnValue(cursor);
+  mocks.buckets.mockResolvedValue([]);
+  mocks.stats.find.mockReturnValue({ toArray: mocks.buckets });
+  mocks.deliveries.aggregate.mockReturnValue({ toArray: async () => [] });
   mocks.deliveries.findOneAndUpdate.mockResolvedValue(null);
   mocks.deliveries.findOne.mockImplementation(async (filter: { _id?: ObjectId }) => filter._id ? inserted : null);
   mocks.deliveries.insertOne.mockImplementation(async document => { inserted = document; return { insertedId: document._id }; });
@@ -106,14 +110,26 @@ describe("company-scoped forwarding configuration", () => {
       [{ ...endpoint, url: "https://127.0.0.1" }],
     ]) expect(() => validateForwardingEndpoints(endpoints)).toThrow();
   });
-  it("returns only the admin company's configuration and safe delivery metadata", async () => {
-    mocks.rows.mockResolvedValue([delivery()]);
+  it("counts the last 7 days from the delivery records, history included, and only older hours from the totals", async () => {
+    mocks.deliveries.aggregate.mockReturnValue({ toArray: async () => [{ delivered24: 471, failed24: 0, delivered7: 3476, failed7: 2 }] });
+    mocks.buckets.mockResolvedValue([{ delivered: 900, failed: 1 }, { delivered: 100 }]);
     const result = await getForwardingSettings(principal);
     expect(mocks.configuration.findOne).toHaveBeenCalledWith({ _id: scope, companyId: scope });
-    expect(mocks.deliveries.find).toHaveBeenCalledWith({ companyId: scope });
-    expect(result.deliveries[0]).not.toHaveProperty("body");
-    expect(result.deliveries[0]).not.toHaveProperty("signature");
-    expect(result.deliveries[0]).not.toHaveProperty("url");
+    const [match] = mocks.deliveries.aggregate.mock.calls[0][0];
+    expect(match.$match).toMatchObject({
+      companyId: scope, isTest: false, status: { $in: ["delivered", "failed"] }, kind: { $ne: "calendar" },
+      updatedAt: { $gte: new Date("2026-10-18T12:00:00Z") },
+    });
+    expect(mocks.stats.find).toHaveBeenCalledWith(
+      { companyId: scope, kind: "whatsapp", hour: { $gte: new Date("2026-09-25T12:00:00Z"), $lt: new Date("2026-10-18T12:00:00Z") } },
+      expect.any(Object),
+    );
+    expect(result.stats).toEqual({
+      last24Hours: { delivered: 471, failed: 0 },
+      last7Days: { delivered: 3476, failed: 2 },
+      last30Days: { delivered: 4476, failed: 3 },
+    });
+    expect(result).not.toHaveProperty("deliveries");
   });
   it("denies non-admins and independently rechecks the company's current admin pointer", async () => {
     await expect(getForwardingSettings({ ...principal, isAdmin: false })).rejects.toMatchObject({ status: 403 });
@@ -226,6 +242,18 @@ describe("bounded retries, leases and test deliveries", () => {
         $set: expect.objectContaining({ status: "delivered", lastStatus: 200, expiresAt: expect.any(Date) }),
         $unset: { body: "", signature: "", leaseUntil: "", leaseToken: "" },
       }),
+    );
+    expect(mocks.stats.updateOne).toHaveBeenCalledWith(
+      { _id: `${scope.toHexString()}:whatsapp:2026-10-25T12:00:00.000Z` },
+      expect.objectContaining({ $inc: { delivered: 1 }, $setOnInsert: expect.objectContaining({ companyId: scope, kind: "whatsapp" }) }),
+      { upsert: true },
+    );
+  });
+  it("counts abandoned final attempts as failures and never counts tests", async () => {
+    mocks.rows.mockResolvedValueOnce([{ _id: new ObjectId(), companyId: scope, isTest: false }, { _id: new ObjectId(), companyId: scope, isTest: true }]);
+    await processForwardingDeliveries();
+    expect(mocks.stats.updateOne).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(), expect.objectContaining({ $inc: { failed: 1 } }), { upsert: true },
     );
   });
   it.each([[1, 30_000], [2, 60_000], [3, 120_000], [10, 3_600_000]])("backs off failed attempt %s by %s ms", async (attempts, delay) => {

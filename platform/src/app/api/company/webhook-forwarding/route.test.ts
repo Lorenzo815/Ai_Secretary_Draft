@@ -14,7 +14,7 @@ const principal = {
   id: "123456789012345678901234", companyId: "9b9d1f4b4f16cf6e84abcce4",
   name: "Admin", email: "admin@example.com", companyName: "Company", isAdmin: true, permissions: emptyPermissions(),
 };
-const settings = { revision: 0, endpoints: [], deliveries: [] };
+const settings = { revision: 0, endpoints: [], stats: {} };
 function request(method: "PUT" | "POST", body: unknown) {
   return new Request("http://localhost:3000/api/company/webhook-forwarding", {
     method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

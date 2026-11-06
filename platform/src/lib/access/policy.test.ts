@@ -79,12 +79,14 @@ describe("default-deny access catalog", () => {
   });
   it("reserves all forwarding settings and test actions to the company admin", () => {
     const manager = { ...user, permissions: { ...emptyPermissions(), system: "manage" as const } };
-    for (const method of ["GET", "PUT", "POST"]) {
-      const policy = routePolicy("/api/company/webhook-forwarding", method);
-      expect(allows(manager, policy)).toBe(false);
-      expect(allows({ ...manager, isAdmin: true }, policy)).toBe(true);
+    for (const route of ["/api/company/webhook-forwarding", "/api/company/calendar-forwarding"]) {
+      for (const method of ["GET", "PUT", "POST"]) {
+        const policy = routePolicy(route, method);
+        expect(allows(manager, policy)).toBe(false);
+        expect(allows({ ...manager, isAdmin: true }, policy)).toBe(true);
+      }
+      expect(routePolicy(route, "DELETE")).toBeNull();
     }
-    expect(routePolicy("/api/company/webhook-forwarding", "DELETE")).toBeNull();
   });
   it("covers every existing API HTTP handler and dashboard page explicitly", () => {
     const root = path.join(process.cwd(), "src", "app");

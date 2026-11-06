@@ -65,7 +65,7 @@ export default async function SettingsPage() {
       </section>
 
       <CompanyUsersSettings initial={companySettings} principal={session.principal} />
-      {canAccess(session.principal, "system") && <Link href="/dashboard/settings/system" className="group flex items-center justify-between gap-5 rounded-lg border border-mist bg-white p-5 transition hover:border-deep-teal/40"><div className="flex items-start gap-4"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><SlidersHorizontal className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-slate-ink">Configurações do sistema</p><p className="mt-1 text-xs leading-5 text-stone">Gerencie Pix, disponibilidade do agente e limpeza de dados operacionais.</p></div></div><ArrowRight className="h-4 w-4 shrink-0 text-stone transition group-hover:translate-x-0.5 group-hover:text-deep-teal" /></Link>}
+      {canAccess(session.principal, "system") && <Link href="/dashboard/settings/system" className="group flex items-center justify-between gap-5 rounded-lg border border-mist bg-white p-5 transition hover:border-deep-teal/40"><div className="flex items-start gap-4"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-deep-teal/10 text-deep-teal"><SlidersHorizontal className="h-5 w-5" /></span><div><p className="text-sm font-semibold text-slate-ink">Configurações do sistema</p><p className="mt-1 text-xs leading-5 text-stone">Gerencie Pix, disponibilidade do agente, encaminhamentos e limpeza de dados operacionais.</p></div></div><ArrowRight className="h-4 w-4 shrink-0 text-stone transition group-hover:translate-x-0.5 group-hover:text-deep-teal" /></Link>}
     </div>
   );
 }

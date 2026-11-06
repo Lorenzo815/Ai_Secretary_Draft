@@ -6,6 +6,7 @@ import { processForwardingDeliveries } from "@/lib/whatsapp/forwarding";
 import { processPendingWhatsAppMessageEchoes } from "@/lib/whatsapp/message-echoes";
 import { refreshWhatsAppTemplateCatalog } from "@/lib/whatsapp/templates";
 import { processAppointmentConfirmations } from "@/lib/confirmations/service";
+import { processCalendarForwarding } from "@/lib/calendar/forwarding";
 
 export const maxDuration = 300;
 
@@ -14,15 +15,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  const [forwarding, result, templates, confirmations] = await Promise.allSettled([
+  const [forwarding, result, templates, confirmations, calendarForwarding] = await Promise.allSettled([
     processForwardingDeliveries(),
     processAssistantBatch(),
     refreshWhatsAppTemplateCatalog(),
     processAppointmentConfirmations(),
+    processCalendarForwarding(),
   ]);
-  // Reminders are retried on the next tick; they never block the rest of the worker.
+  // Reminders and calendar forwarding are retried on the next tick; they never block the rest of the worker.
   if (confirmations.status === "rejected") {
     console.error("Appointment confirmation worker failed.", { errorType: confirmations.reason instanceof Error ? confirmations.reason.name : "Unknown" });
+  }
+  if (calendarForwarding.status === "rejected") {
+    console.error("Calendar forwarding worker failed.", { errorType: calendarForwarding.reason instanceof Error ? calendarForwarding.reason.name : "Unknown" });
   }
   if (result.status === "rejected") throw result.reason;
   if (forwarding.status === "rejected") {
@@ -42,6 +47,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ...result.value, forwardingProcessed: forwarding.value, templateCatalog: templates.value,
     confirmations: confirmations.status === "fulfilled" ? confirmations.value : null,
+    calendarForwarding: calendarForwarding.status === "fulfilled" ? calendarForwarding.value : null,
   });
 }
 

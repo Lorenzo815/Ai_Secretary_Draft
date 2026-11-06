@@ -8,6 +8,7 @@ vi.mock("@/lib/whatsapp/forwarding", () => ({ processForwardingDeliveries: mocks
 vi.mock("@/lib/whatsapp/message-echoes", () => ({ processPendingWhatsAppMessageEchoes: mocks.echoes }));
 vi.mock("@/lib/whatsapp/templates", () => ({ refreshWhatsAppTemplateCatalog: mocks.templates }));
 vi.mock("@/lib/confirmations/service", () => ({ applyAttendanceAfterPayment: vi.fn(async () => "pending"), getOpenConfirmationForCustomer: vi.fn(async () => null), handleConfirmationButton: vi.fn(async () => ({ handled: false })), processAppointmentConfirmations: vi.fn(async () => ({ skipped: true })) }));
+vi.mock("@/lib/calendar/forwarding", () => ({ processCalendarForwarding: vi.fn(async () => ({ companies: 0, events: 0, queued: 0 })) }));
 import { POST } from "./route";
 
 function request(authorization?: string) {

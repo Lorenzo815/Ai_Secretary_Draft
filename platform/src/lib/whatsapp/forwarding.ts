@@ -2,16 +2,18 @@ import "server-only";
 
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { Binary, ObjectId, type Db } from "mongodb";
-import { getMongoClient } from "../mongodb";
 import { adminTransaction, ManagementError } from "../access/management";
 import type { Principal } from "../access/contracts";
 import { legacyCompanyId } from "../companies/ownership";
 import { isCompanyOperational } from "../companies/status";
+import { prepareCalendarDelivery, sendCalendarDelivery } from "../calendar/forwarding";
 import {
-  FORWARDING_ENDPOINT_LIMIT, FORWARDING_MAX_RETRIES,
-  type ForwardingDeliveryStatus, type ForwardingEndpoint, type ForwardingResult, type ForwardingSettings,
-} from "./forwarding-contracts";
-import { ForwardingAddressError, forwardingUrl, sendForwardedWebhook } from "./forwarding-http";
+  adminCompanyId, assertTestAllowed, deliveryCollection, deliveryKind, ensureDeliveryIndexes, finishDelivery,
+  forwardingDatabase, LEASE_MS, readForwardingStats, recordForwardingOutcome, requireAdminCompany, RETENTION_MS,
+  validateEndpointList, type Delivery,
+} from "../forwarding/store";
+import { FORWARDING_ENDPOINT_LIMIT, type ForwardingEndpoint, type ForwardingSettings } from "./forwarding-contracts";
+import { sendForwardedWebhook } from "./forwarding-http";
 import { ForwardingRoutingError, resolveWhatsAppCompany, type WhatsAppCompanyBinding as Binding } from "./company-routing";
 export { ForwardingRoutingError, resolveWhatsAppCompany as resolveForwardingCompany } from "./company-routing";
 
@@ -24,109 +26,23 @@ interface Configuration {
   updatedBy: ObjectId;
 }
 
-interface Delivery {
-  _id: ObjectId;
-  companyId: ObjectId;
-  endpointId: string;
-  endpointName: string;
-  url: string;
-  digest: string;
-  body?: Binary;
-  signature?: string;
-  status: ForwardingDeliveryStatus;
-  attempts: number;
-  maxRetries: number;
-  dueAt: Date;
-  createdAt: Date;
-  updatedAt: Date;
-  leaseUntil?: Date;
-  leaseToken?: string;
-  expiresAt?: Date;
-  lastStatus?: number | null;
-  lastError?: string | null;
-  isTest: boolean;
-}
-
 const configurationCollection = (db: Db) => db.collection<Configuration>("whatsapp_forwarding_config");
-const deliveryCollection = (db: Db) => db.collection<Delivery>("whatsapp_forwarding_deliveries");
-const RETENTION_MS = 7 * 24 * 60 * 60_000;
-const LEASE_MS = 30_000;
-let indexes: Promise<unknown> | undefined;
-
-async function database() {
-  return (await getMongoClient()).db("ai_secretary");
-}
-
-async function ensureIndexes(db: Db) {
-  if (!indexes) {
-    indexes = Promise.all([
-      deliveryCollection(db).createIndex({ companyId: 1, endpointId: 1, digest: 1 }, { unique: true }),
-      deliveryCollection(db).createIndex({ status: 1, dueAt: 1 }),
-      deliveryCollection(db).createIndex({ companyId: 1, createdAt: -1 }),
-      deliveryCollection(db).createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
-    ]);
-    void indexes.catch(() => { indexes = undefined; });
-  }
-  await indexes;
-}
-
-function companyId(principal: Principal) {
-  if (!principal.isAdmin || !/^[a-f0-9]{24}$/i.test(principal.companyId)) {
-    throw new ManagementError("Somente o administrador da empresa pode gerenciar os encaminhamentos.", 403);
-  }
-  return new ObjectId(principal.companyId);
-}
 
 export function validateForwardingEndpoints(value: unknown): ForwardingEndpoint[] {
-  if (!Array.isArray(value) || value.length > FORWARDING_ENDPOINT_LIMIT) {
-    throw new ManagementError(`Configure no máximo ${FORWARDING_ENDPOINT_LIMIT} destinos.`);
-  }
-  const ids = new Set<string>();
-  const urls = new Set<string>();
-  return value.map((item: unknown) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) throw new ManagementError("Destino inválido.");
-    const endpoint = item as Record<string, unknown>;
-    if (Object.keys(endpoint).some(key => !["id", "name", "url", "enabled", "maxRetries"].includes(key)) ||
-      typeof endpoint.id !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(endpoint.id) || ids.has(endpoint.id) ||
-      typeof endpoint.name !== "string" || !endpoint.name.trim() || endpoint.name.trim().length > 80 ||
-      typeof endpoint.url !== "string" || endpoint.url.length > 2048 || typeof endpoint.enabled !== "boolean" ||
-      typeof endpoint.maxRetries !== "number" || !Number.isInteger(endpoint.maxRetries) ||
-      endpoint.maxRetries < 0 || endpoint.maxRetries > FORWARDING_MAX_RETRIES) {
-      throw new ManagementError(`Destino inválido. Use nome, URL HTTPS e de 0 a ${FORWARDING_MAX_RETRIES} novas tentativas.`);
-    }
-    let url: string;
-    try { url = forwardingUrl(endpoint.url.trim()).href; }
-    catch (error) {
-      if (error instanceof ForwardingAddressError) throw new ManagementError(error.message);
-      throw error;
-    }
-    if (urls.has(url)) throw new ManagementError("Não repita a mesma URL na empresa.");
-    ids.add(endpoint.id);
-    urls.add(url);
-    return { id: endpoint.id, name: endpoint.name.trim(), url, enabled: endpoint.enabled, maxRetries: endpoint.maxRetries };
-  });
+  return validateEndpointList(value, [], (_endpoint, base) => base);
 }
 
 export async function getForwardingSettings(principal: Principal): Promise<ForwardingSettings> {
-  const scope = companyId(principal);
-  const db = await database();
-  const company = await db.collection("companies").findOne({ _id: scope, adminUserId: new ObjectId(principal.id), status: "active", accessControlVersion: 1 });
-  if (!company) throw new ManagementError("Administração da empresa não autorizada.", 403);
-  const [configuration, deliveries] = await Promise.all([
+  const db = await forwardingDatabase();
+  const { scope } = await requireAdminCompany(db, principal);
+  const [configuration, stats] = await Promise.all([
     configurationCollection(db).findOne({ _id: scope, companyId: scope }),
-    deliveryCollection(db).find({ companyId: scope }).sort({ createdAt: -1 }).limit(25).toArray(),
+    readForwardingStats(db, scope, "whatsapp"),
   ]);
   return {
     revision: configuration?.revision ?? 0,
     endpoints: configuration?.endpoints ?? [],
-    deliveries: deliveries.map(delivery => ({
-      id: delivery._id.toHexString(), endpointId: delivery.endpointId, endpointName: delivery.endpointName,
-      status: delivery.status, attempts: delivery.attempts, maxRetries: delivery.maxRetries,
-      lastStatus: delivery.lastStatus ?? null, lastError: delivery.lastError ?? null,
-      createdAt: delivery.createdAt.toISOString(),
-      nextAttemptAt: delivery.status === "pending" ? delivery.dueAt.toISOString() : null,
-      isTest: delivery.isTest,
-    })),
+    stats,
   };
 }
 
@@ -135,7 +51,7 @@ export async function saveForwardingSettings(principal: Principal, input: Record
     !Number.isSafeInteger(input.revision) || Number(input.revision) < 0) throw new ManagementError("Configuração inválida.");
   const endpoints = validateForwardingEndpoints(input.endpoints);
   await adminTransaction(principal, async (db, session) => {
-    const scope = companyId(principal);
+    const scope = adminCompanyId(principal);
     const collection = configurationCollection(db);
     const current = await collection.findOne({ _id: scope, companyId: scope }, { session });
     if ((current?.revision ?? 0) !== input.revision) throw new ManagementError("A configuração mudou. Recarregue antes de salvar.", 409);
@@ -163,7 +79,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: string): Promise<number> {
-  const db = await database();
+  const db = await forwardingDatabase();
   if (!await configurationCollection(db).findOne({ "endpoints.enabled": true }, { projection: { _id: 1 } })) return 0;
   let payload: unknown;
   try { payload = JSON.parse(Buffer.from(body).toString("utf8")); }
@@ -191,7 +107,7 @@ export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: str
   const configuration = await configurationCollection(db).findOne({ _id: scope, companyId: scope });
   const endpoints = configuration?.endpoints.filter(endpoint => endpoint.enabled) ?? [];
   if (!endpoints.length) return 0;
-  await ensureIndexes(db);
+  await ensureDeliveryIndexes(db);
   const digest = createHash("sha256").update(body).digest("hex");
   const now = new Date();
   await deliveryCollection(db).bulkWrite(endpoints.map(endpoint => ({
@@ -208,27 +124,18 @@ export async function enqueueWhatsAppForwarding(body: Uint8Array, signature: str
   return endpoints.length;
 }
 
-async function finishDelivery(db: Db, delivery: Delivery, result: ForwardingResult | null) {
-  const now = new Date();
-  const status: ForwardingDeliveryStatus = result === null ? "cancelled"
-    : result.ok ? "delivered" : delivery.attempts > delivery.maxRetries ? "failed" : "pending";
-  const terminal = status !== "pending";
-  await deliveryCollection(db).updateOne({
-    _id: delivery._id, companyId: delivery.companyId, status: "processing", leaseToken: delivery.leaseToken,
-  }, {
-    $set: {
-      status, updatedAt: now, lastStatus: result?.status ?? null,
-      lastError: result?.error ?? (result ? null : "Destino removido, alterado, desativado ou empresa indisponível."),
-      ...(terminal ? { expiresAt: new Date(now.getTime() + RETENTION_MS) } : {
-        dueAt: new Date(now.getTime() + Math.min(30_000 * 2 ** (delivery.attempts - 1), 60 * 60_000)),
-      }),
-    },
-    $unset: { leaseUntil: "", leaseToken: "", ...(terminal ? { body: "", signature: "" } : {}) },
-  });
-}
-
 async function deliverClaimed(db: Db, delivery: Delivery) {
   const company = await db.collection("companies").findOne({ _id: delivery.companyId, status: "active" });
+  if (deliveryKind(delivery) === "calendar") {
+    const body = company ? await prepareCalendarDelivery(db, delivery) : null;
+    if (!body) {
+      await finishDelivery(db, delivery, null);
+      return null;
+    }
+    const result = await sendCalendarDelivery(delivery, body);
+    await finishDelivery(db, delivery, result);
+    return result;
+  }
   const configuration = await configurationCollection(db).findOne({ _id: delivery.companyId, companyId: delivery.companyId });
   const endpoint = configuration?.endpoints.find(item => item.id === delivery.endpointId &&
     (delivery.isTest || item.enabled) && item.url === delivery.url);
@@ -244,17 +151,21 @@ async function deliverClaimed(db: Db, delivery: Delivery) {
   return result;
 }
 
+/** Worker step: sends due WhatsApp and calendar deliveries, retrying with backoff. */
 export async function processForwardingDeliveries() {
-  const db = await database();
-  await ensureIndexes(db);
+  const db = await forwardingDatabase();
+  await ensureDeliveryIndexes(db);
   const now = new Date();
-  await deliveryCollection(db).updateMany({
-    status: "processing", leaseUntil: { $lte: now },
+  const abandonedFilter = {
+    status: "processing" as const, leaseUntil: { $lte: now },
     $expr: { $gte: ["$attempts", { $add: ["$maxRetries", 1] }] },
-  }, {
+  };
+  const abandoned = await deliveryCollection(db).find(abandonedFilter, { projection: { companyId: 1, kind: 1, isTest: 1 } }).toArray();
+  await deliveryCollection(db).updateMany(abandonedFilter, {
     $set: { status: "failed", lastError: "A última tentativa perdeu a concessão; confirme o recebimento no destino.", updatedAt: now, expiresAt: new Date(now.getTime() + RETENTION_MS) },
-    $unset: { body: "", signature: "", leaseUntil: "", leaseToken: "" },
+    $unset: { body: "", signature: "", calendarEvent: "", leaseUntil: "", leaseToken: "" },
   });
+  for (const delivery of abandoned) await recordForwardingOutcome(db, delivery, "failed", now);
   const results = await Promise.all(Array.from({ length: FORWARDING_ENDPOINT_LIMIT }, async () => {
     const delivery = await deliveryCollection(db).findOneAndUpdate({
       $expr: { $lt: ["$attempts", { $add: ["$maxRetries", 1] }] },
@@ -272,17 +183,14 @@ export async function processForwardingDeliveries() {
 
 export async function testForwardingEndpoint(principal: Principal, endpointId: unknown) {
   if (typeof endpointId !== "string") throw new ManagementError("Selecione um destino salvo.");
-  const scope = companyId(principal);
+  const scope = adminCompanyId(principal);
   const id = new ObjectId();
-  await ensureIndexes(await database());
+  await ensureDeliveryIndexes(await forwardingDatabase());
   await adminTransaction(principal, async (db, session) => {
     const configuration = await configurationCollection(db).findOne({ _id: scope, companyId: scope }, { session });
     const endpoint = configuration?.endpoints.find(item => item.id === endpointId);
     if (!endpoint) throw new ManagementError("Salve o destino antes de testar.", 409);
-    const recent = await deliveryCollection(db).findOne({
-      companyId: scope, isTest: true, createdAt: { $gt: new Date(Date.now() - 5_000) },
-    }, { session });
-    if (recent) throw new ManagementError("Aguarde 5 segundos entre os testes da empresa.", 429);
+    await assertTestAllowed(db, scope, session);
     const body = Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry: [] }));
     const secret = process.env.WHATSAPP_APP_SECRET;
     const signature = secret ? `sha256=${createHmac("sha256", secret).update(body).digest("hex")}` : undefined;
@@ -294,7 +202,7 @@ export async function testForwardingEndpoint(principal: Principal, endpointId: u
       leaseToken: randomUUID(), leaseUntil: new Date(now.getTime() + LEASE_MS),
     }, { session });
   });
-  const db = await database();
+  const db = await forwardingDatabase();
   const delivery = await deliveryCollection(db).findOne({ _id: id, companyId: scope });
   if (!delivery) throw new ManagementError("O teste não foi encontrado.", 500);
   const result = await deliverClaimed(db, delivery);

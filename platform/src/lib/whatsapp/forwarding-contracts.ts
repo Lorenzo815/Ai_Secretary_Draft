@@ -19,20 +19,22 @@ export interface ForwardingResult {
   error: string | null;
 }
 
+export type ForwardingKind = "whatsapp" | "calendar";
+
+export interface ForwardingCounts {
+  delivered: number;
+  failed: number;
+}
+
+/** Final outcomes of real (non-test) deliveries, summed over every destination of one kind. */
+export interface ForwardingStats {
+  last24Hours: ForwardingCounts;
+  last7Days: ForwardingCounts;
+  last30Days: ForwardingCounts;
+}
+
 export interface ForwardingSettings {
   revision: number;
   endpoints: ForwardingEndpoint[];
-  deliveries: Array<{
-    id: string;
-    endpointId: string;
-    endpointName: string;
-    status: ForwardingDeliveryStatus;
-    attempts: number;
-    maxRetries: number;
-    lastStatus: number | null;
-    lastError: string | null;
-    createdAt: string;
-    nextAttemptAt: string | null;
-    isTest: boolean;
-  }>;
+  stats: ForwardingStats;
 }

@@ -6,15 +6,15 @@ import { getEmbeddedSignupConfiguration, getEmbeddedSignupConnectionStatus } fro
 import { getMercadoPagoCredentialStatus, getPaymentProviderConfiguration } from "@/lib/payments";
 import AutoRefresh from "../../_components/auto-refresh";
 import EmbeddedSignupSettings from "../_components/embedded-signup-settings";
+import ForwardingSettings from "../_components/forwarding-settings";
 import SystemControls from "../_components/system-controls";
 import { requirePrincipal } from "@/lib/access/server";
 
 export const dynamic = "force-dynamic";
 
-// AI model routing and WhatsApp webhook forwarding are managed by Oria in the back-office,
-// so they are intentionally not rendered for clinic users.
+// AI model routing is managed by Oria in the back-office, so it is intentionally not rendered for clinic users.
 export default async function SystemSettingsPage() {
-  await requirePrincipal();
+  const principal = await requirePrincipal();
   const [assistantSettings, customers, embeddedSignup, embeddedConnection, paymentProvider, mercadoPagoStatus] = await Promise.all([
     getAgentConfiguration(),
     listCustomers(),
@@ -57,6 +57,11 @@ export default async function SystemSettingsPage() {
         phoneNumberId: embeddedConnection.phoneNumberId,
       } : null} />
     </div>
+
+    {principal.isAdmin && <>
+      <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Integrações externas</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Encaminhamentos</h2><p className="max-w-2xl text-sm leading-6 text-stone">Envie eventos da Oria para outras plataformas da clínica. Somente o administrador vê e altera esta seção.</p></div>
+      <ForwardingSettings companyName={principal.companyName} />
+    </>}
 
     <div className="space-y-2 pt-2"><p className="text-[11px] font-bold uppercase text-deep-teal">Regras da operação</p><h2 className="font-heading text-lg font-semibold text-slate-ink">Automação e pagamentos</h2></div>
     <SystemControls

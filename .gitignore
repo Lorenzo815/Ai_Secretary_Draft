@@ -3,3 +3,5 @@ reports/*
 changes/*
 .vercel
 .env*
+platform/data
+platform/security_audit

@@ -14,6 +14,7 @@ import {
   type AppointmentRecurrenceInput,
 } from "./recurrence";
 import { tenantDb } from "../companies/tenant-db";
+import { forwardDeletedAppointments } from "./forwarding";
 
 export type { AppointmentRecurrenceFrequency, AppointmentRecurrenceInput } from "./recurrence";
 
@@ -1401,6 +1402,7 @@ export async function deleteAppointment(id: string) {
   const appointmentId = new ObjectId(id);
   const result = await (await getAppointmentsCollection()).findOneAndDelete({ _id: appointmentId });
   if (!result) throw new Error("Evento não encontrado.");
+  await forwardDeletedAppointments([result]);
   return result;
 }
 
@@ -1427,8 +1429,10 @@ async function changeAppointmentSeries(id: string, permanent: boolean) {
     startAt: { $gte: now },
   };
   if (permanent) {
-    const result = await appointments.deleteMany(filter);
+    const removed = await appointments.find(filter).toArray();
+    const result = await appointments.deleteMany({ ...filter, _id: { $in: removed.map((appointment) => appointment._id) } });
     if (result.deletedCount === 0) throw new Error("Não há ocorrências futuras para excluir.");
+    await forwardDeletedAppointments(removed);
     return { ...current, affectedCount: result.deletedCount };
   }
   const result = await appointments.updateMany(
